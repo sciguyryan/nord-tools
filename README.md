@@ -452,3 +452,13 @@ The optional `tools/generate_kongroo_blob.py` utility regenerates the encrypted 
 ## Disposable WireGuard integration experiment
 
 `python nord_tools.py wireguard-probe` prints the planned experiment without changing networking. On a disposable Linux VM, `sudo python nord_tools.py wireguard-probe --execute` creates two separate client/server WireGuard pairs inside four temporary namespaces, verifies tunnel traffic and shutdown, then attempts cleanup. The experiment requires `ip`, `wg`, `ping`, root privileges and kernel WireGuard support. It does not install NordVPN credentials, modify host default routes, configure DNS or establish production leak protection. **Do not run it on a critical host until you have reviewed the implementation.** Privileged acceptance results have not yet been recorded.
+
+### Read-only lifecycle correlation
+
+An experimental lifecycle journal can be compared with a complete live Linux discovery snapshot without changing networking:
+
+```bash
+python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --live
+```
+
+The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion. Live ownership markers, inter-process locking and recovery remain future work. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.

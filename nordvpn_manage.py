@@ -19,6 +19,7 @@ from nordvpn_discovery import DiscoveryError, discover
 from nordvpn_evidence import correlate
 from nordvpn_identity import inspect_allocations
 from nordvpn_lifecycle import inspect_lifecycle
+from nordvpn_lifecycle_evidence import inspect_live_lifecycle
 from nordvpn_identity_evidence import inspect_identity_evidence
 from nordvpn_profiles import ProfileError, validate_policy
 from nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
@@ -112,6 +113,11 @@ def main(argv: list[str] | None = None) -> int:
         if name == "lifecycle":
             command.add_argument("--journal", required=True, help="Explicit offline lifecycle journal JSON")
             command.add_argument("--observed", help="Optional simulated observation fixture JSON")
+            command.add_argument(
+                "--live",
+                action="store_true",
+                help="Correlate against read-only Linux discovery (never proves ownership)",
+            )
         if name == "evidence":
             command.add_argument("--registry", required=True, help="Explicit offline ownership ledger JSON")
         if name == "audit":
@@ -137,8 +143,15 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.action == "lifecycle":
-            observations = read_json(args.observed) if args.observed else None
-            print(json.dumps(inspect_lifecycle(read_json(args.journal), observations), indent=2, sort_keys=True))
+            if args.live and args.observed:
+                raise ManagementError("--live and --observed are mutually exclusive")
+            journal = read_json(args.journal)
+            if args.live:
+                result = inspect_live_lifecycle(journal, discover())
+            else:
+                observations = read_json(args.observed) if args.observed else None
+                result = inspect_lifecycle(journal, observations)
+            print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "cleanup-plan":
             print(json.dumps(cleanup_plan(load_inventory(args.inventory)), indent=2, sort_keys=True))
