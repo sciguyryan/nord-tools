@@ -26,6 +26,17 @@ The benchmarker reads local OpenVPN `.ovpn` files or downloads NordVPN's officia
 
 The existing `--auto-connect` option can request a connection through the installed NordVPN Linux CLI after benchmarking. It manages that client's single connection, **not** independent per-application tunnels. See [Connecting to a ranked server on Linux](#connecting-to-a-ranked-server-on-linux).
 
+### Experimental resource lifecycle journal
+
+Part 2 introduces a strict offline lifecycle journal for future Nord Tools-owned resources. It validates allocation-bound event histories, rejects illegal state transitions and detects mismatched simulated identities. A matching identifier is **not** independent kernel ownership evidence. No lifecycle command creates, modifies or removes networking resources.
+
+```bash
+python nord_tools.py manage lifecycle --journal path/to/lifecycle.json
+python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --observed path/to/simulated-observations.json
+```
+
+The `nordvpn_lifecycle` module also provides an atomic, permission-restricted fixture writer for controlled development use. Operational journalling still requires inter-process locking, independently verified kernel identity and privileged failure/recovery testing.
+
 ## Tunnel management implementation status
 
 The offline management foundation is complete, but **the operational tunnel manager is not implemented or ready for production use**. The following work remains before Nord Tools can safely manage multiple live VPN connections:

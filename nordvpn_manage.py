@@ -18,6 +18,7 @@ from nordvpn_management_views import cleanup_plan, topology_graph
 from nordvpn_discovery import DiscoveryError, discover
 from nordvpn_evidence import correlate
 from nordvpn_identity import inspect_allocations
+from nordvpn_lifecycle import inspect_lifecycle
 from nordvpn_identity_evidence import inspect_identity_evidence
 from nordvpn_profiles import ProfileError, validate_policy
 from nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         "transaction-plan",
         "graph",
         "cleanup-plan",
+        "lifecycle",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -107,6 +109,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         if name in ("identities", "identity-evidence"):
             command.add_argument("--registry", required=True, help="Explicit version 2 allocation ledger JSON")
+        if name == "lifecycle":
+            command.add_argument("--journal", required=True, help="Explicit offline lifecycle journal JSON")
+            command.add_argument("--observed", help="Optional simulated observation fixture JSON")
         if name == "evidence":
             command.add_argument("--registry", required=True, help="Explicit offline ownership ledger JSON")
         if name == "audit":
@@ -131,6 +136,10 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--policy", required=True, help="JSON policy to validate")
     args = parser.parse_args(argv)
     try:
+        if args.action == "lifecycle":
+            observations = read_json(args.observed) if args.observed else None
+            print(json.dumps(inspect_lifecycle(read_json(args.journal), observations), indent=2, sort_keys=True))
+            return 0
         if args.action == "cleanup-plan":
             print(json.dumps(cleanup_plan(load_inventory(args.inventory)), indent=2, sort_keys=True))
             return 0

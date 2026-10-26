@@ -23,14 +23,16 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 ## Operational VPN manager: eight-part target
 
 ### Part 1: Disposable WireGuard integration harness
-- [x] Implement an opt-in disposable two-pair WireGuard harness without changing host default routing. Privileged Linux acceptance remains pending.
+- [x] Implement an opt-in disposable two-pair WireGuard harness without changing host default routing. Privileged two-pair connectivity acceptance passed on Arch Linux.
 - [x] Validate bounded interface names and invocation-scoped cleanup in offline tests. Crash and signal-interruption acceptance remains pending.
-- [ ] Test route isolation and failure conditions on an actual Linux host or VM; record required privileges and manual acceptance checks.
+- [x] Verify independent tunnel connectivity and tunnel-down isolation on Arch Linux. Explicit post-run namespace/interface inspection and crash/signal failure injection remain follow-up acceptance checks.
 
 ### Part 2: Resource ownership and lifecycle
 - [ ] Establish independently verifiable ownership evidence at resource creation, beyond names or allocation records alone.
-- [ ] Persist lifecycle state and journal operations; discover and reconcile existing resources and detect stale, conflicting or reused names.
-- [ ] Ensure unrelated host and official NordVPN resources cannot be claimed or modified.
+- [x] Introduce a strict, versioned offline lifecycle journal with allocation-bound event digests, transition validation, atomic fixture persistence and conservative simulated observation comparisons.
+- [ ] Implement independently verified kernel ownership markers, privileged operation journalling, inter-process locking and live drift detection before any operational resource changes.
+- [x] Keep offline lifecycle observations non-authoritative and prohibit any modification or deletion based on names, journal claims or matching simulated identifiers alone.
+- [ ] Demonstrate this boundary in privileged integration and recovery tests before live provisioning.
 
 ### Part 3: Live tunnel provisioning
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
