@@ -472,3 +472,5 @@ The internal `nordvpn_recovery.assess_recovery()` helper provides read-only reco
 The Part 2 offline operation-intent model records pending and uncertain create/retire attempts for recovery review. It does not perform networking changes or verify ownership; live provisioning and cleanup remain unavailable.
 
 The experimental `nordvpn_namespace_ownership.py` module provides process-bound identity checks for newly created disposable Linux network namespaces. It is not a public management command or a production cleanup mechanism. See `docs/VPN-ROUTING-DESIGN.md` for its safety limitations.
+
+The optional `tools/probe_namespace_ownership.py` script provides a privileged, disposable namespace ownership smoke test (`sudo python tools/probe_namespace_ownership.py --run-privileged`). It is not part of the production VPN manager. Run it only in an approved Linux test environment; interrupted or uncertain cleanup requires manual inspection. See `docs/VPN-ROUTING-DESIGN.md` for the limitations.
