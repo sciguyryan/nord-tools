@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import patch
 
-from nordvpn_identity_evidence import inspect_identity_evidence
+from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
 from nordvpn_manage import main
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 TOKEN = "a" * 32

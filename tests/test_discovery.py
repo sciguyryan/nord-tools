@@ -5,7 +5,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from nordvpn_discovery import DiscoveryError, discover
+from nord_tools_internal.nordvpn_discovery import DiscoveryError, discover
 from nordvpn_manage import main
 
 

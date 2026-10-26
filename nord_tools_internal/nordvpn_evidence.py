@@ -6,7 +6,7 @@ for deletion. Unrecognised resource kinds remain explicitly unsupported.
 
 from __future__ import annotations
 
-from nordvpn_registry import RegistryError, validate_registry
+from nord_tools_internal.nordvpn_registry import RegistryError, validate_registry
 
 
 def correlate(registry: object, observation: object) -> dict:

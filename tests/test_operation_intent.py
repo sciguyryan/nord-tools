@@ -2,10 +2,10 @@
 
 import unittest
 
-from nordvpn_identity import allocate_identity
-from nordvpn_lifecycle import record_transition
-from nordvpn_operation_intent import begin_intent, inspect_intents, resolve_intent, validate_intents
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_identity import allocate_identity
+from nord_tools_internal.nordvpn_lifecycle import record_transition
+from nord_tools_internal.nordvpn_operation_intent import begin_intent, inspect_intents, resolve_intent, validate_intents
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class OperationIntentTests(unittest.TestCase):

@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import patch
 
-from nordvpn_identity import allocate_identity, inspect_allocations, validate_allocations
+from nord_tools_internal.nordvpn_identity import allocate_identity, inspect_allocations, validate_allocations
 from nordvpn_manage import main
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class IdentityTests(unittest.TestCase):

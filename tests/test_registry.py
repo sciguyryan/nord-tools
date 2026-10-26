@@ -3,7 +3,7 @@
 import copy
 import unittest
 
-from nordvpn_registry import RegistryError, audit_registry, validate_registry
+from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, validate_registry
 
 
 LEDGER = {

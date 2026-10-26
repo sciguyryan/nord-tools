@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from nordvpn_evidence import correlate
-from nordvpn_identity import validate_allocations
+from nord_tools_internal.nordvpn_evidence import correlate
+from nord_tools_internal.nordvpn_identity import validate_allocations
 
 
 def inspect_identity_evidence(ledger: object, observation: object) -> dict:

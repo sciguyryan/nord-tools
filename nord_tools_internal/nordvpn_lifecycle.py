@@ -12,8 +12,8 @@ import os
 from pathlib import Path
 import tempfile
 
-from nordvpn_identity import validate_allocations
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_identity import validate_allocations
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 STATES = frozenset({"reserved", "creating", "active", "degraded", "retiring", "retired", "failed"})
 TRANSITIONS = {

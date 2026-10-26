@@ -11,7 +11,7 @@ from unittest.mock import patch
 
 import nord_tools
 
-from nordvpn_reconcile import ReconciliationError, plan_reconciliation
+from nord_tools_internal.nordvpn_reconcile import ReconciliationError, plan_reconciliation
 
 
 POLICY = {

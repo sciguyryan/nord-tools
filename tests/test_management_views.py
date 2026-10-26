@@ -2,8 +2,8 @@
 
 import unittest
 
-from nordvpn_management_views import cleanup_plan, topology_graph
-from nordvpn_reconcile import ReconciliationError
+from nord_tools_internal.nordvpn_management_views import cleanup_plan, topology_graph
+from nord_tools_internal.nordvpn_reconcile import ReconciliationError
 
 
 POLICY = {

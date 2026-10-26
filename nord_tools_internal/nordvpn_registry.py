@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 import re
 
-from nordvpn_reconcile import ReconciliationError, validate_inventory
+from nord_tools_internal.nordvpn_reconcile import ReconciliationError, validate_inventory
 
 
 class RegistryError(ValueError):

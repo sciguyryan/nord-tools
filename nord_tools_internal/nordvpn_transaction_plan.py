@@ -5,7 +5,7 @@ These steps describe safety obligations, not executable host operations.
 
 from __future__ import annotations
 
-from nordvpn_dependency_plan import plan_dependencies
+from nord_tools_internal.nordvpn_dependency_plan import plan_dependencies
 
 
 STAGES = {

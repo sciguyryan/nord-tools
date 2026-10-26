@@ -9,7 +9,6 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Offline topology, reconciliation, dependency, transaction and cleanup planning.
 - [x] Read-only Linux discovery, allocation records and advisory ownership evidence.
 - [x] Configured-state Unicode/ASCII connection graph.
-- [x] Initial documentation review and explicit live-implementation status (commit `24e6c46`).
 - [x] Operation Kongroo terminal puzzle implemented, with encrypted scene data, cinematic ANSI/Unicode reveal, terminal restoration and accessibility fallbacks.
 - [ ] **In progress:** Operational VPN manager, targeted for no more than eight parts, subject to safety and acceptance evidence.
 
@@ -27,15 +26,16 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Validate bounded interface names and invocation-scoped cleanup in offline tests. Crash and signal-interruption acceptance remains pending.
 - [x] Verify independent tunnel connectivity and tunnel-down isolation on Arch Linux. Explicit post-run namespace/interface inspection and crash/signal failure injection remain follow-up acceptance checks.
 
-### Part 2: Resource ownership and lifecycle
-- [ ] Establish independently verifiable ownership evidence at resource creation, beyond names or allocation records alone.
+### Part 2: Resource ownership and lifecycle foundation
+- [x] Establish process-bound identity evidence for newly created disposable namespaces; this is not durable ownership authority.
 - [x] Introduce a strict, versioned offline lifecycle journal with allocation-bound event digests, transition validation, atomic fixture persistence and conservative simulated observation comparisons.
 - [x] Add read-only live namespace/interface correlation for lifecycle claims, reporting missing, ambiguous and potentially stale names without granting ownership authority.
 - [x] Add a stable advisory inter-process lock and serialised, atomic offline lifecycle transitions for cooperating writers.
 - [x] Add offline interface-index fingerprint comparison against complete read-only discovery, reporting name reuse and scope drift without treating matches as ownership proof.
-- [ ] Implement independently verified kernel ownership markers, privileged operation journalling and authoritative live drift detection before any operational resource changes. Offline operation intents now bind pending create/retire attempts to lifecycle transitions, but do not provide privileged execution or independent ownership proof.
+- [x] Record offline create/retire operation intents for recovery review, without treating them as privileged operation journals.
 - [x] Keep offline lifecycle observations non-authoritative and prohibit any modification or deletion based on names, journal claims or matching simulated identifiers alone.
-- [ ] Demonstrate this boundary in privileged integration and recovery tests before live provisioning.
+- [x] Pass the normal-operation privileged namespace smoke test on Arch Linux and verify that no named namespaces remain.
+- [x] Move internal management and lifecycle modules into `nord_tools_internal/` without changing the public CLI.
 
 ### Part 3: Live tunnel provisioning
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
@@ -74,8 +74,6 @@ Each increment must include a complete source archive without Git metadata or Py
 
 The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
 
-Part 2 recovery triage combines journal and fingerprint diagnostics, and offline operation intents now flag unresolved or uncertain actions without granting ownership authority. Creation-time verifiable ownership, privileged interruption tests, and the final package-structure refactor remain open.
+## Part 2 closure and operational safety boundary
 
-Part 2 now includes an opt-in, process-bound disposable network namespace ownership primitive (`nordvpn_namespace_ownership.py`). It retains an open namespace descriptor from immediately after creation, checks the live namespace identity and refuses deletion if identity changes or processes remain. This is **not** restart-persistent ownership, does not protect against a hostile concurrent actor replacing the namespace between checks and deletion, and must not be used as a general-purpose cleanup authority. Privileged integration, recovery after process death, stronger race-resistant deletion semantics and the final package refactor remain outstanding.
-
-The disposable namespace ownership smoke-test harness is available for local privileged acceptance. Its offline tests do not constitute privileged acceptance. Crash recovery, independently persistent ownership evidence, race-resistant retirement and the final internal package refactor remain open.
+Part 2 foundations and internal package organisation are complete. The normal-operation disposable namespace probe passed on Arch Linux, but does not establish persistent ownership or race-safe deletion. Before enabling any live mutation or automated cleanup that relies on ownership, implement and verify crash-persistent resource ownership and race-safe mutation authority, including interrupted-operation recovery and privileged adversarial integration tests. Do not infer deletion authority from resource names, journal records, inode fingerprints or completed operation intents alone. These requirements remain blockers for the relevant operational actions in subsequent parts.

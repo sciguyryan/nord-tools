@@ -3,7 +3,7 @@
 import copy
 import unittest
 
-from nordvpn_profiles import ProfileError, resolve_application, validate_policy
+from nord_tools_internal.nordvpn_profiles import ProfileError, resolve_application, validate_policy
 
 
 POLICY = {

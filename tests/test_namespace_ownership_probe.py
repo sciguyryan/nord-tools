@@ -5,7 +5,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from nordvpn_namespace_ownership import OwnershipError
+from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError
 
 _SPEC = importlib.util.spec_from_file_location(
     "probe_namespace_ownership", Path(__file__).resolve().parents[1] / "tools" / "probe_namespace_ownership.py"

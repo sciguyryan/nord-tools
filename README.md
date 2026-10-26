@@ -2,7 +2,7 @@
 
 Nord Tools is a collection of Linux-focused utilities for benchmarking NordVPN servers and exploring policy-driven VPN routing. The working benchmarker discovers and ranks NordVPN endpoints; the newer policy tools validate a default VPN profile, describe application-specific overrides and inspect proposed routing domains. **Multi-tunnel routing and automatic default-server switching are not implemented yet.**
 
-The [development plan](TODO.md) tracks the completed terminal puzzle and the forthcoming eight-part operational VPN manager programme.
+The [development plan](TODO.md) tracks the operational VPN manager programme and its outstanding safety requirements.
 
 ## Unified command-line entry point
 
@@ -35,7 +35,7 @@ python nord_tools.py manage lifecycle --journal path/to/lifecycle.json
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --observed path/to/simulated-observations.json
 ```
 
-The `nordvpn_lifecycle` module also provides an atomic, permission-restricted fixture writer for controlled development use. A separate `nordvpn_lifecycle_store` module now serialises cooperating offline writers using a stable Linux advisory lock, validates each update and atomically replaces the journal. It refuses symlinked paths and missing or corrupt journals; it does not grant resource ownership or defend against hostile writers with directory access. Operational journalling still requires independently verified kernel identity and privileged failure/recovery testing.
+The internal lifecycle modules provide permission-restricted atomic journal persistence and advisory locking for cooperating writers. They reject invalid histories and unsafe journal paths, but do not establish kernel ownership or defend against hostile writers with directory access. See the [routing design](docs/VPN-ROUTING-DESIGN.md) for the safety boundary.
 
 ## Tunnel management implementation status
 
@@ -451,7 +451,7 @@ The optional `tools/generate_kongroo_blob.py` utility regenerates the encrypted 
 
 ## Disposable WireGuard integration experiment
 
-`python nord_tools.py wireguard-probe` prints the planned experiment without changing networking. On a disposable Linux VM, `sudo python nord_tools.py wireguard-probe --execute` creates two separate client/server WireGuard pairs inside four temporary namespaces, verifies tunnel traffic and shutdown, then attempts cleanup. The experiment requires `ip`, `wg`, `ping`, root privileges and kernel WireGuard support. It does not install NordVPN credentials, modify host default routes, configure DNS or establish production leak protection. **Do not run it on a critical host until you have reviewed the implementation.** Privileged acceptance results have not yet been recorded.
+`python nord_tools.py wireguard-probe` prints the planned experiment without changing networking. On a disposable Linux VM, `sudo python nord_tools.py wireguard-probe --execute` creates two separate client/server WireGuard pairs inside four temporary namespaces, verifies tunnel traffic and shutdown, then attempts cleanup. The experiment requires `ip`, `wg`, `ping`, root privileges and kernel WireGuard support. It does not install NordVPN credentials, modify host default routes, configure DNS or establish production leak protection. **Do not run it on a critical host until you have reviewed the implementation.** The two-pair connectivity experiment passed a privileged test on Arch Linux; crash and interruption handling remain unverified.
 
 ### Read-only lifecycle correlation
 
@@ -461,16 +461,14 @@ An experimental lifecycle journal can be compared with a complete live Linux dis
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --live
 ```
 
-The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion. Live ownership markers, inter-process locking and recovery remain future work. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
+The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion. Durable ownership proof and operational recovery remain future work; cooperating journal writers already use advisory locking. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
 
-### Resource fingerprint diagnostics
+### Ownership and recovery diagnostics
 
-`nordvpn_resource_fingerprint.compare_fingerprints` compares a versioned snapshot of allocation IDs, interface scopes and kernel interface indices with a complete read-only Linux discovery result. It reports missing scopes, missing interfaces and changed interface indices. Matching indices remain **unverified** because Linux can reuse them; a snapshot is neither a creation-time kernel ownership marker nor authority to modify or delete a resource. This is an internal diagnostic API, not a live management command. Privileged ownership registration, operation journalling and recovery tests remain outstanding in Part 2.
+Internal fingerprint, lifecycle, recovery and operation-intent modules support read-only assessment of resource drift and interrupted work. They do not prove kernel ownership or execute recovery. The experimental disposable namespace primitive retains a process-bound descriptor for identity checks, but is not a production cleanup mechanism. The privileged smoke probe (`sudo python tools/probe_namespace_ownership.py --run-privileged`) passed on Arch Linux with no named namespaces left behind. See the [routing design](docs/VPN-ROUTING-DESIGN.md#process-bound-disposable-namespace-ownership-experiment) for limitations and safe test instructions.
 
-The internal `nordvpn_recovery.assess_recovery()` helper provides read-only recovery triage from lifecycle and fingerprint evidence. It cannot verify live resource ownership or authorise changes. Operational recovery remains planned.
+## Internal package organisation
 
-The Part 2 offline operation-intent model records pending and uncertain create/retire attempts for recovery review. It does not perform networking changes or verify ownership; live provisioning and cleanup remain unavailable.
+The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.
 
-The experimental `nordvpn_namespace_ownership.py` module provides process-bound identity checks for newly created disposable Linux network namespaces. It is not a public management command or a production cleanup mechanism. See `docs/VPN-ROUTING-DESIGN.md` for its safety limitations.
-
-The optional `tools/probe_namespace_ownership.py` script provides a privileged, disposable namespace ownership smoke test (`sudo python tools/probe_namespace_ownership.py --run-privileged`). It is not part of the production VPN manager. Run it only in an approved Linux test environment; interrupted or uncertain cleanup requires manual inspection. See `docs/VPN-ROUTING-DESIGN.md` for the limitations.
+Part 2 establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. This does not prove crash-persistent ownership, safe deletion under concurrent name replacement, or automatic recovery. These are explicit prerequisites for any later privileged manager operation that would rely on them.

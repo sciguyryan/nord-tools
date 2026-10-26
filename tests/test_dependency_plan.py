@@ -2,8 +2,8 @@
 
 import unittest
 
-from nordvpn_dependency_plan import plan_dependencies
-from nordvpn_reconcile import ReconciliationError
+from nord_tools_internal.nordvpn_dependency_plan import plan_dependencies
+from nord_tools_internal.nordvpn_reconcile import ReconciliationError
 
 
 def policy(*names):

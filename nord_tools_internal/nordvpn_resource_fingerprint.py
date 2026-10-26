@@ -6,8 +6,8 @@ and namespace names can be reused, so even an exact match grants no authority.
 
 from __future__ import annotations
 
-from nordvpn_lifecycle import validate_journal
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 def compare_fingerprints(journal: object, recorded: object, observation: object) -> dict:

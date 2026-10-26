@@ -5,8 +5,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from nordvpn_lifecycle import inspect_lifecycle, record_transition, validate_journal, write_journal
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import inspect_lifecycle, record_transition, validate_journal, write_journal
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class LifecycleTests(unittest.TestCase):

@@ -3,9 +3,9 @@
 import unittest
 from unittest.mock import patch
 
-from nordvpn_evidence import correlate
+from nord_tools_internal.nordvpn_evidence import correlate
 from nordvpn_manage import main
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 OBSERVATION = {

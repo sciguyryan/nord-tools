@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from nordvpn_namespace_ownership import OwnershipError, disposable_namespace  # noqa: E402
+from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError, disposable_namespace  # noqa: E402
 
 
 def probe(*, confirmed: bool = False) -> str:

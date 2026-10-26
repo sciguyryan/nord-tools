@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 from nordvpn_connection import normalise_server_identity
 from nordvpn_filter import compile_filter
-from nordvpn_profiles import ProfileError, validate_policy
+from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
 
 
 class PolicyError(ValueError):

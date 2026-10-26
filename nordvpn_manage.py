@@ -13,18 +13,18 @@ from pathlib import Path
 import sys
 import tempfile
 
-from nordvpn_dependency_plan import plan_dependencies
-from nordvpn_management_views import cleanup_plan, topology_graph
-from nordvpn_discovery import DiscoveryError, discover
-from nordvpn_evidence import correlate
-from nordvpn_identity import inspect_allocations
-from nordvpn_lifecycle import inspect_lifecycle
-from nordvpn_lifecycle_evidence import inspect_live_lifecycle
-from nordvpn_identity_evidence import inspect_identity_evidence
-from nordvpn_profiles import ProfileError, validate_policy
-from nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
-from nordvpn_registry import RegistryError, audit_registry, read_json
-from nordvpn_transaction_plan import plan_transactions
+from nord_tools_internal.nordvpn_dependency_plan import plan_dependencies
+from nord_tools_internal.nordvpn_management_views import cleanup_plan, topology_graph
+from nord_tools_internal.nordvpn_discovery import DiscoveryError, discover
+from nord_tools_internal.nordvpn_evidence import correlate
+from nord_tools_internal.nordvpn_identity import inspect_allocations
+from nord_tools_internal.nordvpn_lifecycle import inspect_lifecycle
+from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycle
+from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
+from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
+from nord_tools_internal.nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
+from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, read_json
+from nord_tools_internal.nordvpn_transaction_plan import plan_transactions
 
 
 class ManagementError(ValueError):

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from nordvpn_profiles import validate_policy
-from nordvpn_reconcile import validate_inventory
+from nord_tools_internal.nordvpn_profiles import validate_policy
+from nord_tools_internal.nordvpn_reconcile import validate_inventory
 
 
 def topology_graph(policy: dict, *, ascii_only: bool = False, scope: str = "persistent") -> str:

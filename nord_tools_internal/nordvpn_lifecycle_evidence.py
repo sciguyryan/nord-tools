@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from nordvpn_lifecycle import validate_journal
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 def inspect_live_lifecycle(journal: object, observation: object) -> dict:

@@ -3,10 +3,10 @@
 import copy
 import unittest
 
-from nordvpn_identity import allocate_identity
-from nordvpn_lifecycle import record_transition
-from nordvpn_recovery import assess_recovery
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_identity import allocate_identity
+from nord_tools_internal.nordvpn_lifecycle import record_transition
+from nord_tools_internal.nordvpn_recovery import assess_recovery
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class RecoveryTests(unittest.TestCase):

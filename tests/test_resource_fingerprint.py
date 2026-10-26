@@ -2,8 +2,8 @@
 
 import unittest
 
-from nordvpn_registry import RegistryError
-from nordvpn_resource_fingerprint import compare_fingerprints
+from nord_tools_internal.nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_resource_fingerprint import compare_fingerprints
 
 
 class FingerprintTests(unittest.TestCase):

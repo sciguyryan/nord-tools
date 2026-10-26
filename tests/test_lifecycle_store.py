@@ -6,9 +6,9 @@ import tempfile
 import threading
 import unittest
 
-from nordvpn_lifecycle import write_journal
-from nordvpn_lifecycle_store import locked_journal, transition_journal, update_journal
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import write_journal
+from nord_tools_internal.nordvpn_lifecycle_store import locked_journal, transition_journal, update_journal
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class LifecycleStoreTests(unittest.TestCase):
@@ -79,7 +79,7 @@ class LifecycleStoreTests(unittest.TestCase):
                     entered.set()
                     if not release.wait(3):
                         raise RuntimeError("timed out waiting for test release")
-                    from nordvpn_lifecycle import record_transition
+                    from nord_tools_internal.nordvpn_lifecycle import record_transition
 
                     return record_transition(journal, self.token, "reserved")
 

@@ -6,8 +6,8 @@ interface fingerprint is independently verifiable proof of kernel ownership.
 
 from __future__ import annotations
 
-from nordvpn_lifecycle import validate_journal
-from nordvpn_resource_fingerprint import compare_fingerprints
+from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_resource_fingerprint import compare_fingerprints
 
 
 def assess_recovery(journal: object, recorded: object, observation: object) -> dict:

@@ -2,9 +2,9 @@
 
 import unittest
 
-from nordvpn_lifecycle import record_transition
-from nordvpn_lifecycle_evidence import inspect_live_lifecycle
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import record_transition
+from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycle
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class LiveLifecycleEvidenceTests(unittest.TestCase):

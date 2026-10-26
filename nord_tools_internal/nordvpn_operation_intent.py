@@ -10,8 +10,8 @@ import copy
 import re
 import secrets
 
-from nordvpn_lifecycle import validate_journal
-from nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 _OPERATION_ID = re.compile(r"[0-9a-f]{32}\Z")
 _ACTIONS = {"create", "retire"}

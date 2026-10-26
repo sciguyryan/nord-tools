@@ -10,7 +10,7 @@ import json
 import re
 from pathlib import Path
 
-from nordvpn_profiles import validate_policy
+from nord_tools_internal.nordvpn_profiles import validate_policy
 
 
 class ReconciliationError(ValueError):

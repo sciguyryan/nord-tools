@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 import secrets
 
-from nordvpn_registry import RegistryError, validate_registry
+from nord_tools_internal.nordvpn_registry import RegistryError, validate_registry
 
 TOKEN = re.compile(r"[0-9a-f]{32}\Z")
 
