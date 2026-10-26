@@ -46,6 +46,9 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [ ] Support shared profiles, explicitly isolated profiles and a default connection.
 - [ ] Integrate platform/dependency preflight and conservative privilege boundaries.
 
+- [x] Add experimental Phase 3 failure-injection coverage for process interruption, verifier errors, uncertain namespace retirement and failed uncertainty persistence. These tests do not establish crash-safe recovery or production ownership.
+- [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
+
 ### Part 4: Fail-closed routing, firewall and DNS
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.

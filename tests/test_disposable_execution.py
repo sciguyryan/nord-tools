@@ -87,6 +87,26 @@ class DisposableExecutionTests(unittest.TestCase):
             adapter.execute_disposable_session(self.store, self.journal, self.token, self.spec, 3, lambda _: True)
         self.assertEqual(self.outcomes(), ["uncertain"])
 
+    def test_namespace_retirement_failure_preserves_uncertainty(self):
+        @contextmanager
+        def failed_retirement(_name):
+            class Owned:
+                def verify(self):
+                    pass
+
+            yield Owned()
+            raise OSError("namespace retirement uncertain")
+
+        with (
+            patch.object(adapter, "disposable_namespace", side_effect=failed_retirement),
+            patch.object(adapter, "configure_disposable_wireguard"),
+            self.assertRaisesRegex(OSError, "retirement uncertain"),
+        ):
+            adapter.execute_disposable_session(self.store, self.journal, self.token, self.spec, 3, lambda _: True)
+        self.assertEqual(self.outcomes(), ["uncertain"])
+        with self.assertRaises(RegistryError):
+            self.run_session()
+
     def test_mismatched_allocation_refused_before_mutation(self):
         other = TunnelSpecification(
             self.spec.namespace,

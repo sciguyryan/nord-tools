@@ -71,6 +71,49 @@ class ProvisionExecutionTests(unittest.TestCase):
         with self.assertRaises(RegistryError):
             execute_recorded_creation(self.store, base, self.token, lambda: self.fail("mutated"), lambda _: True)
 
+    def test_keyboard_interrupt_marks_operation_uncertain(self):
+        def interrupted():
+            raise KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            execute_recorded_creation(self.store, self.journal, self.token, interrupted, lambda _: True)
+        self.assertEqual(self.outcomes(), ["uncertain"])
+
+    def test_verifier_exception_marks_operation_uncertain(self):
+        def verifier(_):
+            raise ValueError("observation failed")
+
+        with self.assertRaisesRegex(ValueError, "observation failed"):
+            execute_recorded_creation(self.store, self.journal, self.token, lambda: "created", verifier)
+        self.assertEqual(self.outcomes(), ["uncertain"])
+
+    def test_uncertainty_persistence_failure_is_explicit_and_blocks_retry(self):
+        from nord_tools_internal import nordvpn_provision_execution as execution
+
+        real_update = execution.update_intent
+
+        def update(*args, **kwargs):
+            if kwargs.get("outcome") == "uncertain":
+                raise OSError("storage unavailable")
+            return real_update(*args, **kwargs)
+
+        with (
+            patch.object(execution, "update_intent", side_effect=update),
+            self.assertRaisesRegex(ProvisioningUncertainError, "could not be recorded"),
+        ):
+            execute_recorded_creation(
+                self.store,
+                self.journal,
+                self.token,
+                lambda: (_ for _ in ()).throw(RuntimeError("operation failed")),
+                lambda _: True,
+            )
+        self.assertEqual(self.outcomes(), ["pending"])
+        with self.assertRaises(RegistryError):
+            execute_recorded_creation(
+                self.store, self.journal, self.token, lambda: self.fail("retried"), lambda _: True
+            )
+
     def test_completion_write_failure_reports_uncertain(self):
         from nord_tools_internal import nordvpn_provision_execution as execution
 

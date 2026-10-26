@@ -47,14 +47,17 @@ def execute_recorded_creation(
         result = operation()
         if verify(result) is not True:
             raise ProvisioningUncertainError("creation could not be independently verified")
-    except BaseException:
+    except BaseException as operation_error:
         # Even an exception before an observed mutation does not prove that the
-        # kernel was unchanged. Preserve uncertainty rather than claim failure.
+        # kernel was unchanged. Never report a reliable journal outcome if the
+        # uncertainty write itself failed. Preserve the original error as context.
         try:
             update_intent(store_path, validated, operation_id=operation_id, outcome="uncertain")
-        except Exception:
-            pass  # The original exception must not be concealed.
-        raise
+        except Exception as persistence_error:
+            raise ProvisioningUncertainError(
+                "operation failed and its uncertain outcome could not be recorded; inspect the pending intent"
+            ) from persistence_error
+        raise operation_error.with_traceback(operation_error.__traceback__)
     try:
         update_intent(store_path, validated, operation_id=operation_id, outcome="completed")
     except Exception as exc:
