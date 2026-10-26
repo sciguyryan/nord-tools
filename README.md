@@ -482,3 +482,7 @@ Part 3 has begun with a validated, credential-free internal tunnel specification
 The internal provisioning foundation accepts a WireGuard private key only from an already-open file descriptor referring to a pipe or a regular file with private permissions. It validates canonical key encoding and overwrites its temporary input buffer on exit. The descriptor remains the caller's responsibility. This is not secure-memory storage, a credential broker, or an operational tunnel executor. Never place private keys in command-line arguments, logs or provisioning plans.
 
 The internal operation-intent store provides locked, durable, non-privileged intent recording. It does not authorise network changes, and separate lifecycle and intent files do not form a single atomic transaction.
+
+### Experimental disposable WireGuard configuration
+
+`nord_tools_internal.nordvpn_wireguard_session.configure_disposable_wireguard` is an internal, explicitly experimental building block that configures a WireGuard interface inside an already-created, descriptor-bound disposable namespace. It consumes a private key through an inherited descriptor and does not install routes, change DNS, or modify host firewall settings. It does not create or retire namespaces, record durable operation intents, establish crash-persistent ownership, or provide production provisioning. The caller remains responsible for journal handling, namespace lifetime, failure recovery and all privileged authorisation. It is not exposed as a public CLI command.
