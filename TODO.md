@@ -38,6 +38,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Move internal management and lifecycle modules into `nord_tools_internal/` without changing the public CLI.
 
 ### Part 3: Live tunnel provisioning
+- [x] Extend the disposable two-pair experiment with read-only validation of a fresh peer handshake and bidirectional traffic counters. This is experimental connectivity evidence, not production provisioning or ownership verification.
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
 - [ ] Phase 1 completion: implement securely authorised creation-time ownership and durable intent recording before any privileged mutation. A single-use descriptor-based private-key input boundary is implemented, but no privileged executor exists yet.
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.

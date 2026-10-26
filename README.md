@@ -451,7 +451,7 @@ The optional `tools/generate_kongroo_blob.py` utility regenerates the encrypted 
 
 ## Disposable WireGuard integration experiment
 
-`python nord_tools.py wireguard-probe` prints the planned experiment without changing networking. On a disposable Linux VM, `sudo python nord_tools.py wireguard-probe --execute` creates two separate client/server WireGuard pairs inside four temporary namespaces, verifies tunnel traffic and shutdown, then attempts cleanup. The experiment requires `ip`, `wg`, `ping`, root privileges and kernel WireGuard support. It does not install NordVPN credentials, modify host default routes, configure DNS or establish production leak protection. **Do not run it on a critical host until you have reviewed the implementation.** The two-pair connectivity experiment passed a privileged test on Arch Linux; crash and interruption handling remain unverified.
+`python nord_tools.py wireguard-probe` prints the planned experiment without changing networking. On a disposable Linux VM, `sudo python nord_tools.py wireguard-probe --execute` creates two separate client/server WireGuard pairs inside four temporary namespaces, verifies tunnel traffic, a fresh bidirectional WireGuard peer exchange and shutdown, then attempts cleanup. The experiment requires `ip`, `wg`, `ping`, root privileges and kernel WireGuard support. It does not install NordVPN credentials, modify host default routes, configure DNS or establish production leak protection. **Do not run it on a critical host until you have reviewed the implementation.** The two-pair connectivity experiment passed a privileged test on Arch Linux; crash and interruption handling remain unverified.
 
 ### Read-only lifecycle correlation
 

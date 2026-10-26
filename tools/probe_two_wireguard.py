@@ -15,6 +15,10 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from nord_tools_internal.nordvpn_wireguard_observation import ObservationError, require_fresh_exchange
 
 
 class HarnessError(RuntimeError):
@@ -94,8 +98,13 @@ def pair(client: str, server: str, client_link: str, server_link: str, index: in
     run("ip", "-n", client, "route", "add", f"{tunnel}.1/32", "dev", "wgtest")
     run("ip", "-n", server, "route", "add", f"{tunnel}.2/32", "dev", "wgtest")
     # No default route is installed in any namespace or on the host.
+    started_at = int(time.time()) - 1
     run("ip", "netns", "exec", client, "ping", "-n", "-c", "2", "-W", "2", f"{tunnel}.1")
-    run("ip", "netns", "exec", server, "wg", "show", "wgtest", "latest-handshakes")
+    dump = run("ip", "netns", "exec", client, "wg", "show", "wgtest", "dump").stdout
+    try:
+        require_fresh_exchange(dump, server_public, started_at)
+    except ObservationError as exc:
+        raise HarnessError(f"Pair {index} did not establish a fresh WireGuard exchange: {exc}") from exc
     print(f"PASS: independent WireGuard pair {index} exchanged tunnel packets")
 
 
