@@ -490,3 +490,7 @@ The internal operation-intent store provides locked, durable, non-privileged int
 ### Experimental disposable WireGuard configuration probe
 
 Run `python tools/probe_wireguard_session.py` to inspect the dry-run description. On a disposable Linux test host, `sudo python tools/probe_wireguard_session.py --run-privileged` creates one named namespace, configures a WireGuard interface through the descriptor-based session component, verifies its public key and peer, and retires the namespace. It does not establish a peer handshake or prove production provisioning, persistent ownership or fail-closed routing. Inspect `sudo ip netns list` after execution; do not delete uncertain resources based on names alone.
+
+### Experimental creation intent execution
+
+`nord_tools_internal.nordvpn_provision_execution.execute_recorded_creation` requires an existing validated operation store and persists a pending creation intent before invoking a caller-supplied operation. It records completion only after a caller-supplied verification succeeds. Exceptions and failed verification leave an uncertain or pending intent that blocks automatic retry. This is an internal experimental coordination boundary, not a public command or a privileged provisioning executor. The callbacks must independently establish their authority to create disposable resources. Separate lifecycle and intent files are not transactional, and these records never authorise resource deletion or production VPN provisioning.

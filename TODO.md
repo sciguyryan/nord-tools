@@ -84,4 +84,6 @@ Part 2 foundations and internal package organisation are complete. The normal-op
 
 - [ ] Bind durable intent recording and creation-time ownership evidence into a privileged WireGuard executor, with crash recovery and a transactional state model before any kernel mutation.
 
-- [ ] Obtain privileged acceptance for the disposable session configuration probe; then integrate durable intent and lifecycle evidence into an authorised provisioning executor before production use.
+- [x] Obtain privileged acceptance for the disposable session configuration probe on Arch Linux.
+
+- [ ] Connect the journal-gated experimental execution adapter to an authorised privileged provisioner with independently verified creation-time ownership and a crash-safe recovery protocol. The adapter alone is not an operational executor.
