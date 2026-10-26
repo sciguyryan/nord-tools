@@ -65,41 +65,19 @@ The current JSON configuration does not yet encode fallback pools, server rotati
 
 ## Routing topology inspection
 
-The offline topology compiler provides a **design-only routing model**, not a network
-namespace implementation. It answers a question we need settled before any
-privileged networking code: which connection and isolation domain owns each
-configured application?
+The offline topology compiler provides a **design-only routing model**, not a network namespace implementation. It answers a question we need settled before any privileged networking code: which connection and isolation domain owns each configured application?
 
 ```bash
 python nordvpn_topology.py --policy examples/vpn-policy.json
 ```
 
-The JSON output lists a persistent host domain for the default profile and an
-on-demand namespace domain for each other named profile. Explicit applications
-assigned to the same named profile share that domain. An application absent
-from the policy inherits the host domain. A profile marked `isolated` does not
-create one connection per application: separate named profiles are required
-for separate connections. That distinction avoids promising isolation which
-this configuration cannot express.
+The JSON output lists a persistent host domain for the default profile and an on-demand namespace domain for each other named profile. Explicit applications assigned to the same named profile share that domain. An application absent from the policy inherits the host domain. A profile marked `isolated` does not create one connection per application: separate named profiles are required for separate connections. That distinction avoids promising isolation which this configuration cannot express.
 
-Every domain carries the intended fail-closed, DNS, IPv4, IPv6 and tunnel
-underlay requirements. They are **requirements for the eventual runtime**, not
-claims that the running machine is protected. The output explicitly records
-`"runtime_enforcement": false` and `"status": "design_only"`. No network
-commands are executed, no provider credentials are read, and the official
-NordVPN client is left alone.
+Every domain carries the intended fail-closed, DNS, IPv4, IPv6 and tunnel underlay requirements. They are **requirements for the eventual runtime**, not claims that the running machine is protected. The output explicitly records `"runtime_enforcement": false` and `"status": "design_only"`. No network commands are executed, no provider credentials are read, and the official NordVPN client is left alone.
 
-This also fixes the intended optimisation boundary: `default_optimisation_scope`
-contains only the default profile. Other profiles and their endpoints must not
-be reselected when the default changes. Applications deliberately assigned to
-the default profile do share its endpoint and can be interrupted by a switch.
+This also fixes the intended optimisation boundary: `default_optimisation_scope` contains only the default profile. Other profiles and their endpoints must not be reselected when the default changes. Applications deliberately assigned to the default profile do share its endpoint and can be interrupted by a switch.
 
-A remaining feasibility step is a disposable two-tunnel integration harness. It
-needs to establish namespace underlay routing, DNS isolation, IPv6 handling and
-fail-closed firewall behaviour with deliberate link failures before we can
-claim that this design works on a real host. In particular, a namespace VPN
-cannot simply rely on the host's default route: doing so could nest the
-connection inside the host VPN or prevent the second tunnel from connecting.
+A remaining feasibility step is a disposable two-tunnel integration harness. It needs to establish namespace underlay routing, DNS isolation, IPv6 handling and fail-closed firewall behaviour with deliberate link failures before we can claim that this design works on a real host. In particular, a namespace VPN cannot simply rely on the host's default route: doing so could nest the connection inside the host VPN or prevent the second tunnel from connecting.
 
 ## Disposable namespace firewall probe
 
@@ -178,3 +156,7 @@ The `manage dependency-plan` command accepts a version 1 graph whose `dependenci
 `manage cleanup-plan --inventory FILE` describes candidate profile retirements from an explicit simulated inventory. It excludes externally owned profiles, rejects malformed records, and always reports that it is unsafe to execute. This is not a replacement for `cleanup`: safe live removal will require independently verified resource ownership, an ordered dependency graph, durable recovery records and fail-closed protections. No host state is changed by either command.
 
 The README concentrates on commands and current capabilities; this design document retains the reasoning and safety boundaries. The five-increment offline management programme is complete, but privileged provisioning, real ownership binding, systemd restoration, rollback and cleanup execution are not implemented or certified.
+
+### Read-only recovery triage (Part 2)
+
+`nordvpn_recovery.assess_recovery()` combines a validated lifecycle journal, recorded interface fingerprints and a complete read-only discovery snapshot. It classifies interrupted creation or retirement, missing or changed identities, retired-name reuse and insufficient evidence. All classifications require operator review. No classification establishes creation-time ownership, grants permission to modify or delete resources, or performs automatic recovery. A kernel interface index can be reused, so matching fingerprints are diagnostic only. Privileged creation-time ownership binding, recovery execution and integration tests remain outstanding.

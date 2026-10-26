@@ -70,6 +70,8 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 ## Acceptance and delivery rules
 
-Each increment must include a complete project archive with Git history, a revision-specific British English commit message, meaningful tests, documentation updates and explicit local acceptance instructions. Preserve the canonical working tree and existing behaviour. Keep README guidance concise, with architectural detail in `docs/VPN-ROUTING-DESIGN.md`.
+Each increment must include a complete source archive without Git metadata or Python cache artefacts, a revision-specific British English commit message, meaningful tests, documentation updates and explicit local acceptance instructions. Preserve the canonical working tree and existing behaviour. Keep README guidance concise, with architectural detail in `docs/VPN-ROUTING-DESIGN.md`.
 
 The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
+
+Part 2 recovery triage now combines journal and fingerprint diagnostics without granting ownership authority. Creation-time verifiable ownership, privileged interruption tests, and the final package-structure refactor remain open.
