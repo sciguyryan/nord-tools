@@ -470,3 +470,5 @@ The output identifies missing names, ambiguous interface scopes and possible lif
 The internal `nordvpn_recovery.assess_recovery()` helper provides read-only recovery triage from lifecycle and fingerprint evidence. It cannot verify live resource ownership or authorise changes. Operational recovery remains planned.
 
 The Part 2 offline operation-intent model records pending and uncertain create/retire attempts for recovery review. It does not perform networking changes or verify ownership; live provisioning and cleanup remain unavailable.
+
+The experimental `nordvpn_namespace_ownership.py` module provides process-bound identity checks for newly created disposable Linux network namespaces. It is not a public management command or a production cleanup mechanism. See `docs/VPN-ROUTING-DESIGN.md` for its safety limitations.
