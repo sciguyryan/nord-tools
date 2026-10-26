@@ -35,7 +35,7 @@ python nord_tools.py manage lifecycle --journal path/to/lifecycle.json
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --observed path/to/simulated-observations.json
 ```
 
-The `nordvpn_lifecycle` module also provides an atomic, permission-restricted fixture writer for controlled development use. Operational journalling still requires inter-process locking, independently verified kernel identity and privileged failure/recovery testing.
+The `nordvpn_lifecycle` module also provides an atomic, permission-restricted fixture writer for controlled development use. A separate `nordvpn_lifecycle_store` module now serialises cooperating offline writers using a stable Linux advisory lock, validates each update and atomically replaces the journal. It refuses symlinked paths and missing or corrupt journals; it does not grant resource ownership or defend against hostile writers with directory access. Operational journalling still requires independently verified kernel identity and privileged failure/recovery testing.
 
 ## Tunnel management implementation status
 

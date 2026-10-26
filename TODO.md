@@ -31,7 +31,8 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [ ] Establish independently verifiable ownership evidence at resource creation, beyond names or allocation records alone.
 - [x] Introduce a strict, versioned offline lifecycle journal with allocation-bound event digests, transition validation, atomic fixture persistence and conservative simulated observation comparisons.
 - [x] Add read-only live namespace/interface correlation for lifecycle claims, reporting missing, ambiguous and potentially stale names without granting ownership authority.
-- [ ] Implement independently verified kernel ownership markers, privileged operation journalling, inter-process locking and live drift detection before any operational resource changes.
+- [x] Add a stable advisory inter-process lock and serialised, atomic offline lifecycle transitions for cooperating writers.
+- [ ] Implement independently verified kernel ownership markers, privileged operation journalling and authoritative live drift detection before any operational resource changes.
 - [x] Keep offline lifecycle observations non-authoritative and prohibit any modification or deletion based on names, journal claims or matching simulated identifiers alone.
 - [ ] Demonstrate this boundary in privileged integration and recovery tests before live provisioning.
 
