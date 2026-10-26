@@ -475,7 +475,7 @@ Part 2 establishes offline lifecycle and operation-intent records, read-only Lin
 
 ## WireGuard provisioning development
 
-Part 3 has begun with a validated, credential-free internal tunnel specification and offline plan. This does not create a WireGuard interface, handle private keys or provide live VPN connectivity. Privileged provisioning and fail-closed routing remain unavailable; see `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the acceptance boundaries.
+Part 3 has established experimental disposable WireGuard configuration, independent tunnel connectivity and journal-gated execution, all exercised through privileged probes on Arch Linux. These are test-only capabilities, not a persistent or production-ready VPN manager. Provider credential integration, crash-persistent ownership, race-safe resource mutation, recovery and fail-closed routing remain outstanding; see `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the acceptance boundaries.
 
 ## WireGuard credential input boundary
 
@@ -498,3 +498,7 @@ Run `python tools/probe_wireguard_session.py` to inspect the dry-run description
 ### Journal-gated disposable WireGuard sessions
 
 The internal `execute_disposable_session` adapter combines an existing operation-intent store, an allocation-bound lifecycle journal, descriptor-bound namespace creation, WireGuard configuration and caller-supplied kernel peer verification. It records the pending intent before creating a namespace and records completion only after the disposable namespace context returns. This is an experimental integration boundary, not persistent provisioning or proof of crash-safe ownership. Failed or uncertain sessions require manual review and are not retried automatically. Interruption, verifier failure and namespace retirement failure retain an unresolved intent; if recording uncertainty itself fails, the executor reports that persistence failure explicitly and leaves the pending intent in place.
+
+### Integrated disposable provisioning acceptance
+
+`python tools/probe_disposable_execution.py` is a no-change dry run. On a disposable Linux test machine, `sudo python tools/probe_disposable_execution.py --run-privileged` exercises the journal-gated creation path, kernel peer verification and namespace retirement. This probe passed on Arch Linux, and the subsequent `sudo ip netns list` output was empty. This is an experimental acceptance probe, not a production VPN provisioning command. Crash-persistent ownership, race-safe deletion, full recovery and leak prevention remain outstanding.
