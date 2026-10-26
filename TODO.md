@@ -87,3 +87,5 @@ Part 2 foundations and internal package organisation are complete. The normal-op
 - [x] Obtain privileged acceptance for the disposable session configuration probe on Arch Linux.
 
 - [ ] Connect the journal-gated experimental execution adapter to an authorised privileged provisioner with independently verified creation-time ownership and a crash-safe recovery protocol. The adapter alone is not an operational executor.
+
+- Integrate a persistent privileged WireGuard provisioner only after race-safe ownership, atomic lifecycle coordination and crash recovery are established; the journal-gated disposable session is an experimental acceptance boundary, not production provisioning.

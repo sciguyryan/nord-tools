@@ -494,3 +494,7 @@ Run `python tools/probe_wireguard_session.py` to inspect the dry-run description
 ### Experimental creation intent execution
 
 `nord_tools_internal.nordvpn_provision_execution.execute_recorded_creation` requires an existing validated operation store and persists a pending creation intent before invoking a caller-supplied operation. It records completion only after a caller-supplied verification succeeds. Exceptions and failed verification leave an uncertain or pending intent that blocks automatic retry. This is an internal experimental coordination boundary, not a public command or a privileged provisioning executor. The callbacks must independently establish their authority to create disposable resources. Separate lifecycle and intent files are not transactional, and these records never authorise resource deletion or production VPN provisioning.
+
+### Journal-gated disposable WireGuard sessions
+
+The internal `execute_disposable_session` adapter combines an existing operation-intent store, an allocation-bound lifecycle journal, descriptor-bound namespace creation, WireGuard configuration and caller-supplied kernel peer verification. It records the pending intent before creating a namespace and records completion only after the disposable namespace context returns. This is an experimental integration boundary, not persistent provisioning or proof of crash-safe ownership. Failed or uncertain sessions require manual review and are not retried automatically.

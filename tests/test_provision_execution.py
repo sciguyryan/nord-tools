@@ -85,13 +85,7 @@ class ProvisionExecutionTests(unittest.TestCase):
             patch.object(execution, "update_intent", side_effect=update),
             self.assertRaises(ProvisioningUncertainError),
         ):
-            execute_recorded_creation(
-                self.store,
-                self.journal,
-                self.token,
-                lambda: "created",
-                lambda _: True,
-            )
+            execute_recorded_creation(self.store, self.journal, self.token, lambda: "created", lambda _: True)
         self.assertEqual(self.outcomes(), ["pending"])
 
 
