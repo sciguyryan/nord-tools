@@ -160,3 +160,7 @@ The README concentrates on commands and current capabilities; this design docume
 ### Read-only recovery triage (Part 2)
 
 `nordvpn_recovery.assess_recovery()` combines a validated lifecycle journal, recorded interface fingerprints and a complete read-only discovery snapshot. It classifies interrupted creation or retirement, missing or changed identities, retired-name reuse and insufficient evidence. All classifications require operator review. No classification establishes creation-time ownership, grants permission to modify or delete resources, or performs automatic recovery. A kernel interface index can be reused, so matching fingerprints are diagnostic only. Privileged creation-time ownership binding, recovery execution and integration tests remain outstanding.
+
+## Operation intent boundary
+
+`nordvpn_operation_intent.py` records validated offline create and retire intents against a specific allocation identity and lifecycle transition sequence. Pending and uncertain intents require operator review, and duplicate unresolved operations are rejected. This is a planning and recovery input only: even an intent marked completed is not independent evidence that a kernel resource was created by Nord Tools. The future privileged provisioner must establish verifiable creation-time ownership, durable operation ordering and live identity checks before any resource may be modified or deleted.

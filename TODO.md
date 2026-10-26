@@ -33,7 +33,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Add read-only live namespace/interface correlation for lifecycle claims, reporting missing, ambiguous and potentially stale names without granting ownership authority.
 - [x] Add a stable advisory inter-process lock and serialised, atomic offline lifecycle transitions for cooperating writers.
 - [x] Add offline interface-index fingerprint comparison against complete read-only discovery, reporting name reuse and scope drift without treating matches as ownership proof.
-- [ ] Implement independently verified kernel ownership markers, privileged operation journalling and authoritative live drift detection before any operational resource changes.
+- [ ] Implement independently verified kernel ownership markers, privileged operation journalling and authoritative live drift detection before any operational resource changes. Offline operation intents now bind pending create/retire attempts to lifecycle transitions, but do not provide privileged execution or independent ownership proof.
 - [x] Keep offline lifecycle observations non-authoritative and prohibit any modification or deletion based on names, journal claims or matching simulated identifiers alone.
 - [ ] Demonstrate this boundary in privileged integration and recovery tests before live provisioning.
 
@@ -74,4 +74,4 @@ Each increment must include a complete source archive without Git metadata or Py
 
 The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
 
-Part 2 recovery triage now combines journal and fingerprint diagnostics without granting ownership authority. Creation-time verifiable ownership, privileged interruption tests, and the final package-structure refactor remain open.
+Part 2 recovery triage combines journal and fingerprint diagnostics, and offline operation intents now flag unresolved or uncertain actions without granting ownership authority. Creation-time verifiable ownership, privileged interruption tests, and the final package-structure refactor remain open.

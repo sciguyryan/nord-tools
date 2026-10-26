@@ -468,3 +468,5 @@ The output identifies missing names, ambiguous interface scopes and possible lif
 `nordvpn_resource_fingerprint.compare_fingerprints` compares a versioned snapshot of allocation IDs, interface scopes and kernel interface indices with a complete read-only Linux discovery result. It reports missing scopes, missing interfaces and changed interface indices. Matching indices remain **unverified** because Linux can reuse them; a snapshot is neither a creation-time kernel ownership marker nor authority to modify or delete a resource. This is an internal diagnostic API, not a live management command. Privileged ownership registration, operation journalling and recovery tests remain outstanding in Part 2.
 
 The internal `nordvpn_recovery.assess_recovery()` helper provides read-only recovery triage from lifecycle and fingerprint evidence. It cannot verify live resource ownership or authorise changes. Operational recovery remains planned.
+
+The Part 2 offline operation-intent model records pending and uncertain create/retire attempts for recovery review. It does not perform networking changes or verify ownership; live provisioning and cleanup remain unavailable.
