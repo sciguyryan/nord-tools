@@ -486,3 +486,7 @@ The internal operation-intent store provides locked, durable, non-privileged int
 ### Experimental disposable WireGuard configuration
 
 `nord_tools_internal.nordvpn_wireguard_session.configure_disposable_wireguard` is an internal, explicitly experimental building block that configures a WireGuard interface inside an already-created, descriptor-bound disposable namespace. It consumes a private key through an inherited descriptor and does not install routes, change DNS, or modify host firewall settings. It does not create or retire namespaces, record durable operation intents, establish crash-persistent ownership, or provide production provisioning. The caller remains responsible for journal handling, namespace lifetime, failure recovery and all privileged authorisation. It is not exposed as a public CLI command.
+
+### Experimental disposable WireGuard configuration probe
+
+Run `python tools/probe_wireguard_session.py` to inspect the dry-run description. On a disposable Linux test host, `sudo python tools/probe_wireguard_session.py --run-privileged` creates one named namespace, configures a WireGuard interface through the descriptor-based session component, verifies its public key and peer, and retires the namespace. It does not establish a peer handshake or prove production provisioning, persistent ownership or fail-closed routing. Inspect `sudo ip netns list` after execution; do not delete uncertain resources based on names alone.

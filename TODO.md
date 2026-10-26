@@ -83,3 +83,5 @@ The eight-part schedule is a planning limit, **not a waiver of safety requiremen
 Part 2 foundations and internal package organisation are complete. The normal-operation disposable namespace probe passed on Arch Linux, but does not establish persistent ownership or race-safe deletion. Before enabling any live mutation or automated cleanup that relies on ownership, implement and verify crash-persistent resource ownership and race-safe mutation authority, including interrupted-operation recovery and privileged adversarial integration tests. Do not infer deletion authority from resource names, journal records, inode fingerprints or completed operation intents alone. These requirements remain blockers for the relevant operational actions in subsequent parts.
 
 - [ ] Bind durable intent recording and creation-time ownership evidence into a privileged WireGuard executor, with crash recovery and a transactional state model before any kernel mutation.
+
+- [ ] Obtain privileged acceptance for the disposable session configuration probe; then integrate durable intent and lifecycle evidence into an authorised provisioning executor before production use.
