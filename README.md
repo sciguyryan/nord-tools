@@ -472,3 +472,7 @@ Internal fingerprint, lifecycle, recovery and operation-intent modules support r
 The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.
 
 Part 2 establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. This does not prove crash-persistent ownership, safe deletion under concurrent name replacement, or automatic recovery. These are explicit prerequisites for any later privileged manager operation that would rely on them.
+
+## WireGuard provisioning development
+
+Part 3 has begun with a validated, credential-free internal tunnel specification and offline plan. This does not create a WireGuard interface, handle private keys or provide live VPN connectivity. Privileged provisioning and fail-closed routing remain unavailable; see `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the acceptance boundaries.
