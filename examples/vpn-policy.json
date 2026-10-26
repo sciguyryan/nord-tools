@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "defaults": {"vpn": "primary"},
+  "vpn_profiles": {
+    "primary": {
+      "selection": {
+        "mode": "fastest",
+        "filter": "country:ad&protocol:udp",
+        "minimum_improvement_ms": 10,
+        "minimum_improvement_percent": 15
+      }
+    },
+    "discord": {
+      "selection": {"mode": "country", "country": "GB"},
+      "sharing": "shared"
+    },
+    "pinned_example": {
+      "selection": {"mode": "pinned", "server": "gb123.nordvpn.com"},
+      "sharing": "isolated"
+    }
+  },
+  "applications": {
+    "discord": {"executable": "/usr/bin/discord", "vpn": "discord"}
+  }
+}

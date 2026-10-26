@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "resources": [
+    {"kind": "namespace", "identifier": "nt-main", "profile": "main", "owner": "nord-tools"},
+    {"kind": "interface", "identifier": "nt-wg-main", "profile": "main", "owner": "nord-tools"}
+  ]
+}

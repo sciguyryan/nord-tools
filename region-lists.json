@@ -1,0 +1,24 @@
+{
+  "low-ads": {
+    "description": "Experimental NordVPN OpenVPN locations worth testing for fewer YouTube adverts. Selected using YouTube monetised-market eligibility, independent reports and a NordVPN-specific community test; see docs/LOW-ADS-MAINTENANCE.md. Not an ad blocker or guarantee.",
+    "countries": [
+      "ad",
+      "al",
+      "ao",
+      "bn",
+      "bs",
+      "bt",
+      "bz",
+      "gl",
+      "im",
+      "je",
+      "mc",
+      "mm",
+      "mn",
+      "mz",
+      "pg",
+      "tt",
+      "uz"
+    ]
+  }
+}

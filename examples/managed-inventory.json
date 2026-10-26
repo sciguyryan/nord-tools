@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "profiles": {
+    "main": {
+      "owner": "nord-tools",
+      "state": "ready",
+      "configuration": {
+        "selection": {
+          "mode": "country",
+          "country": "GB"
+        },
+        "sharing": "shared"
+      }
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "version": 2,
+  "resources": [
+    {
+      "kind": "namespace",
+      "identifier": "nt-example",
+      "profile": "default",
+      "owner": "nord-tools",
+      "allocation_id": "0123456789abcdef0123456789abcdef"
+    }
+  ]
+}

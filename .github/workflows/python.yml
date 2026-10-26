@@ -1,0 +1,54 @@
+name: Python checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    name: Ruff and generated data
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install development tools
+        run: python -m pip install 'ruff==0.14.2' 'pycountry==24.6.1'
+      - name: Ruff lint
+        run: ruff check .
+      - name: Ruff format
+        run: ruff format --check --diff .
+      - name: Verify generated ISO data
+        run: python tools/generate_country_names.py --check
+
+  tests:
+    name: Offline tests (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install coverage
+        run: python -m pip install 'coverage==7.10.7'
+      - name: Run deterministic offline tests with coverage
+        run: |
+          python -m coverage run --branch --source=nordvpn_benchmark,nordvpn_cache,nordvpn_filter,nordvpn_regions,nordvpn_connection -m unittest discover -s tests -v
+          python -m coverage report --show-missing
+      - name: Export coverage report
+        if: matrix.python-version == '3.13'
+        run: python -m coverage xml -o coverage.xml
+      - name: Upload coverage report
+        if: matrix.python-version == '3.13'
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-coverage
+          path: coverage.xml
