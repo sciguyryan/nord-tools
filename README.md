@@ -476,3 +476,7 @@ Part 2 establishes offline lifecycle and operation-intent records, read-only Lin
 ## WireGuard provisioning development
 
 Part 3 has begun with a validated, credential-free internal tunnel specification and offline plan. This does not create a WireGuard interface, handle private keys or provide live VPN connectivity. Privileged provisioning and fail-closed routing remain unavailable; see `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the acceptance boundaries.
+
+## WireGuard credential input boundary
+
+The internal provisioning foundation accepts a WireGuard private key only from an already-open file descriptor referring to a pipe or a regular file with private permissions. It validates canonical key encoding and overwrites its temporary input buffer on exit. The descriptor remains the caller's responsibility. This is not secure-memory storage, a credential broker, or an operational tunnel executor. Never place private keys in command-line arguments, logs or provisioning plans.

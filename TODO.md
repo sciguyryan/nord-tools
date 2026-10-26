@@ -39,7 +39,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 ### Part 3: Live tunnel provisioning
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
-- [ ] Phase 1 completion: implement securely authorised creation-time ownership and durable intent recording before any privileged mutation.
+- [ ] Phase 1 completion: implement securely authorised creation-time ownership and durable intent recording before any privileged mutation. A single-use descriptor-based private-key input boundary is implemented, but no privileged executor exists yet.
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
 - [ ] Support shared profiles, explicitly isolated profiles and a default connection.
 - [ ] Integrate platform/dependency preflight and conservative privilege boundaries.
