@@ -462,3 +462,7 @@ python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --live
 ```
 
 The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion. Live ownership markers, inter-process locking and recovery remain future work. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
+
+### Resource fingerprint diagnostics
+
+`nordvpn_resource_fingerprint.compare_fingerprints` compares a versioned snapshot of allocation IDs, interface scopes and kernel interface indices with a complete read-only Linux discovery result. It reports missing scopes, missing interfaces and changed interface indices. Matching indices remain **unverified** because Linux can reuse them; a snapshot is neither a creation-time kernel ownership marker nor authority to modify or delete a resource. This is an internal diagnostic API, not a live management command. Privileged ownership registration, operation journalling and recovery tests remain outstanding in Part 2.

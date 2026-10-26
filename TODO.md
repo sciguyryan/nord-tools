@@ -32,6 +32,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Introduce a strict, versioned offline lifecycle journal with allocation-bound event digests, transition validation, atomic fixture persistence and conservative simulated observation comparisons.
 - [x] Add read-only live namespace/interface correlation for lifecycle claims, reporting missing, ambiguous and potentially stale names without granting ownership authority.
 - [x] Add a stable advisory inter-process lock and serialised, atomic offline lifecycle transitions for cooperating writers.
+- [x] Add offline interface-index fingerprint comparison against complete read-only discovery, reporting name reuse and scope drift without treating matches as ownership proof.
 - [ ] Implement independently verified kernel ownership markers, privileged operation journalling and authoritative live drift detection before any operational resource changes.
 - [x] Keep offline lifecycle observations non-authoritative and prohibit any modification or deletion based on names, journal claims or matching simulated identifiers alone.
 - [ ] Demonstrate this boundary in privileged integration and recovery tests before live provisioning.
