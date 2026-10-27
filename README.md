@@ -319,11 +319,9 @@ The test jobs also report branch coverage, with an XML report uploaded from Pyth
 
 Before downloading profiles or probing servers, the benchmarker checks the NordVPN Linux CLI when available. If it confirms an active NordVPN connection, the run stops without disconnecting or replacing that connection. Disconnect manually using `nordvpn disconnect` before benchmarking to avoid measuring through the tunnel. Use `--allow-active-vpn` to deliberately continue through an active connection; a warning remains visible. If the NordVPN client is absent or its status cannot be read, the check reports uncertainty and continues. Other VPN clients and routes are not reliably detected by this check, so verify your network path separately. The preflight also applies when `--auto-connect` is requested; automatic connection occurs only after measurements finish.
 
-
 ### Country flags in terminal results
 
 The Unicode terminal table prefixes recognised countries with their flag emoji (for example, `🇬🇧 United Kingdom`). Flags are derived from canonical ISO country codes, including NordVPN's `uk` to `gb` alias, and require no additional dependency. Unrecognised locations retain their text label without a flag. Use `--ascii` for a plain-text table without emoji; CSV and JSON exports continue to contain country names rather than presentation-only emoji. Flag appearance depends on the terminal's font and emoji support.
-
 
 ## Probe methods
 
@@ -527,3 +525,9 @@ npm install --no-save --no-package-lock 'markdownlint-cli2@0.18.1'
 This check is independent of Python tests and does not require privileged networking access.
 
 The disposable namespace isolation probe derives a short, namespace-specific veth interface name to respect the Linux 15-byte interface naming limit. This avoids failing during test setup before firewall enforcement can be measured.
+
+### Disposable DNS underlay probe
+
+The opt-in `tools/probe_namespace_isolation.py --execute` probe now sends synthetic UDP and TCP packets to port 53 over its isolated IPv4 and IPv6 underlay, before and after simulated tunnel loss. It requires the corresponding namespace-local nftables drop counter to advance for every attempt. These packets use literal test addresses and do not query a resolver, alter the host DNS configuration or establish that a real VPN confines application DNS. The probe remains an experimental privileged test and must not be used as evidence of production leak prevention.
+
+The disposable DNS packet probe accepts a synchronous `EPERM` from the packet generator only when the corresponding namespace nftables DNS drop counter advances. Other generator errors remain failures; this does not establish actual resolver confinement.

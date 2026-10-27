@@ -121,3 +121,68 @@ class UnderlayCounterTests(unittest.TestCase):
                 ["ip", "netns", "del", "vpnprobe-test"],
             ],
         )
+
+
+class DnsCounterTests(unittest.TestCase):
+    def test_all_four_dns_drop_rules_are_explicit(self):
+        for family in ("ipv4", "ipv6"):
+            for transport in ("udp", "tcp"):
+                self.assertIn(f'meta nfproto {family} oifname "{{underlay}}" {transport} dport 53', probe.FIREWALL)
+
+    def test_dns_counter_requires_unique_named_rule(self):
+        rule = 'udp dport 53 counter packets 7 bytes 560 drop comment "dns4udp"'
+        self.assertEqual(probe.dns_drop_packets(rule, "ipv4", "udp"), 7)
+        for invalid in ("", rule + "\n" + rule, "udp dport 53 counter packets 7 bytes 560 drop"):
+            with self.assertRaises(probe.ProbeError):
+                probe.dns_drop_packets(invalid, "ipv4", "udp")
+        with self.assertRaises(probe.ProbeError):
+            probe.dns_drop_packets(rule, "ipv6", "udp")
+
+    def test_dns_generator_is_namespace_scoped_and_uses_literal_target(self):
+        for family, target in (("ipv4", "198.18.0.1"), ("ipv6", "fd42:4::1")):
+            for transport in ("udp", "tcp"):
+                command = probe.dns_attempt_command("vpnprobe-test", family, transport, target)
+                self.assertEqual(command[:4], ["ip", "netns", "exec", "vpnprobe-test"])
+                self.assertEqual(command[-3:], [family, transport, target])
+                self.assertNotIn("sh", command)
+
+    def test_dns_generator_rejects_unknown_transport(self):
+        with self.assertRaises(probe.ProbeError):
+            probe.dns_attempt_command("vpnprobe-test", "ipv4", "icmp", "198.18.0.1")
+
+
+class DnsPermissionRegressionTests(unittest.TestCase):
+    def test_dns_generator_handles_synchronous_firewall_eperm(self):
+        command = probe.dns_attempt_command("vpnprobe-test", "ipv4", "udp", "198.18.0.1")
+        self.assertIn("exc.errno != errno.EPERM", command[6])
+        self.assertIn("sys.exit(77)", command[6])
+
+    def test_eperm_requires_counter_evidence(self):
+        counters = {"ipv4": 0, "ipv6": 0}
+        dns_counters = {(family, transport): 0 for family in counters for transport in ("udp", "tcp")}
+        peer = probe.underlay_interface("vpnprobe-test")
+
+        def fake_run(argv, **kwargs):
+            if argv[-5:] == ["list", "chain", "inet", "vpn_probe", "output"]:
+                lines = [
+                    f'meta nfproto {family} oifname "{peer}" counter packets {count} bytes 0 drop'
+                    for family, count in counters.items()
+                ]
+                lines.extend(
+                    f'{transport} dport 53 counter packets {count} bytes 0 drop comment "dns{4 if family == "ipv4" else 6}{transport}"'
+                    for (family, transport), count in dns_counters.items()
+                )
+                return probe.subprocess.CompletedProcess(argv, 0, "\n".join(lines), "")
+            if "ping" in argv:
+                family = "ipv4" if "-4" in argv else "ipv6"
+                counters[family] += 1
+                return probe.subprocess.CompletedProcess(argv, 1, "", "")
+            if len(argv) > 6 and argv[4] == probe.sys.executable and argv[5] == "-c":
+                family, transport = argv[-3:-1]
+                dns_counters[family, transport] += 1
+                return probe.subprocess.CompletedProcess(argv, 77, "", "")
+            return probe.subprocess.CompletedProcess(argv, 0, "", "")
+
+        with patch.object(probe, "run", side_effect=fake_run):
+            probe.probe("vpnprobe-test")
+        self.assertEqual(set(dns_counters.values()), {2})

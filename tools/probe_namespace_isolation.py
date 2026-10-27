@@ -60,6 +60,10 @@ FIREWALL = """table inet vpn_probe {
   type filter hook output priority 0; policy drop;
   oifname "lo" accept
   oifname "tunnel-sim" accept
+  meta nfproto ipv4 oifname "{underlay}" udp dport 53 counter drop comment "dns4udp"
+  meta nfproto ipv4 oifname "{underlay}" tcp dport 53 counter drop comment "dns4tcp"
+  meta nfproto ipv6 oifname "{underlay}" udp dport 53 counter drop comment "dns6udp"
+  meta nfproto ipv6 oifname "{underlay}" tcp dport 53 counter drop comment "dns6tcp"
   meta nfproto ipv4 oifname "{underlay}" counter drop
   meta nfproto ipv6 oifname "{underlay}" counter drop
  }
@@ -86,6 +90,43 @@ def dropped_packets(output: str, underlay: str, family: str = "ipv4") -> int:
     if match is None:
         raise ProbeError("Cannot verify namespace underlay-drop counter")
     return int(match.group(1))
+
+
+def dns_drop_packets(output: str, family: str, transport: str) -> int:
+    """Require an unambiguous named DNS-drop rule in the nftables output."""
+    if family not in ("ipv4", "ipv6") or transport not in ("udp", "tcp"):
+        raise ProbeError("Unsupported DNS packet family or transport")
+    label = f"dns{4 if family == 'ipv4' else 6}{transport}"
+    matches = re.findall(rf'{transport} dport 53 counter packets (\d+) bytes \d+ drop comment "{label}"', output)
+    if len(matches) != 1:
+        raise ProbeError(f"Cannot verify unique {label} firewall drop counter")
+    return int(matches[0])
+
+
+def dns_attempt_command(name: str, family: str, transport: str, target: str) -> list[str]:
+    """Send one synthetic DNS packet without using the host resolver or DNS settings."""
+    if family not in ("ipv4", "ipv6") or transport not in ("udp", "tcp"):
+        raise ProbeError("Unsupported DNS packet family or transport")
+    # An outbound UDP send can succeed even when nftables drops the packet.
+    # The per-rule kernel counter, not the socket return code, is the evidence.
+    # nftables may reject a local UDP send synchronously with EPERM. This is
+    # expected only when the matching kernel drop counter advances afterwards.
+    # Exit 77 distinguishes this result from a successful socket operation.
+    code = (
+        "import errno, socket, sys\n"
+        "family = socket.AF_INET6 if sys.argv[1] == 'ipv6' else socket.AF_INET\n"
+        "kind = socket.SOCK_DGRAM if sys.argv[2] == 'udp' else socket.SOCK_STREAM\n"
+        "sock = socket.socket(family, kind)\n"
+        "sock.setblocking(False)\n"
+        "target = (sys.argv[3], 53)\n"
+        "try:\n"
+        "    sock.sendto(b'\\x00' * 12, target) if kind == socket.SOCK_DGRAM else sock.connect_ex(target)\n"
+        "except OSError as exc:\n"
+        "    if exc.errno != errno.EPERM:\n"
+        "        raise\n"
+        "    sys.exit(77)\n"
+    )
+    return ["ip", "netns", "exec", name, sys.executable, "-c", code, family, transport, target]
 
 
 def probe(name: str) -> None:
@@ -124,6 +165,15 @@ def probe(name: str) -> None:
                 if after <= before:
                     raise ProbeError(f"{family} underlay drop counter did not advance with simulated tunnel {state}")
                 print(f"PASS: {family} underlay firewall drop verified, simulated tunnel {state}")
+                for transport in ("udp", "tcp"):
+                    before_dns = dns_drop_packets(run(counter_command).stdout, family, transport)
+                    attempt = run(dns_attempt_command(name, family, transport, target), check=False)
+                    if attempt.returncode not in (0, 77):
+                        raise ProbeError(f"{family} {transport} DNS packet generator failed: {attempt.stderr.strip()}")
+                    after_dns = dns_drop_packets(run(counter_command).stdout, family, transport)
+                    if after_dns <= before_dns:
+                        raise ProbeError(f"{family} {transport} DNS drop counter did not advance with tunnel {state}")
+                    print(f"PASS: {family} {transport} DNS underlay drop verified, simulated tunnel {state}")
     finally:
         for namespace in reversed(created):
             result = run(["ip", "netns", "del", namespace], check=False)
@@ -141,7 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.execute:
         print("DRY RUN: would create an isolated namespace, veth underlay and dummy tunnel;")
         print("install namespace-only nftables output filtering, test tunnel up/down, then clean up.")
-        print("No real VPN, DNS confinement or host-level leak protection is tested.")
+        print("Tests synthetic IPv4/IPv6 UDP/TCP DNS underlay drops, not resolver confinement or real VPN DNS.")
         return 0
     missing = [tool for tool in ("ip", "nft", "ping") if shutil.which(tool) is None]
     if missing:

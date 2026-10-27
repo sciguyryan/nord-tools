@@ -59,6 +59,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Connect experimental pre-traffic namespace firewall installation to disposable WireGuard configuration, with offline ordering and failure tests.
 - [x] Require structural kernel readback of the namespace firewall base chains before reporting installation success.
 - [x] Extend the disposable simulated-tunnel firewall probe to require independently counted IPv4 and IPv6 underlay drops before and after tunnel loss. Privileged acceptance remains necessary.
+- [x] Add synthetic UDP/TCP port 53 underlay drop-counter checks for IPv4 and IPv6 before and after simulated tunnel loss; privileged DNS probe acceptance remains outstanding.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement in privileged end-to-end tests.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
@@ -105,3 +106,5 @@ Part 2 foundations and internal package organisation are complete. The normal-op
 - [x] Part 3 experimental integration and failure-handling phase accepted by the user. This acceptance does not certify production ownership, crash recovery or leak prevention.
 
 - [x] Add an opt-in journal-gated disposable session entry point that installs namespace isolation before WireGuard configuration, with offline failure-ordering tests. This does not establish leak-free networking.
+
+The DNS underlay probe handles synchronous firewall `EPERM` responses while still requiring independent per-rule packet-drop counter evidence. Privileged DNS enforcement remains subject to local acceptance.
