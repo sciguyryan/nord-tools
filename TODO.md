@@ -22,11 +22,13 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 ## Operational VPN manager: eight-part target
 
 ### Part 1: Disposable WireGuard integration harness
+
 - [x] Implement an opt-in disposable two-pair WireGuard harness without changing host default routing. Privileged two-pair connectivity acceptance passed on Arch Linux.
 - [x] Validate bounded interface names and invocation-scoped cleanup in offline tests. Crash and signal-interruption acceptance remains pending.
 - [x] Verify independent tunnel connectivity and tunnel-down isolation on Arch Linux. Explicit post-run namespace/interface inspection and crash/signal failure injection remain follow-up acceptance checks.
 
 ### Part 2: Resource ownership and lifecycle foundation
+
 - [x] Establish process-bound identity evidence for newly created disposable namespaces; this is not durable ownership authority.
 - [x] Introduce a strict, versioned offline lifecycle journal with allocation-bound event digests, transition validation, atomic fixture persistence and conservative simulated observation comparisons.
 - [x] Add read-only live namespace/interface correlation for lifecycle claims, reporting missing, ambiguous and potentially stale names without granting ownership authority.
@@ -38,6 +40,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Move internal management and lifecycle modules into `nord_tools_internal/` without changing the public CLI.
 
 ### Part 3: Live tunnel provisioning
+
 - [x] Extend the disposable two-pair experiment with read-only validation of a fresh peer handshake and bidirectional traffic counters. This is experimental connectivity evidence, not production provisioning or ownership verification.
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
 - [ ] Production Phase 1 ownership requirement: establish independently authorised, crash-persistent creation-time ownership. Durable intents and descriptor-based credential input exist, but neither authorises production mutation.
@@ -50,6 +53,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
 
 ### Part 4: Fail-closed routing, firewall and DNS
+
 - [x] Introduce a validated, deterministic offline nftables candidate with default-drop IPv4/IPv6 namespace policy and a narrowly scoped WireGuard endpoint exception. No firewall installation or DNS confinement is implemented.
 - [x] Add an experimental namespace-local nftables check/apply boundary requiring process-bound disposable ownership. This is not yet connected to tunnel provisioning or privileged leak testing.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement.
@@ -57,42 +61,40 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
 
 ### Part 5: Per-application routing
+
 - [ ] Route assigned applications through their profiles, with unassigned applications inheriting the default.
 - [ ] Reuse shared tunnels while maintaining isolation for dedicated profiles.
 - [ ] Validate application launch/lifecycle, namespace behaviour and compatibility with common Linux desktop environments.
 
 ### Part 6: Live reconciliation and recovery
+
 - [ ] Implement idempotent apply/update/replace/remove against observed and owned state, without blind resource creation.
 - [ ] Stage replacements, verify before cut-over, and preserve unaffected application tunnels.
 - [ ] Implement rollback, drift repair and recovery after partial failure or interrupted operations.
 
 ### Part 7: Startup persistence and safe cleanup
+
 - [ ] Restore persistent desired configuration using systemd with safe boot ordering; do not restore `--transient` intent.
 - [ ] Provide dry-run and confirmed cleanup that removes only verified Nord Tools-owned resources and restores prior state where appropriate.
 - [ ] Test restart, idempotency, interrupted cleanup and recovery without flushing host firewall or routing configuration.
 
 ### Part 8: Acceptance, security and documentation
+
 - [ ] Run unit, integration, failure-injection, repeatability and privilege-boundary tests, including two simultaneous real tunnels.
 - [ ] Run Ruff check/format and full automated tests on the user's Arch Linux environment; record manual acceptance results.
-- [ ] Review README, command help and design documentation for internal consistency and natural formal British English (formality 7–8/10).
 - [ ] Confirm operational claims against evidence; leave unresolved safety issues open rather than declaring completion.
 
-## Acceptance and delivery rules
+## Acceptance criteria
 
-Each increment must include a complete source archive without Git metadata or Python cache artefacts, a revision-specific British English commit message, meaningful tests, documentation updates and explicit local acceptance instructions. Preserve the canonical working tree and existing behaviour. Keep README guidance concise, with architectural detail in `docs/VPN-ROUTING-DESIGN.md`.
-
-The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
+Keep README guidance concise, with architectural detail in `docs/VPN-ROUTING-DESIGN.md`.
 
 ## Outstanding production ownership and recovery boundary
 
 Part 2 foundations and internal package organisation are complete. The normal-operation disposable namespace probe passed on Arch Linux, but does not establish persistent ownership or race-safe deletion. Before enabling any live mutation or automated cleanup that relies on ownership, implement and verify crash-persistent resource ownership and race-safe mutation authority, including interrupted-operation recovery and privileged adversarial integration tests. Do not infer deletion authority from resource names, journal records, inode fingerprints or completed operation intents alone. These requirements remain blockers for the relevant operational actions in subsequent parts.
 
 - [ ] Bind durable intent recording and creation-time ownership evidence into a privileged WireGuard executor, with crash recovery and a transactional state model before any kernel mutation.
-
 - [x] Obtain privileged acceptance for the disposable session configuration probe on Arch Linux.
-
 - [ ] Connect the journal-gated experimental execution adapter to an authorised privileged provisioner with independently verified creation-time ownership and a crash-safe recovery protocol. The adapter alone is not an operational executor.
-
-- Integrate a persistent privileged WireGuard provisioner only after race-safe ownership, atomic lifecycle coordination and crash recovery are established; the journal-gated disposable session is an experimental acceptance boundary, not production provisioning.
-
+- [ ] Integrate a persistent privileged WireGuard provisioner only after race-safe ownership, atomic lifecycle coordination and crash recovery are established; the journal-gated disposable session is an experimental acceptance boundary, not production provisioning.
 - [x] Part 3 experimental integration and failure-handling phase accepted by the user. This acceptance does not certify production ownership, crash recovery or leak prevention.
+- [x] Add an opt-in journal-gated disposable session entry point that installs namespace isolation before WireGuard configuration, with offline failure-ordering tests. This does not establish leak-free networking.

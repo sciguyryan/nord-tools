@@ -137,3 +137,58 @@ class DisposableExecutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class IsolatedDisposableExecutionTests(DisposableExecutionTests):
+    def policy(self):
+        from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
+
+        return NamespaceIsolationPolicy(
+            self.spec.interface, "veth0", self.spec.endpoint_address, self.spec.endpoint_port
+        )
+
+    def test_firewall_precedes_wireguard_configuration(self):
+        with (
+            patch.object(adapter, "disposable_namespace", side_effect=self.namespace),
+            patch.object(
+                adapter, "install_disposable_isolation", side_effect=lambda *args: self.events.append("firewall")
+            ),
+            patch.object(
+                adapter, "configure_disposable_wireguard", side_effect=lambda *args: self.events.append("configured")
+            ),
+        ):
+            adapter.execute_isolated_disposable_session(
+                self.store, self.journal, self.token, self.spec, 3, lambda _: True, self.policy()
+            )
+        self.assertEqual(self.events[:4], ["enter", "firewall", "identity", "configured"])
+        self.assertEqual(self.outcomes(), ["completed"])
+
+    def test_firewall_failure_blocks_wireguard_and_records_uncertainty(self):
+        with (
+            patch.object(adapter, "disposable_namespace", side_effect=self.namespace),
+            patch.object(adapter, "install_disposable_isolation", side_effect=RuntimeError("nft failed")),
+            patch.object(adapter, "configure_disposable_wireguard") as configure,
+            self.assertRaisesRegex(RuntimeError, "nft failed"),
+        ):
+            adapter.execute_isolated_disposable_session(
+                self.store, self.journal, self.token, self.spec, 3, lambda _: True, self.policy()
+            )
+        configure.assert_not_called()
+        self.assertEqual(self.outcomes(), ["uncertain"])
+
+    def test_policy_mismatch_refused_before_intent(self):
+        from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
+
+        mismatch = NamespaceIsolationPolicy(self.spec.interface, "veth0", "198.51.100.99", self.spec.endpoint_port)
+        with self.assertRaisesRegex(RegistryError, "does not match"):
+            adapter.execute_isolated_disposable_session(
+                self.store, self.journal, self.token, self.spec, 3, lambda _: True, mismatch
+            )
+        self.assertEqual(self.outcomes(), [])
+
+    def test_isolated_entry_rejects_missing_policy(self):
+        with self.assertRaisesRegex(RegistryError, "policy required"):
+            adapter.execute_isolated_disposable_session(
+                self.store, self.journal, self.token, self.spec, 3, lambda _: True, None
+            )
+        self.assertEqual(self.outcomes(), [])
