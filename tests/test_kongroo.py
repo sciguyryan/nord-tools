@@ -163,6 +163,27 @@ class NumericalSearchTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             _search_rows("0123456789ABCDEF", "invalid", 0, 1, 80)
 
+    def test_worldlines_converge_deterministically(self):
+        from nordvpn_kongroo import _worldline_rows
+
+        early = _worldline_rows(0, 60, 6)
+        late = _worldline_rows(119, 60, 6)
+        self.assertEqual(early, _worldline_rows(0, 60, 6))
+        self.assertTrue(any(row.count("│") + row.count("╎") > 1 for row in early))
+        self.assertTrue(all(row.strip() == "┃" for row in late))
+        self.assertTrue(all(len(row) == 60 for row in early + late))
+
+    def test_coloured_worldlines_and_plain_frames(self):
+        from nordvpn_kongroo import _frame, _payload
+
+        scene = _payload("El Psy Kongroo")
+        plain = _frame(scene, 30, width=80, height=24, colour=False)
+        coloured = _frame(scene, 30, width=80, height=24, colour=True)
+        self.assertIn("WORLDLINE CONVERGENCE", plain)
+        self.assertNotIn("\033", plain)
+        self.assertIn("\033[36m", coloured)
+        self.assertIn("\033[35m", coloured)
+
     def test_frame_has_numeric_search_not_random_hex_wall(self):
         from nordvpn_kongroo import _frame, _payload
 

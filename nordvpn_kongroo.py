@@ -165,6 +165,34 @@ def _search_rows(alphabet: str, signature: str, step: int, count: int, width: in
     return rows
 
 
+def _worldline_rows(step: int, width: int, count: int) -> list[str]:
+    """Draw deterministic trajectories that converge towards a single worldline.
+
+    The lines are theatrical geometry, not a measurement or a real simulation.
+    No randomness, terminal control sequences or colour codes enter this model.
+    """
+    import math
+
+    if width < 1 or count < 1:
+        return []
+    progress = _progress(step) / 100
+    centre = width // 2
+    rows = []
+    for row in range(count):
+        cells = [" "] * width
+        for branch in range(-3, 4):
+            # Initial divergence collapses as the search approaches its target.
+            spread = (1 - progress) ** 1.7
+            drift = math.sin((step / 10) + row * 0.42 + branch) * 2 * spread
+            position = round(centre + branch * (width // 9) * spread + drift)
+            if 0 <= position < width:
+                cells[position] = "│" if branch % 2 else "╎"
+        if progress >= 0.99:
+            cells[centre] = "┃"
+        rows.append("".join(cells))
+    return rows
+
+
 def _frame(scene: dict[str, object], step: int, *, width: int, height: int, colour: bool) -> str:
     """Produce one bounded, deterministic numerical-search terminal frame."""
     width = max(40, min(width, 120))
@@ -191,7 +219,16 @@ def _frame(scene: dict[str, object], step: int, *, width: int, height: int, colo
     )
     lines.append("║" + cell("  PROBE ADDRESS  CANDIDATE   DISTANCE   STATE") + "║")
     lines.append("╟" + "─" * (width - 2) + "╢")
-    count = max(3, height - 11)
+    # Keep the numerical probe visible while the trajectories converge above it.
+    worldline_count = min(8, max(4, (height - 12) // 2))
+    lines.append("║" + cell("  WORLDLINE CONVERGENCE") + "║")
+    for index, trajectory in enumerate(_worldline_rows(step, inner, worldline_count)):
+        line = "║ " + trajectory + " ║"
+        if colour:
+            palette = ("36", "34", "35", "32", "33", "96", "95")
+            line = f"\033[{palette[index % len(palette)]}m{line}\033[0m"
+        lines.append(line)
+    count = max(1, height - len(lines) - 3)
     for row in _search_rows(alphabet, signature, step, count, inner):
         lines.append("║ " + row + " ║")
     progress = _progress(step)
@@ -200,7 +237,7 @@ def _frame(scene: dict[str, object], step: int, *, width: int, height: int, colo
     lines.append("║" + cell(f"  {scene['footer']}") + "║")
     lines.append("╚" + "═" * (width - 2) + "╝")
     frame = "\n".join(lines)
-    return "\033[38;5;46m" + frame + "\033[0m" if colour else frame
+    return frame
 
 
 def _animate(scene: dict[str, object], stream: TextIO, *, colour: bool) -> None:

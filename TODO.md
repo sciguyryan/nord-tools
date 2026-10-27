@@ -9,14 +9,14 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Offline topology, reconciliation, dependency, transaction and cleanup planning.
 - [x] Read-only Linux discovery, allocation records and advisory ownership evidence.
 - [x] Configured-state Unicode/ASCII connection graph.
-- [x] Operation Kongroo terminal puzzle implemented, with encrypted scene data, cinematic ANSI/Unicode reveal, terminal restoration and accessibility fallbacks.
+- [x] Operation Kongroo terminal puzzle implemented, with an authenticated encrypted scene, a reproducible obfuscated launcher, converging coloured worldlines, terminal restoration and accessibility fallbacks.
 - [ ] **In progress:** Operational VPN manager, targeted for no more than eight parts, subject to safety and acceptance evidence.
 
 ## Bonus increment: Operation Kongroo
 
 - [x] Add a hidden but discoverable, clue-driven command and encrypted transmission, themed around *El Psy Kongroo*.
 - [x] Provide a terminal-only ANSI/Unicode reveal with ASCII, no-colour, non-interactive and reduced-motion fallbacks.
-- [x] Keep the feature entirely separate from networking, credentials and privileged operations; restore terminal state on interruption.
+- [x] Keep the feature entirely separate from networking, credentials and privileged operations; restore terminal state on interruption. Retain readable canonical source and the deterministic obfuscation generator.
 - [x] Test puzzle decoding, output determinism/fallbacks, terminal cleanup and ordinary CLI behaviour; document the feature discreetly without publishing its solution.
 
 ## Operational VPN manager: eight-part target
@@ -37,18 +37,17 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Pass the normal-operation privileged namespace smoke test on Arch Linux and verify that no named namespaces remain.
 - [x] Move internal management and lifecycle modules into `nord_tools_internal/` without changing the public CLI.
 
-### Part 3: Experimental live WireGuard provisioning
+### Part 3: Live tunnel provisioning
 - [x] Extend the disposable two-pair experiment with read-only validation of a fresh peer handshake and bidirectional traffic counters. This is experimental connectivity evidence, not production provisioning or ownership verification.
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
-- [x] Add descriptor-based private-key input, durable operation-intent storage and experimental journal-gated disposable execution. These components do not provide independently authorised production provisioning.
+- [ ] Production Phase 1 ownership requirement: establish independently authorised, crash-persistent creation-time ownership. Durable intents and descriptor-based credential input exist, but neither authorises production mutation.
 - [x] Introduce an internal experimental configuration step for WireGuard interfaces inside caller-owned disposable namespaces, without routes or production authority.
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
 - [ ] Support shared profiles, explicitly isolated profiles and a default connection.
 - [ ] Integrate platform/dependency preflight and conservative privilege boundaries.
 
 - [x] Add experimental Phase 3 failure-injection coverage for process interruption, verifier errors, uncertain namespace retirement and failed uncertainty persistence. These tests do not establish crash-safe recovery or production ownership.
-- [x] Pass normal-operation privileged acceptance for the journal-gated disposable execution probe on Arch Linux, with an empty post-test namespace listing. This does not establish crash-safe recovery or race-safe deletion.
-- [ ] Establish crash-persistent ownership, race-safe mutation and privileged interruption/recovery acceptance before enabling production provisioning, resource deletion or automated cleanup.
+- [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
 
 ### Part 4: Fail-closed routing, firewall and DNS
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement.
@@ -82,8 +81,16 @@ Each increment must include a complete source archive without Git metadata or Py
 
 The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
 
-## Ownership and operational safety boundary
+## Outstanding production ownership and recovery boundary
 
-Part 2 established the lifecycle foundation and internal package organisation. Part 3 added validated WireGuard specifications, descriptor-based credential input, durable operation intents, disposable configuration and journal-gated experimental execution. The namespace ownership, WireGuard session, independent two-pair connectivity and integrated disposable execution probes passed on Arch Linux; the final integrated probe left no named namespaces visible.
+Part 2 foundations and internal package organisation are complete. The normal-operation disposable namespace probe passed on Arch Linux, but does not establish persistent ownership or race-safe deletion. Before enabling any live mutation or automated cleanup that relies on ownership, implement and verify crash-persistent resource ownership and race-safe mutation authority, including interrupted-operation recovery and privileged adversarial integration tests. Do not infer deletion authority from resource names, journal records, inode fingerprints or completed operation intents alone. These requirements remain blockers for the relevant operational actions in subsequent parts.
 
-These results demonstrate normal-operation experimental functionality, not production ownership or recovery authority. Resource names, journal entries, inode fingerprints and completed operation intents do not authorise modification or deletion of existing networking. Before operational provisioning or cleanup is enabled, implement independently verifiable crash-persistent ownership, race-safe resource mutation, coherent lifecycle and intent transactions, and privileged interrupted-operation recovery. Keep production provider credentials, server selection and persistent tunnel management out of the experimental acceptance claim.
+- [ ] Bind durable intent recording and creation-time ownership evidence into a privileged WireGuard executor, with crash recovery and a transactional state model before any kernel mutation.
+
+- [x] Obtain privileged acceptance for the disposable session configuration probe on Arch Linux.
+
+- [ ] Connect the journal-gated experimental execution adapter to an authorised privileged provisioner with independently verified creation-time ownership and a crash-safe recovery protocol. The adapter alone is not an operational executor.
+
+- Integrate a persistent privileged WireGuard provisioner only after race-safe ownership, atomic lifecycle coordination and crash recovery are established; the journal-gated disposable session is an experimental acceptance boundary, not production provisioning.
+
+- [x] Part 3 experimental integration and failure-handling phase accepted by the user. This acceptance does not certify production ownership, crash recovery or leak prevention.

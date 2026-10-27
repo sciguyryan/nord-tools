@@ -18,7 +18,7 @@ COMMANDS = {
     "policy": ("nordvpn_policy", "Validate policy or plan default optimisation (offline)"),
     "topology": ("nordvpn_topology", "Inspect proposed routing domains (design only)"),
     "manage": ("nordvpn_manage", "Manage saved VPN intent (offline; no live networking)"),
-    "divergence": ("nordvpn_kongroo", argparse.SUPPRESS),
+    "divergence": ("nordvpn_kongroo_packed", argparse.SUPPRESS),
     "wireguard-probe": ("tools.probe_two_wireguard", "Disposable two-pair WireGuard experiment (privileged opt-in)"),
     "namespace-probe": ("tools.probe_namespace_isolation", "Disposable namespace experiment (privileged opt-in)"),
 }

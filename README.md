@@ -43,7 +43,7 @@ The offline management foundation is complete, but **the operational tunnel mana
 
 | Area | Current state | Required before live use |
 | --- | --- | --- |
-| Tunnel provisioning | Configuration and topology planning only | Establish and verify independent WireGuard tunnels, including provider credentials and endpoint selection |
+| Tunnel provisioning | Experimental disposable WireGuard configuration, connectivity and journal-gated execution have been implemented and tested in controlled probes | Implement production-authorised provisioning, crash-safe ownership, provider credentials and endpoint selection |
 | Network isolation | Disposable simulated firewall probe | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
 | Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
 | Replacement and recovery | Non-executable transaction stages | Implement protected cut-over, rollback, crash recovery and durable operation journals |
@@ -443,7 +443,11 @@ python nord_tools.py manage cleanup-plan --inventory examples/managed-inventory.
 
 `graph` uses the saved policy (persistent by default), groups applications by their assigned shared or isolated profile, and labels all connections as **configured intent, not live networking**. The ASCII option works without box-drawing characters. `cleanup-plan` accepts a simulated inventory, excludes externally owned profiles, and lists possible retirements only. Its output explicitly states that execution is unsafe without independently verified ownership, dependency-aware teardown and recovery protections. It does not remove resources or clear saved policy. See the [routing design](docs/VPN-ROUTING-DESIGN.md) for the safety contract.
 
-The optional hidden terminal puzzle supports a cinematic ANSI/Unicode reveal in interactive UTF-8 terminals. Its roughly eight-second sequence uses deliberately uneven progress, alternating rapid acquisition with slower verification intervals; the percentage is theatrical rather than a measure of actual work. Use `--no-animation` or `NORD_TOOLS_REDUCED_MOTION=1` for a static display, `--ascii` for plain text, and `--no-colour` or `NO_COLOR` to suppress colour. Its animated display presents a fictional numerical search: hexadecimal probe addresses, candidate worldline values and shrinking search intervals converge on the authenticated signature. The animation is theatrical and does not perform a real numerical search. Its compressed scene is stored as an authenticated, password-derived cipher payload; as with any puzzle shipped in source code, this is not a security boundary.
+The optional hidden terminal puzzle supports a cinematic ANSI/Unicode reveal in interactive UTF-8 terminals. Its roughly eight-second sequence uses deliberately uneven progress, alternating rapid acquisition with slower verification intervals; the percentage is theatrical rather than a measure of actual work. Use `--no-animation` or `NORD_TOOLS_REDUCED_MOTION=1` for a static display, `--ascii` for plain text, and `--no-colour` or `NO_COLOR` to suppress colour. Its animated display combines converging Unicode worldline trajectories, distinct ANSI colours and a fictional numerical search with hexadecimal probe addresses and shrinking search intervals. The animation is theatrical and does not perform a real numerical search. Its compressed scene is stored as an authenticated, password-derived cipher payload; as with any puzzle shipped in source code, this is not a security boundary.
+
+### Rebuilding the Operation Kongroo launcher
+
+The hidden `divergence` command loads the generated `nordvpn_kongroo_packed.py` module. Its canonical, readable implementation remains in `nordvpn_kongroo.py`, with the deterministic generator at `tools/generate_kongroo_launcher.py`. After editing the canonical source, run `python tools/generate_kongroo_launcher.py` and verify it with `python tools/generate_kongroo_launcher.py --check`. The generated module contains compressed, base85-encoded Python source and an integrity checksum; it is deliberately harder to read at a glance but is **not encrypted**. No key exists, and the readable original is included in the repository. Do not use this mechanism for sensitive code or credentials. The generated module executes only its bundled, locally generated source and does not fetch external code.
 
 ### Regenerating the Operation Kongroo transmission
 
@@ -475,7 +479,7 @@ Part 2 establishes offline lifecycle and operation-intent records, read-only Lin
 
 ## WireGuard provisioning development
 
-Part 3 has established experimental disposable WireGuard configuration, independent tunnel connectivity and journal-gated execution, all exercised through privileged probes on Arch Linux. These are test-only capabilities, not a persistent or production-ready VPN manager. Provider credential integration, crash-persistent ownership, race-safe resource mutation, recovery and fail-closed routing remain outstanding; see `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the acceptance boundaries.
+Part 3 has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The isolated probes can create and configure real WireGuard interfaces, but no production-authorised provider tunnel manager, crash-safe ownership, automated recovery or fail-closed routing is available. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
 
 ## WireGuard credential input boundary
 
@@ -501,4 +505,4 @@ The internal `execute_disposable_session` adapter combines an existing operation
 
 ### Integrated disposable provisioning acceptance
 
-`python tools/probe_disposable_execution.py` is a no-change dry run. On a disposable Linux test machine, `sudo python tools/probe_disposable_execution.py --run-privileged` exercises the journal-gated creation path, kernel peer verification and namespace retirement. This probe passed on Arch Linux, and the subsequent `sudo ip netns list` output was empty. This is an experimental acceptance probe, not a production VPN provisioning command. Crash-persistent ownership, race-safe deletion, full recovery and leak prevention remain outstanding.
+`python tools/probe_disposable_execution.py` is a no-change dry run. On a disposable Linux test machine, `sudo python tools/probe_disposable_execution.py --run-privileged` exercises the journal-gated creation path, kernel peer verification and namespace retirement. Afterwards, inspect `sudo ip netns list` for leftovers. This is an experimental acceptance probe, not a production VPN provisioning command. Crash-persistent ownership, race-safe deletion, full recovery and leak prevention remain outstanding.
