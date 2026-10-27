@@ -59,7 +59,8 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Connect experimental pre-traffic namespace firewall installation to disposable WireGuard configuration, with offline ordering and failure tests.
 - [x] Require structural kernel readback of the namespace firewall base chains before reporting installation success.
 - [x] Extend the disposable simulated-tunnel firewall probe to require independently counted IPv4 and IPv6 underlay drops before and after tunnel loss. Privileged acceptance remains necessary.
-- [x] Add synthetic UDP/TCP port 53 underlay drop-counter checks for IPv4 and IPv6 before and after simulated tunnel loss; privileged DNS probe acceptance remains outstanding.
+- [x] Add synthetic UDP/TCP port 53 underlay drop-counter checks for IPv4 and IPv6 before and after simulated tunnel loss; privileged synthetic DNS probe acceptance passed on Arch Linux.
+- [x] Define an offline namespace resolver policy with validated numeric servers and deterministic resolv.conf rendering, without claiming installation or confinement.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement in privileged end-to-end tests.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
@@ -96,15 +97,12 @@ The eight-part schedule is a planning limit, **not a waiver of safety requiremen
 Part 2 foundations and internal package organisation are complete. The normal-operation disposable namespace probe passed on Arch Linux, but does not establish persistent ownership or race-safe deletion. Before enabling any live mutation or automated cleanup that relies on ownership, implement and verify crash-persistent resource ownership and race-safe mutation authority, including interrupted-operation recovery and privileged adversarial integration tests. Do not infer deletion authority from resource names, journal records, inode fingerprints or completed operation intents alone. These requirements remain blockers for the relevant operational actions in subsequent parts.
 
 - [ ] Bind durable intent recording and creation-time ownership evidence into a privileged WireGuard executor, with crash recovery and a transactional state model before any kernel mutation.
-
 - [x] Obtain privileged acceptance for the disposable session configuration probe on Arch Linux.
-
 - [ ] Connect the journal-gated experimental execution adapter to an authorised privileged provisioner with independently verified creation-time ownership and a crash-safe recovery protocol. The adapter alone is not an operational executor.
 
 - Integrate a persistent privileged WireGuard provisioner only after race-safe ownership, atomic lifecycle coordination and crash recovery are established; the journal-gated disposable session is an experimental acceptance boundary, not production provisioning.
 
 - [x] Part 3 experimental integration and failure-handling phase accepted by the user. This acceptance does not certify production ownership, crash recovery or leak prevention.
-
 - [x] Add an opt-in journal-gated disposable session entry point that installs namespace isolation before WireGuard configuration, with offline failure-ordering tests. This does not establish leak-free networking.
 
-The DNS underlay probe handles synchronous firewall `EPERM` responses while still requiring independent per-rule packet-drop counter evidence. Privileged DNS enforcement remains subject to local acceptance.
+The DNS underlay probe handles synchronous firewall `EPERM` responses while still requiring independent per-rule packet-drop counter evidence. Privileged synthetic DNS enforcement passed on Arch Linux; actual resolver confinement remains unverified.
