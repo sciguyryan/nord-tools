@@ -6,10 +6,10 @@ The built-in `low-ads` group is a **manually curated experimental shortlist**, n
 
 Use the following evidence in order, recording the date of each review:
 
-1. **YouTube's official monetised markets**: https://support.google.com/youtube/answer/1342206. Countries absent from this list are plausible candidates, **not proven ad-free**. This page describes where advertisers can target monetised YouTube markets; it is not a live ad-delivery test. Do not include a country merely because a third-party website calls it ad-free.
-2. **NordVPN's current locations**: https://nordvpn.com/servers/ and https://support.nordvpn.com/hc/en-us/articles/19383127694225-Where-can-I-find-the-NordVPN-server-list. A location listed here may not have a currently downloadable OpenVPN profile.
+1. **YouTube's official monetised markets**: <https://support.google.com/youtube/answer/1342206>. Countries absent from this list are plausible candidates, **not proven ad-free**. This page describes where advertisers can target monetised YouTube markets; it is not a live ad-delivery test. Do not include a country merely because a third-party website calls it ad-free.
+2. **NordVPN's current locations**: <https://nordvpn.com/servers/> and <https://support.nordvpn.com/hc/en-us/articles/19383127694225-Where-can-I-find-the-NordVPN-server-list>. A location listed here may not have a currently downloadable OpenVPN profile.
 3. **NordVPN OpenVPN configurations**: use the project's official archive URL `https://downloads.nordcdn.com/configs/archives/servers/ovpn.zip` and verify the exact country prefixes actually represented. Only include countries with usable `.ovpn` entries in the current archive.
-4. **Independent observation**: prefer dated, reproducible tests with named countries and clear testing conditions. For example, the NordVPN-specific community report https://www.reddit.com/r/nordvpn/comments/1laeegr/no_yt_ads_while_connected_to_nordvpn_confirmed/ tested several servers per country, but remains anecdotal. Independent write-ups include https://www.top10vpn.com/guides/how-to-block-youtube-ads/ and https://www.cloudwards.net/block-ads-on-youtube/. Reports may be outdated or commercially motivated and do not override Google's current market information.
+4. **Independent observation**: prefer dated, reproducible tests with named countries and clear testing conditions. For example, the NordVPN-specific community report <https://www.reddit.com/r/nordvpn/comments/1laeegr/no_yt_ads_while_connected_to_nordvpn_confirmed/> tested several servers per country, but remains anecdotal. Independent write-ups include <https://www.top10vpn.com/guides/how-to-block-youtube-ads/> and <https://www.cloudwards.net/block-ads-on-youtube/>. Reports may be outdated or commercially motivated and do not override Google's current market information.
 
 For inclusion, require a NordVPN OpenVPN profile and a plausible YouTube-specific reason to expect fewer adverts, preferably both absence from the monetised-market list and corroborating observations. The catalogue is deliberately selective: **not every non-monetised market is automatically included**. Do not include countries present on the official monetised-market list solely because a user once observed fewer adverts there.
 
@@ -48,7 +48,7 @@ All 17 prefixes appeared in the user-supplied NordVPN OpenVPN directory listing 
 3. Download the official configuration archive, then extract its member filenames without unpacking the profiles:
 
    ```bash
-   curl -fL https://downloads.nordcdn.com/configs/archives/servers/ovpn.zip -o ovpn.zip
+   curl -fL <https://downloads.nordcdn.com/configs/archives/servers/ovpn.zip> -o ovpn.zip
    unzip -Z -1 ovpn.zip > nordvpn-openvpn-files.txt
    grep -oE '[a-z]{2}[0-9]+\.nordvpn\.com' nordvpn-openvpn-files.txt \
      | sed -E 's/[0-9]+\.nordvpn\.com$//' | sort -u > nordvpn-openvpn-countries.txt

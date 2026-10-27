@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import re
 import zlib
 from pathlib import Path
 
@@ -44,18 +45,41 @@ if __name__ == "__main__":
 '''
 
 
+def matches_source(launcher: str, source: bytes) -> bool:
+    """Verify the complete launcher contract without assuming identical zlib output.
+
+    zlib streams can vary across implementations even for identical input. Only
+    the encoded payload may vary; the launcher structure and decoded bytes must
+    match the canonical source exactly.
+    """
+    match = re.search(r'^_PAYLOAD = "([^"]+)"$', launcher, flags=re.MULTILINE)
+    if match is None:
+        return False
+    try:
+        compressed = base64.b85decode(match.group(1))
+        decoded = zlib.decompress(compressed)
+    except (ValueError, zlib.error):
+        return False
+    if decoded != source:
+        return False
+    expected = build(source)
+    canonical_match = re.search(r'^_PAYLOAD = "([^"]+)"$', expected, flags=re.MULTILINE)
+    assert canonical_match is not None
+    return launcher[: match.start(1)] + canonical_match.group(1) + launcher[match.end(1) :] == expected
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify that the committed launcher is current")
     args = parser.parse_args()
-    expected = build(SOURCE.read_bytes())
+    source = SOURCE.read_bytes()
     if args.check:
-        if not DESTINATION.exists() or DESTINATION.read_text(encoding="utf-8") != expected:
+        if not DESTINATION.exists() or not matches_source(DESTINATION.read_text(encoding="utf-8"), source):
             print("Operation Kongroo launcher is stale; regenerate it")
             return 1
         print("Operation Kongroo launcher is current")
         return 0
-    DESTINATION.write_text(expected, encoding="utf-8")
+    DESTINATION.write_text(build(source), encoding="utf-8")
     print("Regenerated Operation Kongroo launcher")
     return 0
 

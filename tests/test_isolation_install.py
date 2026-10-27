@@ -24,6 +24,7 @@ class IsolationInstallTests(unittest.TestCase):
                             "hook": name,
                             "type": "filter",
                             "policy": output_policy if name == "output" else "drop",
+                            "prio": 0,
                         }
                     }
                     for name in ("input", "output", "forward")
@@ -89,6 +90,33 @@ class IsolationInstallTests(unittest.TestCase):
     @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
     def test_readback_rejects_malformed_json(self, run, verify):
         run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout="not json")]
+        with self.assertRaises(IsolationInstallError):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_unexpected_chain(self, run, verify):
+        document = json.loads(self.readback())
+        document["nftables"].append({"chain": {"family": "inet", "table": "nord_tools_isolation", "name": "bypass"}})
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaises(IsolationInstallError):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_nonzero_priority(self, run, verify):
+        document = json.loads(self.readback())
+        document["nftables"][1]["chain"]["prio"] = -10
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaises(IsolationInstallError):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_missing_priority(self, run, verify):
+        document = json.loads(self.readback())
+        del document["nftables"][0]["chain"]["prio"]
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
         with self.assertRaises(IsolationInstallError):
             install_disposable_isolation(self.owned, self.policy)
 

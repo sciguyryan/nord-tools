@@ -63,6 +63,8 @@ def _verify_base_chains(namespace: str) -> None:
             raise IsolationInstallError("namespace firewall readback failed")
         document = json.loads(completed.stdout)
         entries = document["nftables"]
+        if not isinstance(entries, list):
+            raise IsolationInstallError("invalid namespace firewall readback entries")
         chains = {}
         for entry in entries:
             chain = entry.get("chain") if isinstance(entry, dict) else None
@@ -75,6 +77,8 @@ def _verify_base_chains(namespace: str) -> None:
                 if name in chains:
                     raise IsolationInstallError("duplicate namespace firewall chain")
                 chains[name] = chain
+        if set(chains) != {"input", "output", "forward"}:
+            raise IsolationInstallError("unexpected namespace firewall chains")
         for name in ("input", "output", "forward"):
             chain = chains.get(name)
             if (
@@ -82,6 +86,8 @@ def _verify_base_chains(namespace: str) -> None:
                 or chain.get("hook") != name
                 or chain.get("type") != "filter"
                 or chain.get("policy") != "drop"
+                or type(chain.get("prio")) is not int
+                or chain["prio"] != 0
             ):
                 raise IsolationInstallError("namespace firewall base-chain verification failed")
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
