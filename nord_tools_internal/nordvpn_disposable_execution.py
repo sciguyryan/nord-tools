@@ -36,6 +36,8 @@ def execute_disposable_session(
     retirement occurs before the recorded operation can complete. An exception
     or uncertain retirement leaves the intent unresolved for manual review.
     """
+    if not isinstance(specification, TunnelSpecification) or not callable(verify_peer):
+        raise RegistryError("validated specification and peer verifier required")
     if isolation_policy is not None:
         if not isinstance(isolation_policy, NamespaceIsolationPolicy):
             raise RegistryError("validated namespace isolation policy required")
@@ -45,8 +47,6 @@ def execute_disposable_session(
             or isolation_policy.endpoint_port != specification.endpoint_port
         ):
             raise RegistryError("isolation policy does not match WireGuard specification")
-    if not isinstance(specification, TunnelSpecification) or not callable(verify_peer):
-        raise RegistryError("validated specification and peer verifier required")
     validated = validate_journal(journal)
     matches = [
         resource for resource in validated["allocations"]["resources"] if resource["allocation_id"] == allocation_id
