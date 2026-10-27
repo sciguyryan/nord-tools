@@ -104,7 +104,7 @@ python nord_tools.py manage reconcile --inventory examples/managed-inventory.jso
 
 ### Disposable namespace firewall probe
 
-`tools/probe_namespace_isolation.py` is an opt-in Linux networking experiment. It uses a disposable namespace, simulated tunnel interface and nftables packet counters to test a narrow fail-closed property. **It does not create a real WireGuard/NordVPN tunnel or protect the host's traffic.**
+`tools/probe_namespace_isolation.py` is an opt-in Linux networking experiment. It uses two disposable namespaces, a simulated tunnel interface and family-specific nftables packet counters to test a narrow IPv4/IPv6 fail-closed property before and after simulated tunnel loss. A direct route to each underlay test endpoint ensures that a blocked packet is attributable to the firewall rather than to a missing route. **It does not create a real WireGuard/NordVPN tunnel or protect the host's traffic.**
 
 Inspect the proposed test without changing networking:
 
@@ -525,3 +525,5 @@ npm install --no-save --no-package-lock 'markdownlint-cli2@0.18.1'
 ```
 
 This check is independent of Python tests and does not require privileged networking access.
+
+The disposable namespace isolation probe derives a short, namespace-specific veth interface name to respect the Linux 15-byte interface naming limit. This avoids failing during test setup before firewall enforcement can be measured.

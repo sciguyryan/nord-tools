@@ -58,6 +58,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Add an experimental namespace-local nftables check/apply boundary requiring process-bound disposable ownership. This is connected to the experimental isolated disposable session path, but privileged leak testing remains outstanding.
 - [x] Connect experimental pre-traffic namespace firewall installation to disposable WireGuard configuration, with offline ordering and failure tests.
 - [x] Require structural kernel readback of the namespace firewall base chains before reporting installation success.
+- [x] Extend the disposable simulated-tunnel firewall probe to require independently counted IPv4 and IPv6 underlay drops before and after tunnel loss. Privileged acceptance remains necessary.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement in privileged end-to-end tests.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
