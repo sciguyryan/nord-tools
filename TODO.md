@@ -113,5 +113,6 @@ The DNS underlay probe handles synchronous firewall `EPERM` responses while stil
 - [ ] Test DNS routing through a protected tunnel, WireGuard endpoint exceptions and real tunnel failure before claiming Part 4 fail-closed behaviour.
 - [x] Verify the disposable DNS route-confinement probe with privileged IPv4/IPv6 tunnel-up and tunnel-down checks, accepting only simulated routing evidence.
 - [ ] Follow with actual DNS packet routing, real WireGuard endpoint exceptions and failure-injection tests.
+- [ ] Obtain privileged acceptance for the disposable real WireGuard host-integrity regression, including unchanged host IPv4/IPv6 routes, structurally equivalent nftables rules and resolver contents. The first privileged run passed the real WireGuard and route checks, but exposed volatile nftables counters; rerun the corrected structural comparison before acceptance. This does not establish real-tunnel DNS confinement.
+- [x] Obtain privileged acceptance for the disposable IPv4/IPv6 UDP endpoint exception probe, including independent counters for authorised endpoint packets and unrelated underlay drops. This is not real WireGuard endpoint verification.
 
-- [ ] Obtain privileged acceptance for the disposable IPv4/IPv6 UDP endpoint exception probe, including independent counters for authorised endpoint packets and unrelated underlay drops. This is not real WireGuard endpoint verification.
