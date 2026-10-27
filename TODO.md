@@ -106,3 +106,6 @@ Part 2 foundations and internal package organisation are complete. The normal-op
 - [x] Add an opt-in journal-gated disposable session entry point that installs namespace isolation before WireGuard configuration, with offline failure-ordering tests. This does not establish leak-free networking.
 
 The DNS underlay probe handles synchronous firewall `EPERM` responses while still requiring independent per-rule packet-drop counter evidence. Privileged synthetic DNS enforcement passed on Arch Linux; actual resolver confinement remains unverified.
+
+- [ ] Integrate exclusive namespace resolver installation into the journalled lifecycle only after proving ownership, cleanup and namespace-execution semantics in a disposable privileged probe.
+- [ ] Verify resolver routes through WireGuard and reject any underlay path, including IPv6 and tunnel loss; confirm applications cannot bypass DNS configuration.
