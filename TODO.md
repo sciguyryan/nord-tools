@@ -109,3 +109,4 @@ The DNS underlay probe handles synchronous firewall `EPERM` responses while stil
 
 - [ ] Integrate exclusive namespace resolver installation into the journalled lifecycle only after proving ownership, cleanup and namespace-execution semantics in a disposable privileged probe.
 - [ ] Verify resolver routes through WireGuard and reject any underlay path, including IPv6 and tunnel loss; confirm applications cannot bypass DNS configuration.
+- [ ] Verify disposable namespace resolver visibility and cleanup with privileged local acceptance; then test DNS routing through a protected tunnel, WireGuard endpoint exceptions and real tunnel failure before claiming Part 4 fail-closed behaviour.
