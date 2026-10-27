@@ -62,8 +62,8 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Add synthetic UDP/TCP port 53 underlay drop-counter checks for IPv4 and IPv6 before and after simulated tunnel loss; privileged synthetic DNS probe acceptance passed on Arch Linux.
 - [x] Define an offline namespace resolver policy with validated numeric servers and deterministic resolv.conf rendering, without claiming installation or confinement.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement in privileged end-to-end tests.
-- [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
-- [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
+- [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment. Simulated dual-stack route checks passed; real-tunnel and restart cases remain unverified.
+- [ ] Test firewall and DNS failure injection, and preserve unrelated host networking. The accepted disposable real WireGuard regression verifies unchanged host routes, firewall structure and resolver contents, but integrated firewall/DNS failure injection remains outstanding.
 
 ### Part 5: Per-application routing
 
@@ -113,6 +113,7 @@ The DNS underlay probe handles synchronous firewall `EPERM` responses while stil
 - [ ] Test DNS routing through a protected tunnel, WireGuard endpoint exceptions and real tunnel failure before claiming Part 4 fail-closed behaviour.
 - [x] Verify the disposable DNS route-confinement probe with privileged IPv4/IPv6 tunnel-up and tunnel-down checks, accepting only simulated routing evidence.
 - [ ] Follow with actual DNS packet routing, real WireGuard endpoint exceptions and failure-injection tests.
-- [ ] Obtain privileged acceptance for the disposable real WireGuard host-integrity regression, including unchanged host IPv4/IPv6 routes, structurally equivalent nftables rules and resolver contents. The first privileged run passed the real WireGuard and route checks, but exposed volatile nftables counters; rerun the corrected structural comparison before acceptance. This does not establish real-tunnel DNS confinement.
+- [x] Obtain privileged acceptance for the disposable real WireGuard host-integrity regression, including unchanged host IPv4/IPv6 routes, structurally equivalent nftables rules and resolver contents. The corrected JSON structural comparison passed on Arch Linux alongside both independent WireGuard pairs and tunnel shutdown checks. This does not establish real-tunnel DNS confinement.
+
 - [x] Obtain privileged acceptance for the disposable IPv4/IPv6 UDP endpoint exception probe, including independent counters for authorised endpoint packets and unrelated underlay drops. This is not real WireGuard endpoint verification.
 
