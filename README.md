@@ -319,11 +319,9 @@ The test jobs also report branch coverage, with an XML report uploaded from Pyth
 
 Before downloading profiles or probing servers, the benchmarker checks the NordVPN Linux CLI when available. If it confirms an active NordVPN connection, the run stops without disconnecting or replacing that connection. Disconnect manually using `nordvpn disconnect` before benchmarking to avoid measuring through the tunnel. Use `--allow-active-vpn` to deliberately continue through an active connection; a warning remains visible. If the NordVPN client is absent or its status cannot be read, the check reports uncertainty and continues. Other VPN clients and routes are not reliably detected by this check, so verify your network path separately. The preflight also applies when `--auto-connect` is requested; automatic connection occurs only after measurements finish.
 
-
 ### Country flags in terminal results
 
 The Unicode terminal table prefixes recognised countries with their flag emoji (for example, `🇬🇧 United Kingdom`). Flags are derived from canonical ISO country codes, including NordVPN's `uk` to `gb` alias, and require no additional dependency. Unrecognised locations retain their text label without a flag. Use `--ascii` for a plain-text table without emoji; CSV and JSON exports continue to contain country names rather than presentation-only emoji. Flag appearance depends on the terminal's font and emoji support.
-
 
 ## Probe methods
 
@@ -514,3 +512,14 @@ The internal `NamespaceIsolationPolicy` renders a proposed namespace-local nftab
 ## Experimental namespace firewall installation (Part 4)
 
 `nord_tools_internal.nordvpn_isolation_install.install_disposable_isolation` provides an internal, explicitly experimental check-and-apply boundary for a freshly created, otherwise empty disposable namespace. It verifies process-bound namespace evidence around an `nft -c -f -` preflight and an `nft -f -` apply. The ruleset is passed on standard input, not interpolated into a shell command. The caller must install it before bringing up any interfaces or starting network traffic. The new `execute_isolated_disposable_session` entry point wires this boundary into the journal-gated disposable WireGuard path, requiring the firewall check and installation before WireGuard configuration. The existing unisolated experimental entry point remains available for compatibility and must not be mistaken for fail-closed execution. This ordering does not prove that firewall installation is atomic with namespace creation. No DNS confinement, route isolation, tunnel-loss verification, restart protection or production ownership is provided. An error must block further network configuration and be investigated, not treated as a successful installation. No host firewall modifications are intended.
+
+### Markdown checks
+
+GitHub Actions runs `markdownlint-cli2` with a pinned version against project Markdown files. The `.markdownlint-cli2.jsonc` configuration preserves unwrapped prose by disabling MD013 (line length); generated dependencies and Git metadata are excluded. To reproduce this check locally with Node.js 22 and npm, run:
+
+```bash
+npm install --no-save --no-package-lock 'markdownlint-cli2@0.18.1'
+./node_modules/.bin/markdownlint-cli2 '**/*.md'
+```
+
+This check is independent of Python tests and does not require privileged networking access.

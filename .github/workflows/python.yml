@@ -27,6 +27,19 @@ jobs:
       - name: Verify generated Kongroo launcher
         run: python tools/generate_kongroo_launcher.py --check
 
+  markdown:
+    name: Markdown lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install pinned Markdown linter
+        run: npm install --no-save --no-package-lock 'markdownlint-cli2@0.18.1'
+      - name: Lint project Markdown
+        run: ./node_modules/.bin/markdownlint-cli2 '**/*.md'
+
   tests:
     name: Offline tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
