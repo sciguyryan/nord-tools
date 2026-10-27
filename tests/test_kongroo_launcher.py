@@ -13,7 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 class PackedLauncherTests(unittest.TestCase):
     def test_generated_launcher_matches_canonical_source(self):
         self.assertEqual(
-            (ROOT / "nordvpn_kongroo_packed.py").read_text(), build((ROOT / "nordvpn_kongroo.py").read_bytes())
+            (ROOT / "nordvpn_kongroo_packed.py").read_text(),
+            build((ROOT / "nordvpn_kongroo.py").read_bytes()),
+            "Operation Kongroo launcher is stale. Run python tools/generate_kongroo_launcher.py after editing or formatting the readable source.",
         )
 
     def test_packed_launcher_matches_readable_entrypoint(self):

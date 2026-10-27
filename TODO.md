@@ -50,6 +50,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
 
 ### Part 4: Fail-closed routing, firewall and DNS
+- [x] Introduce a validated, deterministic offline nftables candidate with default-drop IPv4/IPv6 namespace policy and a narrowly scoped WireGuard endpoint exception. No firewall installation or DNS confinement is implemented.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.

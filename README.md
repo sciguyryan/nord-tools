@@ -506,3 +506,7 @@ The internal `execute_disposable_session` adapter combines an existing operation
 ### Integrated disposable provisioning acceptance
 
 `python tools/probe_disposable_execution.py` is a no-change dry run. On a disposable Linux test machine, `sudo python tools/probe_disposable_execution.py --run-privileged` exercises the journal-gated creation path, kernel peer verification and namespace retirement. Afterwards, inspect `sudo ip netns list` for leftovers. This is an experimental acceptance probe, not a production VPN provisioning command. Crash-persistent ownership, race-safe deletion, full recovery and leak prevention remain outstanding.
+
+## Part 4: Experimental namespace isolation policy
+
+The internal `NamespaceIsolationPolicy` renders a proposed namespace-local nftables `inet` table with default-drop input, output and forwarding, loopback allowance, established inbound replies, tunnel-bound output and one narrowly scoped UDP underlay endpoint exception. It does not install the rules, modify host firewall state or configure DNS. Production leak protection requires atomic installation before traffic is possible, routing and resolver confinement, verified ownership, and privileged failure-injection acceptance.

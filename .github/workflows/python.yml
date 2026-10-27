@@ -24,6 +24,8 @@ jobs:
         run: ruff format --check --diff .
       - name: Verify generated ISO data
         run: python tools/generate_country_names.py --check
+      - name: Verify generated Kongroo launcher
+        run: python tools/generate_kongroo_launcher.py --check
 
   tests:
     name: Offline tests (Python ${{ matrix.python-version }})
