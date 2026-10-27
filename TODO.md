@@ -51,6 +51,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 ### Part 4: Fail-closed routing, firewall and DNS
 - [x] Introduce a validated, deterministic offline nftables candidate with default-drop IPv4/IPv6 namespace policy and a narrowly scoped WireGuard endpoint exception. No firewall installation or DNS confinement is implemented.
+- [x] Add an experimental namespace-local nftables check/apply boundary requiring process-bound disposable ownership. This is not yet connected to tunnel provisioning or privileged leak testing.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement.
 - [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
 - [ ] Test firewall and DNS failure injection, and preserve unrelated host networking.
