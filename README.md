@@ -44,7 +44,8 @@ The offline management foundation is complete, but **the operational tunnel mana
 | Area | Current state | Required before live use |
 | --- | --- | --- |
 | Tunnel provisioning | Experimental disposable WireGuard configuration, connectivity and journal-gated execution have been implemented and tested in controlled probes | Implement production-authorised provisioning, crash-safe ownership, provider credentials and endpoint selection |
-| Network isolation | Disposable simulated firewall probe | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
+| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
+| Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Implement authorised application execution through owned, fail-closed namespaces and verify desktop integration |
 | Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
 | Replacement and recovery | Non-executable transaction stages | Implement protected cut-over, rollback, crash recovery and durable operation journals |
 | Startup and persistence | Persistent desired policy by default | Install and test systemd restoration, including safe startup ordering and transient-policy exclusion |
@@ -568,4 +569,4 @@ Part 5 Increment 5.3 adds offline application launch request preparation in `nor
 
 Part 5 Increment 5.4 adds offline application session lifecycle modelling and a documented checklist for eventual namespace-aware launching, including desktop environment integration. These records are not process handles, and no application execution or privileged namespace operation is enabled.
 
-Part 5 Increment 5.5 adds a read-only consistency audit for logical application bindings and sessions. It detects orphaned or stale sessions and allocation keys shared across incompatible profiles, and produces deterministic allocation summaries. A successful audit is not evidence of running processes, namespace ownership or fail-closed networking. Production application execution and privileged integration remain disabled until the outstanding requirements in `TODO.md` are met.
+Part 5 Increment 5.5 completes the five-increment offline programme with a read-only consistency audit for logical application bindings and sessions. It detects orphaned or stale sessions and allocation keys shared across incompatible profiles, and produces deterministic allocation summaries. A successful audit is not evidence of running processes, namespace ownership or fail-closed networking. Production application execution and privileged integration remain disabled until the outstanding requirements in `TODO.md` are met.

@@ -36,9 +36,9 @@ The disposable namespace firewall, synthetic DNS drop, resolver visibility, simu
 - [ ] Demonstrate no unprotected fallback during real tunnel loss, restart or failed establishment.
 - [ ] Complete firewall/DNS failure injection and production rollback verification, including host isolation.
 
-### Part 5: Per-application routing
+### Part 5: Per-application routing (offline programme completed; operational integration outstanding)
 
-Offline registered-application routing plans (Increment 5.1), logical binding/reference lifecycle planning (Increment 5.2), fail-closed launch request preparation (Increment 5.3), , offline application session/namespace requirement modelling (Increment 5.4), and logical binding/session consistency auditing (Increment 5.5) are complete. These offline foundations do not authorise process launch, namespace mutation or kernel resource removal. The five-increment offline programme is complete, but Part 5 operational routing remains open pending production integration and privileged acceptance.
+Offline registered-application routing plans (Increment 5.1), logical binding/reference lifecycle planning (Increment 5.2), fail-closed launch request preparation (Increment 5.3), offline application session/namespace requirement modelling (Increment 5.4), and logical binding/session consistency auditing (Increment 5.5) are complete. These offline foundations do not authorise process launch, namespace mutation or kernel resource removal. The five-increment offline programme is complete, but Part 5 operational routing remains open pending production integration and privileged acceptance.
 
 - [ ] Route assigned applications through their profiles, with unassigned applications inheriting the default.
 - [ ] Reuse shared tunnels while maintaining isolation for dedicated profiles.
