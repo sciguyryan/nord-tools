@@ -46,6 +46,8 @@ Offline registered-application routing plans (Increment 5.1), logical binding/re
 
 ### Part 6: Live reconciliation and recovery
 
+Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, conflicting or missing observations and never grants privileged mutation authority. Live reconciliation remains outstanding.
+
 - [ ] Implement idempotent apply/update/replace/remove against observed and owned state, without blind resource creation.
 - [ ] Stage replacements, verify before cut-over, and preserve unaffected application tunnels.
 - [ ] Implement rollback, drift repair and recovery after partial failure or interrupted operations.
