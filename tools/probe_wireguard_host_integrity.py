@@ -9,8 +9,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import json
-import difflib
 import os
 from pathlib import Path
 import secrets
@@ -30,43 +28,8 @@ class IntegrityError(RuntimeError):
 OBSERVATIONS = (
     ("IPv4 host routes", ("ip", "-4", "route", "show", "table", "all")),
     ("IPv6 host routes", ("ip", "-6", "route", "show", "table", "all")),
-    ("host nftables ruleset", ("nft", "-j", "-a", "list", "ruleset")),
+    ("host nftables ruleset", ("nft", "-a", "list", "ruleset")),
 )
-
-
-def normalise_nft(value: object) -> object:
-    """Remove volatile kernel metadata without discarding firewall policy.
-
-    JSON counter expressions contain live packet/byte statistics. Retain the
-    counter expression itself, and preserve all other expression attributes.
-    Handles are kernel-assigned object identifiers, not policy definitions.
-    """
-    if isinstance(value, list):
-        return [normalise_nft(item) for item in value]
-    if isinstance(value, dict):
-        result = {}
-        for key, item in value.items():
-            if key == "handle":
-                continue
-            if key == "counter" and isinstance(item, dict):
-                result[key] = {
-                    name: normalise_nft(entry) for name, entry in item.items() if name not in {"packets", "bytes"}
-                }
-            else:
-                result[key] = normalise_nft(item)
-        return result
-    return value
-
-
-def nft_policy(raw: str) -> str:
-    """Produce deterministic, order-preserving policy evidence from nft JSON."""
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        raise IntegrityError(f"Cannot parse host nftables JSON: {exc}") from exc
-    if not isinstance(parsed, dict) or not isinstance(parsed.get("nftables"), list):
-        raise IntegrityError("Unexpected host nftables JSON structure")
-    return json.dumps(normalise_nft(parsed), sort_keys=True, indent=2, ensure_ascii=True)
 
 
 def observe() -> dict[str, str]:
@@ -76,10 +39,7 @@ def observe() -> dict[str, str]:
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if result.returncode:
             raise IntegrityError(f"Cannot inspect {label}: {result.stderr.strip()}")
-        if label == "host nftables ruleset":
-            evidence[label] = nft_policy(result.stdout)
-        else:
-            evidence[label] = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+        evidence[label] = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
     resolver = Path("/etc/resolv.conf")
     try:
         evidence["host resolver contents"] = hashlib.sha256(resolver.read_bytes()).hexdigest()
@@ -94,20 +54,6 @@ def verify(before: dict[str, str], after: dict[str, str]) -> None:
         raise IntegrityError("Host observation set changed")
     for label in before:
         if before[label] != after[label]:
-            if label == "host nftables ruleset":
-                difference = list(
-                    difflib.unified_diff(
-                        before[label].splitlines(),
-                        after[label].splitlines(),
-                        fromfile="before/nftables",
-                        tofile="after/nftables",
-                        lineterm="",
-                    )
-                )
-                detail = "\n".join(difference[:80])
-                if len(difference) > 80:
-                    detail += "\n... difference truncated"
-                raise IntegrityError(f"Host state changed during disposable experiment: {label}\n{detail}")
             raise IntegrityError(f"Host state changed during disposable experiment: {label}")
         print(f"PASS: {label} unchanged across disposable WireGuard experiment")
 
