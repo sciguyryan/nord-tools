@@ -576,3 +576,7 @@ Part 6 Increment 6.1 adds `nord_tools_internal.nordvpn_reconciliation_gate` for 
 Part 6 Increment 6.2 provides `nordvpn_recovery_coordinator.py`, an offline validator for ordered transaction checkpoints and interrupted/failed operation assessments. Checkpoint records are not kernel observations or creation-time ownership evidence; they cannot authorise resume, rollback, deletion or live networking changes.
 
 Part 6 Increment 6.3 adds `nord_tools_internal/nordvpn_replacement_stage.py`, an offline staged-replacement planner. It preserves existing logical assignments, identifies verification obligations and never authorises live cut-over or resource retirement. Production ownership and crash-safe coordination remain outstanding.
+
+### Offline drift assessment (Part 6.4)
+
+`nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. Production drift correction remains blocked pending independently verified creation-time ownership and crash-safe execution.
