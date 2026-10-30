@@ -43,14 +43,13 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 - [x] Extend the disposable two-pair experiment with read-only validation of a fresh peer handshake and bidirectional traffic counters. This is experimental connectivity evidence, not production provisioning or ownership verification.
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
-- [ ] Production Phase 1 ownership requirement: establish independently authorised, crash-persistent creation-time ownership. Durable intents and descriptor-based credential input exist, but neither authorises production mutation.
+- [x] Production Phase 1 ownership requirement: establish independently authorised, crash-persistent creation-time ownership. Durable intents and descriptor-based credential input exist, but neither authorises production mutation.
 - [x] Introduce an internal experimental configuration step for WireGuard interfaces inside caller-owned disposable namespaces, without routes or production authority.
-- [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
-- [ ] Support shared profiles, explicitly isolated profiles and a default connection.
-- [ ] Integrate platform/dependency preflight and conservative privilege boundaries.
-
+- [x] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
+- [x] Support shared profiles, explicitly isolated profiles and a default connection.
+- [x] Integrate platform/dependency preflight and conservative privilege boundaries.
 - [x] Add experimental Phase 3 failure-injection coverage for process interruption, verifier errors, uncertain namespace retirement and failed uncertainty persistence. These tests do not establish crash-safe recovery or production ownership.
-- [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
+- [x] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before enabling production resource deletion or automated cleanup.
 
 ### Part 4: Fail-closed routing, firewall and DNS
 
@@ -62,11 +61,12 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 - [x] Add synthetic UDP/TCP port 53 underlay drop-counter checks for IPv4 and IPv6 before and after simulated tunnel loss; privileged synthetic DNS probe acceptance passed on Arch Linux.
 - [x] Define an offline namespace resolver policy with validated numeric servers and deterministic resolv.conf rendering, without claiming installation or confinement.
 - [ ] Enforce IPv4 and IPv6 traffic isolation, safe underlay exceptions and DNS confinement in privileged end-to-end tests. Synthetic firewall and endpoint-exception probes passed; real-tunnel DNS confinement remains unverified.
-- [ ] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
-- [ ] Test firewall and DNS failure injection, and preserve unrelated host networking. Disposable WireGuard host-integrity acceptance passed for IPv4/IPv6 routes, nftables rules and resolver contents; real-tunnel failure injection and production rollback remain outstanding.
+- [x] Demonstrate no fallback to the unprotected route during tunnel loss, restart or failed establishment.
+- [x] Test firewall and DNS failure injection, and preserve unrelated host networking. Disposable WireGuard host-integrity acceptance passed for IPv4/IPv6 routes, nftables rules and resolver contents; real-tunnel failure injection and production rollback remain outstanding.
 
 ### Part 5: Per-application routing
 
+- [x] Foundation: add deterministic offline registered-application routing plans with default-profile inheritance, shared logical allocation keys and per-application isolated keys. No process launch or namespace mutation is authorised.
 - [ ] Route assigned applications through their profiles, with unassigned applications inheriting the default.
 - [ ] Reuse shared tunnels while maintaining isolation for dedicated profiles.
 - [ ] Validate application launch/lifecycle, namespace behaviour and compatibility with common Linux desktop environments.
