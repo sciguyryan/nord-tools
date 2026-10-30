@@ -38,7 +38,7 @@ The disposable namespace firewall, synthetic DNS drop, resolver visibility, simu
 
 ### Part 5: Per-application routing
 
-Offline registered-application routing plans (Increment 5.1), logical binding/reference lifecycle planning (Increment 5.2), and fail-closed launch request preparation (Increment 5.3) are complete. These offline foundations do not authorise process launch, namespace mutation or kernel resource removal.
+Offline registered-application routing plans (Increment 5.1), logical binding/reference lifecycle planning (Increment 5.2), fail-closed launch request preparation (Increment 5.3), and offline application session/namespace requirement modelling (Increment 5.4) are complete. These offline foundations do not authorise process launch, namespace mutation or kernel resource removal.
 
 - [ ] Route assigned applications through their profiles, with unassigned applications inheriting the default.
 - [ ] Reuse shared tunnels while maintaining isolation for dedicated profiles.
