@@ -580,3 +580,7 @@ Part 6 Increment 6.3 adds `nord_tools_internal/nordvpn_replacement_stage.py`, an
 ### Offline drift assessment (Part 6.4)
 
 `nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. Production drift correction remains blocked pending independently verified creation-time ownership and crash-safe execution.
+
+Part 6 Increment 6.5 adds `nord_tools_internal/nordvpn_reconciliation_audit.py`, a read-only cross-contract audit of reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; privileged ownership and crash-safe operational integration remain outstanding.
+
+The five-increment Part 6 offline programme is complete, but the live reconciliation and recovery milestone is not. The accepted modules validate caller-supplied observations and planning reports; they neither inspect kernel ownership independently nor implement idempotent apply/update/replace/remove, verified cut-over, rollback, drift repair or interrupted-operation recovery. See `TODO.md` for the outstanding operational and privileged acceptance requirements.

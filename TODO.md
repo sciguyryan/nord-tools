@@ -44,9 +44,9 @@ Offline registered-application routing plans (Increment 5.1), logical binding/re
 - [ ] Reuse shared tunnels while maintaining isolation for dedicated profiles.
 - [ ] Validate application launch/lifecycle, namespace behaviour and compatibility with common Linux desktop environments.
 
-### Part 6: Live reconciliation and recovery
+### Part 6: Live reconciliation and recovery (offline programme completed; operational integration outstanding)
 
-Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, conflicting or missing observations. Increment 6.2 adds ordered transaction checkpoint validation and conservative interruption-recovery assessments. Increment 6.3 adds offline staged-replacement planning that preserves existing allocations and refuses cut-over or retirement without privileged proof. Increment 6.4 adds conservative offline drift classification, including quarantine of unexpected resources and ownership-conflict blocking. Neither grants privileged mutation, resume, rollback or deletion authority. Live reconciliation remains outstanding.
+Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, conflicting or missing observations. Increment 6.2 adds ordered transaction checkpoint validation and conservative interruption-recovery assessments. Increment 6.3 adds offline staged-replacement planning that preserves existing allocations and refuses cut-over or retirement without privileged proof. Increment 6.4 adds conservative offline drift classification, including quarantine of unexpected resources and ownership-conflict blocking. Increment 6.5 adds a non-authorising cross-contract audit of reconciliation, drift, recovery and replacement reports. The five-increment offline Part 6 programme is complete; live reconciliation is not. None of these reports grants privileged mutation, resume, rollback or deletion authority. The three operational requirements below remain open and depend on the production ownership boundary.
 
 - [ ] Implement idempotent apply/update/replace/remove against observed and owned state, without blind resource creation.
 - [ ] Stage replacements, verify before cut-over, and preserve unaffected application tunnels.
