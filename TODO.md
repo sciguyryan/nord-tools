@@ -54,6 +54,7 @@ Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, c
 
 ### Part 7: Startup persistence and safe cleanup
 
+- [x] Increment 7.1: durable creation-time ownership records, privileged verification and interrupted-creation recovery preflight, with batch-level rejection of foreign or uncertain resources. Offline tests are complete; the privileged acceptance probe (`sudo python tools/probe_ownership_preflight.py --run-privileged`) still requires a disposable Linux host run. Boot-session continuity is a documented limit, not an unforgeable certificate.
 - [ ] Restore persistent desired configuration using systemd with safe boot ordering; do not restore `--transient` intent.
 - [ ] Provide dry-run and confirmed cleanup that removes only verified Nord Tools-owned resources and restores prior state where appropriate.
 - [ ] Test restart, idempotency, interrupted cleanup and recovery without flushing host firewall or routing configuration.
@@ -71,7 +72,7 @@ The eight-part schedule is a planning limit, **not a waiver of safety requiremen
 
 Part 2's offline lifecycle foundations and the disposable privileged probes are accepted, but they do not establish persistent ownership or race-safe deletion. Before production mutation or automated cleanup, require independently authorised, crash-persistent creation-time ownership, atomic lifecycle coordination, interrupted-operation recovery and privileged adversarial tests. Resource names, journal claims, inode fingerprints and completed intents are not sufficient deletion authority.
 
-- [ ] Bind durable intents and independent creation-time ownership evidence into an authorised privileged WireGuard executor with a transactional, crash-recoverable state model.
+- [ ] Bind durable intents and independent creation-time ownership evidence into an authorised privileged WireGuard executor with a transactional, crash-recoverable state model. The 7.1 owner-record preflight now supplies the binding record and verification layer; the authorised executor that consumes it under transactional control remains outstanding.
 - [ ] Connect the journal-gated experimental adapter to that executor without granting mutation authority to offline plans or simulated observations.
 - [ ] Integrate exclusive namespace resolver installation into the authorised lifecycle with verified ownership and cleanup semantics.
 - [ ] Prove actual DNS packet confinement through WireGuard, including IPv6, application DNS bypass attempts, tunnel loss and failed establishment.

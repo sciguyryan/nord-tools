@@ -196,3 +196,26 @@ The five Part 5 offline increments cover registered-application routing and defa
 ## Part 6 offline reconciliation acceptance and production boundary
 
 The five Part 6 increments implement separate, non-authorising contracts: an evidence gate for proposed operations, ordered checkpoint and interruption assessments, staged replacement obligations, drift classification, and a cross-contract consistency audit. They operate on supplied logical records, not independently authenticated kernel ownership. Even mutually consistent reports cannot authorise creation, cut-over, rollback, repair, retirement or deletion. The production executor must bind durable intents to independent crash-persistent creation-time ownership evidence, coordinate operations transactionally, re-observe kernel state before each sensitive transition and recover safely after interruption. Live idempotent apply/update/replace/remove, verified replacement without disturbing unaffected tunnels, drift repair, rollback and privileged failure-injection acceptance remain outstanding. See `TODO.md`; completion of the offline programme is not completion of Part 6 operational requirements.
+
+## Part 7.1: ownership verification preflight
+
+The reconciliation gate of Part 6 requires independently observed ownership before it will even consider execution, but until now nothing in the project could produce that evidence. Part 7.1 introduces that production step: `nord_tools_internal/nordvpn_ownership_verify.py` maintains a durable owner-record store and a preflight that classifies allocations against it.
+
+### Owner records
+
+An owner record binds an allocation identity to the kernel identity the creator observed while privileged authority was still live, at the moment of creation:
+
+- A namespace binding records the device and inode of the `/run/netns` mount entry. `OwnedNamespace` already re-checks the held descriptor against that entry; a later process can repeat the check from the record without the descriptor.
+- An interface binding records the creation-time scope (`host` or a namespace name) and interface index.
+
+Records are appended through the same locked, atomic, symlink-refusing store pattern as the lifecycle and intent stores, and each binding is cross-checked against the validated allocation ledger. A binding is immutable once written. Retirement history is deliberately retained: if a name is reused after a recorded retirement, that appears as an identity conflict rather than renewed ownership. There is no binding shape for route, firewall, DNS or service kinds yet; those kinds are reported as unsupported rather than partially supported, and their bindings arrive with their consumers.
+
+### Verification and its limit
+
+The preflight re-derives each recorded identity from a complete read-only discovery snapshot: for a namespace it observes the live mount entry, for an interface the scope and current index. A finding of `verified_current` therefore means: the binding recorded at creation still matches the kernel, the lifecycle state is stable, no operation intent is unresolved, and the observation is fresh. Everything else fails closed: missing resources, changed identities, unbound claims, unresolved intents, interrupted lifecycle transitions, observed names after a recorded retirement, and resource kinds with no binding model. Observations that no allocation claims anywhere in the journal are listed separately as unclaimed; they may belong to other software or another ledger, and nothing in this layer makes a decision about them.
+
+This is continuity evidence within a boot session, not an unforgeable certificate, and the report says so rather than implying otherwise. `/run/netns` is tmpfs, so mount identities cannot survive a reboot and must be re-established by an operator after one; a hostile process with write access to the store directory could forge a record, though it would also have to fabricate the matching journal, which makes that escape more demanding than forging names alone. The boundary the layer does draw is strict: a resource name, journal event or allocation token alone never verifies anything, and one unverified allocation fails verification for the whole batch, so no consumer can selectively adopt the convenient subset.
+
+### Where this leaves Part 7
+
+7.1 provides the verification and recovery-preflight layer; it does not authorise mutation, install a boot-time reconciler or delete anything. Later increments consume it: persistent reconciliation (7.2, 7.3) and cleanup (7.4) must gate on a fresh preflight result and re-verify ownership at the moment of execution. The privileged acceptance probe is `tools/probe_ownership_preflight.py`; it exercises exactly one disposable namespace and the rejection path, and leaves the host otherwise untouched.

@@ -21,6 +21,7 @@ from nord_tools_internal.nordvpn_identity import inspect_allocations
 from nord_tools_internal.nordvpn_lifecycle import inspect_lifecycle
 from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycle
 from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
+from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
 from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
 from nord_tools_internal.nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
 from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, read_json
@@ -103,6 +104,7 @@ def main(argv: list[str] | None = None) -> int:
         "graph",
         "cleanup-plan",
         "lifecycle",
+        "ownership-preflight",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -120,6 +122,12 @@ def main(argv: list[str] | None = None) -> int:
             )
         if name == "evidence":
             command.add_argument("--registry", required=True, help="Explicit offline ownership ledger JSON")
+        if name == "ownership-preflight":
+            command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
+            command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
+            command.add_argument(
+                "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
+            )
         if name == "audit":
             command.add_argument("--registry", required=True, help="Explicit offline resource ledger JSON")
             command.add_argument("--inventory", required=True, help="Explicit simulated profile inventory JSON")
@@ -151,6 +159,13 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 observations = read_json(args.observed) if args.observed else None
                 result = inspect_lifecycle(journal, observations)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "ownership-preflight":
+            journal = read_json(args.journal)
+            bindings = read_json(args.bindings)
+            intents = read_json(args.intents) if args.intents else None
+            result = preflight_ownership(journal, bindings, discover(), intents)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "cleanup-plan":

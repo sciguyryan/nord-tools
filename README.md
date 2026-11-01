@@ -470,6 +470,22 @@ The output identifies missing names, ambiguous interface scopes and possible lif
 
 Internal fingerprint, lifecycle, recovery and operation-intent modules support read-only assessment of resource drift and interrupted work. They do not prove kernel ownership or execute recovery. The experimental disposable namespace primitive retains a process-bound descriptor for identity checks, but is not a production cleanup mechanism. The privileged smoke probe (`sudo python tools/probe_namespace_ownership.py --run-privileged`) passed on Arch Linux with no named namespaces left behind. See the [routing design](docs/VPN-ROUTING-DESIGN.md#process-bound-disposable-namespace-ownership-experiment) for limitations and safe test instructions.
 
+### Ownership verification preflight (Part 7.1)
+
+`python nord_tools.py manage ownership-preflight --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json` performs the first privileged ownership-verification step. The owner-record store records, at creation time and while the creator still held descriptor-bound authority, the kernel identity of each created resource: the `/run/netns` mount device and inode pair for a namespace, or the creation-time interface scope and index for an interface. Records are validated against the lifecycle journal, are immutable once written, and are written through the same locked, atomic, symlink-refusing pattern as the other stores.
+
+The preflight re-derives each recorded identity from fresh read-only discovery and classifies every allocation: `verified_current`, `resource_missing`, `identity_conflict` (including suspected name reuse), `unbound_claim`, `uncertain_intent`, `interrupted_transition`, `uncertain_state`, `consistent_retired`, `possible_name_reuse`, or `unsupported_resource_kind`. Observations that no allocation claims are listed separately and are treated as belonging to something else. A resource's documented name never verifies anything: a binding must match the live observation.
+
+One unverified, foreign or uncertain allocation fails the verification of the whole batch, and offline or incomplete discovery evidence is refused rather than partially classified. Pass `--intents` to load an operation-intent store; unresolved pending or uncertain intents additionally block verification of their allocation.
+
+```bash
+python nord_tools.py manage ownership-preflight --journal journal.json --bindings owner-bindings.json
+python tools/probe_ownership_preflight.py
+sudo python tools/probe_ownership_preflight.py --run-privileged
+```
+
+The privileged acceptance probe creates one disposable namespace, records its binding while the creating process still holds the namespace descriptor, requires the preflight to accept the verified binding and reject a deliberately mistaken interface claim, then retires the namespace and requires the recorded retirement to classify consistently. A passing result establishes creation-time binding continuity **within one boot session only**: `/run/netns` is tmpfs, mount identities after a reboot cannot be rebound automatically, and a hostile process with access to the store directory is outside this evidence model. Even a verified batch never authorises mutation or deletion in this layer; later execution paths must re-verify ownership at the moment of action. The command and probe are read-only apart from the probe's explicitly authorised disposable namespace.
+
 ## Internal package organisation
 
 The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.

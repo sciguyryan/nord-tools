@@ -23,7 +23,7 @@ def _ip_json(*args: str, runner=subprocess.run) -> list[dict]:
     if result.returncode != 0:
         raise DiscoveryError(f"ip {' '.join(args)} failed (exit {result.returncode}): {result.stderr.strip()[:200]}")
     try:
-        data = json.loads(result.stdout)
+        data = json.loads(result.stdout) if result.stdout.strip() else []
     except (ValueError, TypeError) as exc:
         raise DiscoveryError("ip returned invalid JSON") from exc
     if not isinstance(data, list) or not all(isinstance(entry, dict) for entry in data):
