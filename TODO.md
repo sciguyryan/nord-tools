@@ -48,13 +48,14 @@ Offline registered-application routing plans (Increment 5.1), logical binding/re
 
 Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, conflicting or missing observations. Increment 6.2 adds ordered transaction checkpoint validation and conservative interruption-recovery assessments. Increment 6.3 adds offline staged-replacement planning that preserves existing allocations and refuses cut-over or retirement without privileged proof. Increment 6.4 adds conservative offline drift classification, including quarantine of unexpected resources and ownership-conflict blocking. Increment 6.5 adds a non-authorising cross-contract audit of reconciliation, drift, recovery and replacement reports. The five-increment offline Part 6 programme is complete; live reconciliation is not. None of these reports grants privileged mutation, resume, rollback or deletion authority. The three operational requirements below remain open and depend on the production ownership boundary.
 
-- [ ] Implement idempotent apply/update/replace/remove against observed and owned state, without blind resource creation.
+- [ ] Implement idempotent apply/update/replace/remove against observed and owned state, without blind resource creation. Part 7.2 now derives actual state from verified ownership evidence and classifies convergence idempotently; the privileged executor that performs apply, replace and remove under transactional control remains outstanding.
 - [ ] Stage replacements, verify before cut-over, and preserve unaffected application tunnels.
 - [ ] Implement rollback, drift repair and recovery after partial failure or interrupted operations.
 
 ### Part 7: Startup persistence and safe cleanup
 
 - [x] Increment 7.1: durable creation-time ownership records, privileged verification and interrupted-creation recovery preflight, with batch-level rejection of foreign or uncertain resources. Offline tests are complete; the privileged acceptance probe (`sudo python tools/probe_ownership_preflight.py --run-privileged`) still requires a disposable Linux host run. Boot-session continuity is a documented limit, not an unforgeable certificate.
+- [x] Increment 7.2: read-only persistent desired-state reconciliation. Actual per-profile state is derived from verified ownership evidence, configuration drift is only detectable through recorded provisioned configuration, and every non-converged outcome is a plan — never an execution. Transient intent is structurally excluded.
 - [ ] Restore persistent desired configuration using systemd with safe boot ordering; do not restore `--transient` intent.
 - [ ] Provide dry-run and confirmed cleanup that removes only verified Nord Tools-owned resources and restores prior state where appropriate.
 - [ ] Test restart, idempotency, interrupted cleanup and recovery without flushing host firewall or routing configuration.

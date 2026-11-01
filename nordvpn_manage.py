@@ -22,6 +22,7 @@ from nord_tools_internal.nordvpn_lifecycle import inspect_lifecycle
 from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycle
 from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
+from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
 from nord_tools_internal.nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
 from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, read_json
@@ -105,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
         "cleanup-plan",
         "lifecycle",
         "ownership-preflight",
+        "reconcile-live",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -128,6 +130,13 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
             )
+        if name == "reconcile-live":
+            command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
+            command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
+            command.add_argument(
+                "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
+            )
+            command.add_argument("--graph", help="Optional profile dependency graph JSON")
         if name == "audit":
             command.add_argument("--registry", required=True, help="Explicit offline resource ledger JSON")
             command.add_argument("--inventory", required=True, help="Explicit simulated profile inventory JSON")
@@ -166,6 +175,26 @@ def main(argv: list[str] | None = None) -> int:
             bindings = read_json(args.bindings)
             intents = read_json(args.intents) if args.intents else None
             result = preflight_ownership(journal, bindings, discover(), intents)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "reconcile-live":
+            if args.transient:
+                raise ManagementError(
+                    "reconcile-live uses the persistent saved policy; transient intent is never reconciled"
+                )
+            persistent = _read(state_path(True))
+            if persistent is None:
+                raise ManagementError("no saved persistent policy; configure one first")
+            journal = read_json(args.journal)
+            bindings = read_json(args.bindings)
+            intents = read_json(args.intents) if args.intents else None
+            preflight = preflight_ownership(journal, bindings, discover(), intents)
+            # Derivation and reconciliation read files only; neither stores nor
+            # the host change as a result of running this command.
+            actual = derive_actual_state(journal, bindings, preflight)
+            graph = read_json(args.graph) if args.graph else None
+            result = reconcile_desired(persistent, actual, graph)
+            result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "cleanup-plan":

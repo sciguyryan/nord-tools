@@ -219,3 +219,21 @@ This is continuity evidence within a boot session, not an unforgeable certificat
 ### Where this leaves Part 7
 
 7.1 provides the verification and recovery-preflight layer; it does not authorise mutation, install a boot-time reconciler or delete anything. Later increments consume it: persistent reconciliation (7.2, 7.3) and cleanup (7.4) must gate on a fresh preflight result and re-verify ownership at the moment of execution. The privileged acceptance probe is `tools/probe_ownership_preflight.py`; it exercises exactly one disposable namespace and the rejection path, and leaves the host otherwise untouched.
+
+## Part 7.2: persistent desired-state reconciliation
+
+The saved persistent and transient intent files have always been separate documents, but nothing compared either against resources the tool can prove it owns. Part 7.2 closes that gap as far as is currently defensible: `nord_tools_internal/nordvpn_state_reconcile.py` derives an actual per-profile state from live evidence and classifies convergence, while continuing to perform no network change.
+
+### Deriving actual state
+
+`derive_actual_state` joins three inputs that must all be current and internally consistent: a validated lifecycle journal, the owner-record store of Part 7.1, and a fresh preflight report over exactly the same allocations. Resource names play no part in this: a profile has resources when the preflight classifies them `verified_current`, and `consistent_retired` allocations count as absent. Any other finding becomes a profile blocker with its exact finding carried forward. Observations unclaimed by any allocation remain a separate diagnostic list; they may belong to other software and are never folded into profile state.
+
+Owner bindings now optionally record the provisioned configuration for the profile at binding time. A profile's configuration counts as recorded only when every binding of the profile agrees on an identical record, normalised through the same validation as desired intent; partial or conflicting records leave the configuration unverified. This asymmetry is deliberate. A binding is immutable, so a resource created before configuration recording cannot claim a configuration it does not possess, and the reconciliation must treat absence of evidence as non-convergence rather than as a suspected drift.
+
+### Convergence classification and its limits
+
+`reconcile_desired` compares persistent desired profiles with the derived state and produces one decision per profile: `converged`, `configuration_changed`, `configuration_unverified`, `blocked`, `create_pending` or `retire_pending`. Convergence requires verified resources and an identical recorded and desired configuration. Blocked profiles list their exact blockers; not-desired resources are never removed here and not-desired unverified resources are reported as left alone. Desired profiles without owned resources are `create_pending` and explicitly refuse blind creation: allocation happens only where a future provisioner establishes creation-time authority first. `configuration_changed` yields a replacement plan only; no cut-over is executed by this layer.
+
+With an optional dependency graph, a blocked prerequisite blocks every desired dependent, including independently converged ones — matching the offline dependency planner's treatment of unsafe parents. Verified evidence of the dependent's own resources does not compensate for a prerequisite that cannot safely proceed.
+
+Idempotence is a property of the pure classification: the same durable inputs produce a byte-identical report, and a run writes nothing. Interruption-state is deliberately not re-modelled here; pending or uncertain operation intents already surface through the preflight as blockers, and any run journal belongs with the boot wiring of 7.3 rather than with this layer. The plan/report split is unchanged from prior increments: `safe_to_execute` is always false, and 7.3's boot reconciliation must obtain a fresh preflight at startup and re-verify ownership at the moment of any privileged action.

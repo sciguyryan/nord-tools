@@ -486,6 +486,18 @@ sudo python tools/probe_ownership_preflight.py --run-privileged
 
 The privileged acceptance probe creates one disposable namespace, records its binding while the creating process still holds the namespace descriptor, requires the preflight to accept the verified binding and reject a deliberately mistaken interface claim, then retires the namespace and requires the recorded retirement to classify consistently. A passing result establishes creation-time binding continuity **within one boot session only**: `/run/netns` is tmpfs, mount identities after a reboot cannot be rebound automatically, and a hostile process with access to the store directory is outside this evidence model. Even a verified batch never authorises mutation or deletion in this layer; later execution paths must re-verify ownership at the moment of action. The command and probe are read-only apart from the probe's explicitly authorised disposable namespace.
 
+### Persistent desired-state reconciliation (Part 7.2)
+
+`python nord_tools.py manage reconcile-live --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json` compares the saved **persistent** desired policy against observed, ownership-verified resources and prints a deterministic reconciliation report. The command accepts an optional operation-intent store (`--intents`) and an optional profile dependency graph (`--graph`); with a graph, a blocked prerequisite blocks every desired dependent, matching the offline dependency planner.
+
+The actual per-profile state is derived only from verified evidence: a profile's resources are present when the preflight classifies them `verified_current`, and `consistent_retired` resources count as absent. A profile's provisioned configuration counts as recorded only when the owner bindings agree on an identical recorded configuration. The classifications are `converged`, `configuration_changed`, `configuration_unverified`, `blocked`, `create_pending` and `retire_pending`. Converged means every resource is ownership-verified and the recorded configuration equals desired intent exactly; anything less is a plan, not an action. The report always states `safe_to_execute: false`, and the command neither touches networking nor the journal, intent or binding stores.
+
+```bash
+python nord_tools.py manage reconcile-live --journal journal.json --bindings owner-bindings.json
+```
+
+Transient intent is structurally excluded: `--transient` is rejected, because session intent must never be restored at boot or reconciled later. `create_pending` never allocates anything automatically; retired verified resources re-enter creation only through a future authorised provisioner, and retirement of undesired verified resources is reserved for the separately confirmed cleanup command. Running the command twice on unchanged inputs produces an identical report.
+
 ## Internal package organisation
 
 The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.

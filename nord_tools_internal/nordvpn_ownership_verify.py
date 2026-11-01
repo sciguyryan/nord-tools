@@ -30,6 +30,7 @@ from typing import Iterator
 
 from nord_tools_internal.nordvpn_lifecycle import validate_journal
 from nord_tools_internal.nordvpn_operation_intent import validate_intents
+from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_registry import IDENTIFIER, RegistryError
 
 TOKEN = re.compile(r"[0-9a-f]{32}\Z")
@@ -58,6 +59,33 @@ def _validate_binding_shape(kind: str, binding: object) -> dict:
     return {"scope": scope, "ifindex": index}
 
 
+def validate_recorded_configuration(configuration: object) -> dict:
+    """Validate an optional provisioned-configuration snapshot as a profile shape.
+
+    The recorded configuration is the provisioner's durable claim about what was
+    configured when the binding was written. It is normalised exactly like the
+    desired policy so later reconciliation can compare the two literally. A
+    synthetic profile name is sufficient because validation does not depend on
+    the profile name, only on the profile shape.
+    """
+    if not isinstance(configuration, dict) or set(configuration) != {"selection", "sharing"}:
+        raise RegistryError("recorded configuration requires selection and sharing")
+    try:
+        checked = validate_policy(
+            {
+                "version": 1,
+                "defaults": {"vpn": "recorded"},
+                "vpn_profiles": {"recorded": {**configuration, "sharing": "shared"}},
+                "applications": {},
+            }
+        )
+    except (ValueError, TypeError) as exc:
+        raise RegistryError(f"invalid recorded configuration: {exc}") from exc
+    if configuration["sharing"] not in ("shared", "isolated"):
+        raise RegistryError("recorded configuration sharing must be shared or isolated")
+    return {**checked["vpn_profiles"]["recorded"], "sharing": configuration["sharing"]}
+
+
 def _validate_document(document: object) -> dict:
     if (
         not isinstance(document, dict)
@@ -67,11 +95,12 @@ def _validate_document(document: object) -> dict:
         or not isinstance(document["bindings"], list)
     ):
         raise RegistryError("owner bindings require version 1 and a bindings array")
+    base = {"allocation_id", "kind", "identifier", "binding"}
     entries = []
     tokens = set()
     identities = set()
     for entry in document["bindings"]:
-        if not isinstance(entry, dict) or set(entry) != {"allocation_id", "kind", "identifier", "binding"}:
+        if not isinstance(entry, dict) or not base <= set(entry) or set(entry) - base not in (set(), {"configuration"}):
             raise RegistryError("invalid owner binding fields")
         token, kind, identifier = entry["allocation_id"], entry["kind"], entry["identifier"]
         if not isinstance(token, str) or not TOKEN.fullmatch(token) or token in tokens:
@@ -82,14 +111,15 @@ def _validate_document(document: object) -> dict:
             raise RegistryError(f"duplicate binding resource identity: {kind}/{identifier}")
         tokens.add(token)
         identities.add((kind, identifier))
-        entries.append(
-            {
-                "allocation_id": token,
-                "kind": kind,
-                "identifier": identifier,
-                "binding": _validate_binding_shape(kind, entry["binding"]),
-            }
-        )
+        record = {
+            "allocation_id": token,
+            "kind": kind,
+            "identifier": identifier,
+            "binding": _validate_binding_shape(kind, entry["binding"]),
+        }
+        if "configuration" in entry:
+            record["configuration"] = validate_recorded_configuration(entry["configuration"])
+        entries.append(record)
     return {"version": 1, "bindings": entries}
 
 
@@ -188,9 +218,18 @@ def initialise_bindings(path: str | Path) -> dict:
         return document
 
 
-def record_binding(path: str | Path, journal: object, allocation_id: str, binding: object) -> dict:
+def record_binding(
+    path: str | Path,
+    journal: object,
+    allocation_id: str,
+    binding: object,
+    configuration: object | None = None,
+) -> dict:
     """Append one immutable creation-time binding under the stable lock.
 
+    ``binding`` records the kernel identity observed while privileged authority
+    was still live. ``configuration`` optionally records the provisioned
+    profile configuration at that moment for later desired-state comparison.
     Bindings are never rewritten or removed. Retirement history is deliberately
     retained so that later name reuse is detected as an identity conflict rather
     than mistaken for continued ownership.
@@ -209,6 +248,8 @@ def record_binding(path: str | Path, journal: object, allocation_id: str, bindin
         "identifier": allocation["identifier"],
         "binding": _validate_binding_shape(allocation["kind"], binding),
     }
+    if configuration is not None:
+        entry["configuration"] = validate_recorded_configuration(configuration)
     with _locked(target):
         existing = _load(target, validated)
         if any(item["allocation_id"] == allocation_id for item in existing["bindings"]):
@@ -393,7 +434,12 @@ def preflight_ownership(
             scope = recorded["scope"]
             observed_identity = {"scope": scope, "ifindex": links.get((scope, identifier))}
             if scope != "host" and scope not in namespaces:
-                finding, verified = "scope_missing", False
+                if state == "retired":
+                    # The recorded namespace itself was retired; nothing about
+                    # the interface should remain observable.
+                    finding, verified = "consistent_retired", True
+                else:
+                    finding, verified = "scope_missing", False
             elif (scope, identifier) not in links:
                 finding, verified = _absence_finding(state)
             elif links[(scope, identifier)] != recorded["ifindex"]:
