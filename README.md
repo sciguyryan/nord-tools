@@ -568,7 +568,7 @@ Execution order deletes dependents before prerequisites (using the optional `--g
 
 `clear-ownership` is the explicitly confirmed full reset: every verified owned resource is removed regardless of the saved policy, and after the teardown the journal, bindings, intents and run record are byte-verified archives under `ownership-reset-archive/` before empty stores are created in their place. The archive keeps every retirement record, so the name-reuse detection evidence survives; the saved policy itself is untouched and remains removable with `manage clear`. Repeat runs converge: after a completed cleanup the plan is empty and nothing changes, and after a full reset there is nothing recorded to plan at all.
 
-The privileged acceptance probe runs the full cycle on a disposable Linux test host: restore one pinned profile, clean it, verify it is gone, then confirm nothing remains. As before, inspect `sudo ip netns list` and any leftover host interfaces afterwards:
+The privileged acceptance probe is designed to run the full cycle on a disposable Linux test host: restore one pinned profile, clean it, verify it is gone, then confirm nothing remains. As before, inspect `sudo ip netns list` and any leftover host interfaces afterwards:
 
 ```fish
 python tools/probe_cleanup.py
@@ -594,6 +594,10 @@ sudo python tools/probe_recovery.py --run-privileged
 ```
 
 The retirement history the journal deliberately keeps means that even a fully resolved recovery retains past generations, so name reuse detection never loses its evidence; archived history is replaced only through `clear-ownership`.
+
+### Part 7 privileged acceptance status
+
+The final corrected tree passed 614 automated tests with 295 subtests, Ruff lint and formatting, and Kongroo launcher verification in this reconciliation. The user also reported that all local tests passed; Markdown lint was not available in the reconciliation environment. The ownership preflight passed its privileged checks. The restoration probe passed journal-gated creation, creation-time ownership binding and repeat convergence after corrections to route ordering, WireGuard peer readback and resource retirement. Cleanup, recovery and the integrated Part 7 matrix failed on earlier revisions and have not yet been shown passing on the final corrected tree. Their privileged acceptance therefore remains open. Successful offline tests and restoration alone do not establish complete Part 7 acceptance or production fail-closed behaviour.
 
 ### Integrated Part 7 acceptance (Part 7.6)
 
@@ -709,7 +713,7 @@ Per-application routing has an offline planning foundation in `nord_tools_intern
 
 The internal application-binding planner models registered applications as logical references to shared or isolated allocations. Binding and unbinding are deterministic, side-effect-free operations: releasing the final reference does not remove a namespace, terminate a process or authorise deletion of a tunnel. Conflicting rebinding requires explicit release before replanning. Operational process launch and launch execution remain future work; the resource ownership underneath the references is now established by the Part 7 executors.
 
-Part 5 Increment 5.3 adds offline application launch request preparation in `nord_tools_internal/nordvpn_application_launch.py`. It requires an exact existing logical binding and produces an immutable argument vector without shell interpretation. The execution entry point deliberately refuses all launches: verified production namespace ownership, firewall enforcement and authorised lifecycle coordination are not yet implemented.
+Part 5 Increment 5.3 adds offline application launch request preparation in `nord_tools_internal/nordvpn_application_launch.py`. It requires an exact existing logical binding and produces an immutable argument vector without shell interpretation. The execution entry point deliberately refuses all launches: the necessary operational application-launch authority, verified firewall and DNS confinement, and end-to-end lifecycle integration are not yet established.
 
 Part 5 Increment 5.4 adds offline application session lifecycle modelling and a documented checklist for eventual namespace-aware launching, including desktop environment integration. These records are not process handles, and no application execution or privileged namespace operation is enabled.
 
@@ -723,8 +727,8 @@ Part 6 Increment 6.3 adds `nord_tools_internal/nordvpn_replacement_stage.py`, an
 
 ### Offline drift assessment (Part 6.4)
 
-`nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. Production drift correction remains blocked pending independently verified creation-time ownership and crash-safe execution.
+`nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. Production drift correction remains blocked pending authorised live repair and replacement, adversarial ownership acceptance and crash-safe execution guarantees.
 
 Part 6 Increment 6.5 adds `nord_tools_internal/nordvpn_reconciliation_audit.py`, a read-only cross-contract audit of reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; privileged ownership and crash-safe operational integration remain outstanding.
 
-The five-increment Part 6 offline programme is complete, but the live reconciliation and recovery milestone is not. The accepted modules validate caller-supplied observations and planning reports; they neither inspect kernel ownership independently nor implement idempotent apply/update/replace/remove, verified cut-over, rollback, drift repair or interrupted-operation recovery. See `TODO.md` for the outstanding operational and privileged acceptance requirements.
+The five-increment Part 6 offline programme is complete, but the live reconciliation and recovery milestone is not. The accepted modules validate caller-supplied observations and planning reports; these offline reports do not themselves inspect kernel ownership or authorise mutation. Separate Part 7 executors now provide verified boot creation, confirmed cleanup and constrained interrupted-operation recovery, but live update, verified replacement cut-over, rollback and drift repair remain outstanding. See `TODO.md` for the outstanding operational and privileged acceptance requirements.

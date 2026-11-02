@@ -161,7 +161,7 @@ The `manage dependency-plan` command accepts a version 1 graph whose `dependenci
 
 ## Operation intent boundary
 
-`nord_tools_internal/nordvpn_operation_intent.py` records validated offline create and retire intents against a specific allocation identity and lifecycle transition sequence. Pending and uncertain intents require operator review, and duplicate unresolved operations are rejected. This is a planning and recovery input only: even an intent marked completed is not independent evidence that a kernel resource was created by Nord Tools. The future privileged provisioner must establish verifiable creation-time ownership, durable operation ordering and live identity checks before any resource may be modified or deleted.
+`nord_tools_internal/nordvpn_operation_intent.py` records validated offline create and retire intents against a specific allocation identity and lifecycle transition sequence. Pending and uncertain intents require operator review, and duplicate unresolved operations are rejected. This is a planning and recovery input only: even an intent marked completed is not independent evidence that a kernel resource was created by Nord Tools. The later Part 7 restoration and cleanup executors now establish and re-check creation-time ownership for supported resource types, but this offline intent module alone does not authorise any mutation.
 
 ### Process-bound disposable namespace ownership experiment
 
@@ -181,7 +181,7 @@ The internal `nord_tools_internal.nordvpn_wireguard_provision.TunnelSpecificatio
 
 ## Experimental journal-gated creation adapter
 
-The internal `nordvpn_provision_execution` adapter validates the supplied lifecycle snapshot, requires an existing durable operation store, and writes a pending creation intent before invoking an injected operation. Completion requires explicit verification and a durable outcome update. An exception, failed verification or failed outcome persistence must be treated as uncertain, with no automatic retry. This does not solve the cross-file lifecycle transaction, independent kernel ownership, crash recovery or race-safe deletion problems. The adapter is not wired to a production privileged entry point.
+The internal `nordvpn_provision_execution` adapter validates the supplied lifecycle snapshot, requires an existing durable operation store, and writes a pending creation intent before invoking an injected operation. Completion requires explicit verification and a durable outcome update. An exception, failed verification or failed outcome persistence must be treated as uncertain, with no automatic retry. This does not solve the cross-file lifecycle transaction, independent kernel ownership, crash recovery or race-safe deletion problems. This experimental adapter is not itself a production privileged entry point; the later Part 7 restoration and cleanup executors use journal-gated lifecycle operations with separate ownership checks.
 
 ## Part 4 disposable acceptance and production boundary
 
@@ -197,7 +197,7 @@ The five Part 6 increments implement separate, non-authorising contracts: an evi
 
 ## Part 7.1: ownership verification preflight
 
-The reconciliation gate of Part 6 requires independently observed ownership before it will even consider execution, but until now nothing in the project could produce that evidence. Part 7.1 introduces that production step: `nord_tools_internal/nordvpn_ownership_verify.py` maintains a durable owner-record store and a preflight that classifies allocations against it.
+The reconciliation gate of Part 6 requires independently observed ownership before it will even consider execution, but the earlier offline programme could not itself produce that evidence. Part 7.1 introduces that production step: `nord_tools_internal/nordvpn_ownership_verify.py` maintains a durable owner-record store and a preflight that classifies allocations against it.
 
 ### Owner records
 
@@ -311,3 +311,7 @@ Boot recovery runs as the first phase of every `restore-startup` and is delibera
 Options that make recovery correct rather than clever: names and bindings are never guessed for a missing record; active generations are never dragged down by a sibling's rollback; the host remains outside every path except the identity-verified delete of owned namespaces and interfaces; and the interrupted shutdown unit shows up on the next boot as the same evidence a manual crash leaves. Repeat runs converge and the host shows nothing left, which is what the privileged probe verifies under real process death.
 
 The README concentrates on commands and current capabilities; this design document retains the reasoning and safety boundaries. The five-increment offline management programme is complete, the 7.1 and 7.2 ownership-verification and reconciliation layers are accepted, and Parts 7.3 to 7.5 add the boot restoration, cleanup and recovery executors. Privileged acceptance of those executors, the host-domain default profile's protective routing, live replacement cut-over and crash-safe rollback remain outstanding.
+
+## Part 7 acceptance reconciliation
+
+The six planned Part 7 increments are implemented, including creation-time ownership verification, persistent-state reconciliation, journal-gated restoration, ownership-aware cleanup, interruption recovery and the integrated acceptance probe. Automated tests and static checks passed on the user’s Arch Linux system. Privileged ownership preflight passed, and restoration subsequently passed creation-time binding and idempotent convergence after corrections to route ordering, WireGuard peer verification and disposable-resource retirement. Earlier privileged cleanup, recovery and integrated-matrix attempts failed; successful reruns of those probes against the corrected tree have not yet been supplied. Part 7 remains open for that evidence. The host-domain default profile, real-tunnel DNS and IPv6 leak prevention, live replacement, application execution and adversarial ownership guarantees remain outside this acceptance claim.
