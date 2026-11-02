@@ -19,3 +19,7 @@ Part 8.1.5 must exercise hostile pathname replacement, lock-directory substituti
 ## Deterministic adversarial coverage
 
 The Part 8.1.5 regression suite injects lock inode replacement, journal-directory replacement, symlink substitution and insecure directory or hard-link state at the acquisition boundary. These checks demonstrate refusal before entering a protected operation for those specific substitutions. They do not establish continuous kernel-enforced authority once an operation has begun. Privileged namespace and link replacement tests must be performed on disposable resources in an administratively controlled test environment; testing with unrestricted competing privileged actors cannot turn the operational exclusion into a kernel guarantee.
+
+### Real-process lifecycle lock acceptance
+
+Run `python tools/probe_lifecycle_lock_concurrency.py --run` on Linux to verify that a second cooperating process waits for the shared lock, inherits the lock after the first holder is killed, and preserves the same lock inode across later acquisitions. The probe uses a disposable private directory and requires no root privileges or network changes. It does not test independent privileged resource replacement or establish kernel mutation authority.
