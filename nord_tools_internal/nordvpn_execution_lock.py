@@ -37,6 +37,8 @@ def lifecycle_execution_lock(journal_path: str | Path) -> Iterator[None]:
         raise RegistryError("lifecycle execution requires an existing safe journal directory") from exc
     try:
         parent_info = os.fstat(parent_fd)
+        if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != os.geteuid() or parent_info.st_mode & 0o022:
+            raise RegistryError("unsafe lifecycle execution directory")
         lock_name = target.name + ".restore.lock"
         flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
         try:

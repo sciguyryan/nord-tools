@@ -764,3 +764,7 @@ Before retiring a namespace, the executor requires `/run/netns` to be a root-own
 ### Part 8.1 kernel namespace type attestation
 
 The ownership verifier now queries the Linux namespace filesystem (`NS_GET_NSTYPE`) through the held descriptor and requires `CLONE_NEWNET`. A matching path, inode and regular-file mode cannot substitute for kernel confirmation that the descriptor actually identifies a network namespace. This attestation does not make `ip netns del NAME` an identity-bound operation: a concurrent process with mount authority can still replace the pathname after verification. Namespace retirement against such an adversary remains blocked pending an exclusive-authority design or an identity-bound kernel primitive.
+
+### Part 8.1 privileged authority boundary
+
+Privileged lifecycle operations require an administratively controlled host authority domain: the shared execution lock serialises cooperating Nord Tools processes, and the lock directory must belong to the effective execution identity without group or other write access. The kernel does not provide an atomic ownership compare-and-delete operation for the namespace pathname or interface index used here. An independent privileged actor with mount or network administration capabilities can replace those resources between verification and deletion. This risk is not eliminated by the checks in Part 8.1.4. See `docs/PRIVILEGED-AUTHORITY-BOUNDARY.md` for the supported deployment boundary and outstanding adversarial acceptance.
