@@ -14,4 +14,8 @@ Consequently, privileged lifecycle execution is appropriate only within an admin
 
 ## Remaining work
 
-Part 8.1.5 must exercise hostile pathname replacement, lock-directory substitution, concurrent cooperating operations, interface-index reuse and interruption boundaries. It must distinguish demonstrated refusal from scenarios requiring an external privilege boundary. Part 8.1.6 must verify the complete privileged matrix. Production claims and deployment instructions must remain qualified until these checks pass; Part 9 will perform the final cross-document consistency audit. That should cover the hardening process.
+Part 8.1.5 must exercise hostile pathname replacement, lock-directory substitution, concurrent cooperating operations, interface-index reuse and interruption boundaries. It must distinguish demonstrated refusal from scenarios requiring an external privilege boundary. Part 8.1.6 must verify the complete privileged matrix. Production claims and deployment instructions must remain qualified until these checks pass; Part 9 will perform the final cross-document consistency audit.
+
+## Deterministic adversarial coverage
+
+The Part 8.1.5 regression suite injects lock inode replacement, journal-directory replacement, symlink substitution and insecure directory or hard-link state at the acquisition boundary. These checks demonstrate refusal before entering a protected operation for those specific substitutions. They do not establish continuous kernel-enforced authority once an operation has begun. Privileged namespace and link replacement tests must be performed on disposable resources in an administratively controlled test environment; testing with unrestricted competing privileged actors cannot turn the operational exclusion into a kernel guarantee.
