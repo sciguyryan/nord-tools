@@ -23,6 +23,7 @@ from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycl
 from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
 from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
+from nord_tools_internal.nordvpn_cleanup_executor import plan_cleanup, reset_ownership
 from nord_tools_internal.nordvpn_restore_executor import (
     ProvisioningUncertainError,
     restore_boot_state,
@@ -121,6 +122,8 @@ def main(argv: list[str] | None = None) -> int:
         "startup-plan",
         "startup-install",
         "restore-startup",
+        "cleanup",
+        "clear-ownership",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -151,6 +154,35 @@ def main(argv: list[str] | None = None) -> int:
                 "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
             )
             command.add_argument("--graph", help="Optional profile dependency graph JSON")
+        if name == "cleanup":
+            command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
+            command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
+            command.add_argument(
+                "--intents",
+                help="Operation intent store JSON (required for --execute so uncertain attempts stay visible)",
+            )
+            command.add_argument("--graph", help="Optional profile dependency graph JSON")
+            command.add_argument(
+                "--resolvers",
+                action="store_true",
+                help="Also remove namespace resolver directories under /etc/netns for verified namespaces",
+            )
+            command.add_argument(
+                "--execute", action="store_true", help="Perform deletions; the default invocation only plans"
+            )
+        if name == "clear-ownership":
+            command.add_argument("--config", required=True, help="Startup configuration JSON pinning every store")
+            command.add_argument("--graph", help="Optional profile dependency graph JSON")
+            command.add_argument(
+                "--resolvers",
+                action="store_true",
+                help="Also remove namespace resolver directories under /etc/netns for verified namespaces",
+            )
+            command.add_argument(
+                "--execute",
+                action="store_true",
+                help="Full teardown plus store archive and reset; the default only plans",
+            )
         if name in ("startup-plan", "startup-install", "restore-startup"):
             command.add_argument("--config", required=True, help="Explicit startup configuration JSON")
         if name in ("startup-plan", "startup-install"):
@@ -219,6 +251,35 @@ def main(argv: list[str] | None = None) -> int:
             actual = derive_actual_state(journal, bindings, preflight)
             graph = read_json(args.graph) if args.graph else None
             result = reconcile_desired(persistent, actual, graph)
+            result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "cleanup":
+            if args.transient:
+                raise ManagementError("cleanup is persistent-only; transient intent has never owned anything")
+            persistent = _read(state_path(True))
+            if persistent is None:
+                raise ManagementError(
+                    "cleanup requires a saved persistent policy to decide preservation; configure one first"
+                )
+            result = plan_cleanup(
+                args.journal,
+                args.bindings,
+                intent_path=args.intents,
+                graph_path=args.graph,
+                desired_policy=persistent,
+                resolvers=args.resolvers,
+                execute=args.execute,
+            )
+            result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "clear-ownership":
+            if args.transient:
+                raise ManagementError("clear-ownership is persistent-only; transient intent has never owned anything")
+            result = reset_ownership(
+                read_json(args.config), graph_path=args.graph, resolvers=args.resolvers, execute=args.execute
+            )
             result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0

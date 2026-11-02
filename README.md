@@ -49,7 +49,7 @@ The offline management foundation is complete, but **the operational tunnel mana
 | Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
 | Replacement and recovery | Non-executable transaction stages | Implement protected cut-over, rollback, crash recovery and durable operation journals |
 | Startup and persistence | Persistent desired policy by default; `startup-plan`/`startup-install` render a systemd restoration unit, and `restore-startup` runs an authorised, journal-gated boot executor | Privileged restoration acceptance on a disposable host, host-domain default-route protection, real-tunnel DNS/IPv6 conformance and interrupted-operation recovery |
-| Cleanup | Simulated cleanup preview | Remove only verified Nord Tools-owned resources and restore prior host state safely |
+| Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives | Privileged acceptance on a disposable host, together with interrupted-cleanup recovery in Part 7.5 |
 | Integration and acceptance | Automated offline tests | Privileged Linux integration tests, failure injection and checks for compatibility with the official NordVPN client |
 
 `manage graph` depicts **configured intent**, not live connectivity. Likewise, `manage cleanup-plan` and `manage transaction-plan` are advisory; they do not execute network changes. These boundaries apply even if a saved policy is persistent.
@@ -551,6 +551,29 @@ sudo python tools/probe_restore_startup.py --run-privileged
 ```
 
 Inspect `sudo ip netns list` and the created host interfaces afterwards; the probe retires only the one disposable namespace whose recorded binding it re-verified, and removes only its own underlay pair.
+
+### Ownership-aware cleanup and reset (Part 7.4)
+
+The cleanup executor is the project's only destructive path, and its classification is entirely ownership-evidence based. The dry run is the default invocation and prints the exact classification and the exact deletion sequence that `--execute` would run; nothing changes without it:
+
+```bash
+python nord_tools.py manage cleanup --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json
+python nord_tools.py manage cleanup --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json --intents path/to/operation-intents.json --execute
+python nord_tools.py manage clear-ownership --config path/to/startup.json --execute
+```
+
+`cleanup` consults the saved persistent policy: verified resources of retained profiles are preserved, and every verified resource outside it is removable. A fuller classification covers every allocation exactly once: `removable`, `preserved` (including records that are consistently retired and foreign-safe), `review_required` and the separately listed `unclaimed` observations that belong to something else. A profile with any disputed finding, an unresolved intent, an identity conflict or a name-reuse suspicion is reviewed whole rather than partially deleted, and execution is refused while any uncertainty remains. Executing requires the operation-intent store, so an interrupted or failed prior attempt is visible and blocks the run until review.
+
+Execution order deletes dependents before prerequisites (using the optional `--graph`), and one deletion never proceeds without three confirmations: a durable retire intent recorded first, the recorded owner identity re-verified against the live kernel at the moment of deletion, and a fresh observation confirming absence before the journal records `retired`. Deleting a verified namespace removes its namespace-local interfaces and firewall table with it; deleting the verified host underlay interface removes the underlay pair and its auto connected route; routes, nftables objects and DNS configuration are therefore never flushed or rewritten on the host outside what the verified namespaces and interfaces carried. Resolver directories under `/etc/netns` are removed only with `--resolvers`, and only where the namespace identity is verified and the directory contains exactly the expected `resolv.conf`; anything unexpected is review-required. A failed attempt leaves uncertain intents and journal states for review and stops the whole run, so partial failure is always connectable to exact evidence.
+
+`clear-ownership` is the explicitly confirmed full reset: every verified owned resource is removed regardless of the saved policy, and after the teardown the journal, bindings, intents and run record are byte-verified archives under `ownership-reset-archive/` before empty stores are created in their place. The archive keeps every retirement record, so the name-reuse detection evidence survives; the saved policy itself is untouched and remains removable with `manage clear`. Repeat runs converge: after a completed cleanup the plan is empty and nothing changes, and after a full reset there is nothing recorded to plan at all.
+
+The privileged acceptance probe runs the full cycle on a disposable Linux test host: restore one pinned profile, clean it, verify it is gone, then confirm nothing remains. As before, inspect `sudo ip netns list` and any leftover host interfaces afterwards:
+
+```fish
+python tools/probe_cleanup.py
+sudo python tools/probe_cleanup.py --run-privileged
+```
 
 ## Internal package organisation
 

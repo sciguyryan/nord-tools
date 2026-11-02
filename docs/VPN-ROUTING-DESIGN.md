@@ -265,3 +265,27 @@ The unit waits for `network-online.target`, conditions on the startup configurat
 ### Deliberately missing
 
 The default profile's host-domain routing, meaning the host kill switch and its host firewall and route changes, is not performed by this executor: configuring it from a boot path that cannot yet demonstrate real-tunnel rollback would put the most destructive class of change first. Its absence is reported, not papered over. Provider selection (fastest or country pools) likewise stays out: resolution requires provider data that the boot environment must not fetch or measure. Real-tunnel DNS confinement and IPv6 conformance remain the Part 4 programme; interrupted-intent recovery and cleanup execution follow in 7.5 and 7.4 respectively. Nothing in this layer grants read authority to a journal, binding or intent store owned by another actor, and a hostile process with store-directory access remains outside the evidence model, exactly as the ownership layer states.
+
+## Part 7.4: ownership-aware cleanup and reset
+
+Cleanup is the first executor with deletion authority, so it is deliberately the least trusting. Its classification derives entirely from the fresh 7.1 preflight over the immutable bindings, and it refuses to act on anything the preflight cannot certify: a profile with any disputed finding is reviewed whole instead of being partly deleted, and `cleanup --execute` refuses to run while any review obligation, unresolved intent or unusable store makes the classification ambiguous.
+
+### The classification
+
+Every owned allocation is classified exactly once, from findings of three kinds: `verified_current` (the binding still matches the live kernel), kernel-absent (`resource_missing` or `scope_missing`: the resource does not exist and only records remain), and `consistent_retired` (recorded and observed absent with nothing to do). Verified resources of a profile retained in the saved policy are preserved; everything verified outside it is removable; kernel-absent records outside it retire with bookkeeping alone, because verification already established that no kernel state is left to delete. Unclaimed observations are listed and never touched.
+
+Profiles mix generations because retirement history is deliberately retained in the journal. That history exists precisely to detect name reuse, so the classification evaluates it instead of deleting it: a single disputed finding anywhere in a profile puts the whole profile under review, and a prerequisite is never deleted while a dependent profile (as declared in the optional dependency graph) stays in place.
+
+### The execution contract
+
+One deletion means: a lifecycle transition to `retiring` and a durable retire intent recorded first; re-verification of the recorded owner identity against the live kernel at the moment of deletion (the namespace mount device/inode pair, or the freshly re-observed host ifindex, which additionally removes name-reuse ambiguity from the deletion window); a fresh observation confirming absence afterwards; then the journal records `retired` and the intent resolves as completed. Namespace deletion removes the namespace-local interfaces and firewall table together with it; the host underlay end deletes by its verified interface index, removing only the pair the project created, and the auto connected route goes with it. No host firewall, route table, DNS file or unrelated configuration is ever flushed, because the executor has no path to them.
+
+Ordering removes dependents before prerequisites (the reverse of the restoration order). On the first failure the pending intents become uncertain and the run stops, so a partial cleanup is always attributable: the next run refuses until review, the same posture the 7.3 restoration path takes. Repeat runs converge: a fully retired ecosystem plans nothing, and the executed report carries a fresh reconciliation of the surviving state.
+
+### Reset and its archive
+
+`clear-ownership` is the confirmed full teardown: every verified owned resource is removed regardless of the saved policy, and only after a byte-verified archiving of the journal, bindings, intents and run record are the stores re-created empty under the exclusive creation semantics of the other stores. The archive retains the immutable retirement records, so name-reuse detection survives the reset through documented evidence instead of being silently erased. The saved policy is left alone, because clearing intent and deleting owned resources are separate decisions.
+
+### The deliberate limits
+
+Resolver directories under `/etc/netns` are the one kind of created state whose identity was never recorded. Removal happens only with explicit `--resolvers` confirmation, only for a verified namespace, and only when the directory contains exactly the expected single `resolv.conf`; anything else is review-required. Routes, host nftables objects and services still have no binding kinds: their inclusion waits on consumers that need them, and cleanup inherits that scoping rather than inventing evidence. Interrupted-cleanup recovery, including a reviewable resume of uncertain retire attempts, belongs to Part 7.5. The acceptance probe (`tools/probe_cleanup.py --run-privileged`) exercises one real pinned restoration and then cleans it, on a disposable-capable Linux test host only.
