@@ -6,7 +6,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 The benchmarking, offline planning, read-only discovery, configured-state graph and Operation Kongroo foundations are complete. The operational VPN manager is in progress. Completed work is summarised below; this TODO retains outstanding requirements rather than repeating every accepted implementation task.
 
-## Operational VPN manager: eight-part target
+## Operational VPN manager: nine-part target
 
 ### Part 1: Disposable WireGuard integration harness (completed)
 
@@ -62,14 +62,24 @@ Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, c
 - [x] Increment 7.6: integrated persistence and cleanup acceptance. `tools/probe_part7_acceptance.py --run-privileged` runs the whole workflow as one matrix: two pinned profiles restore while a different transient policy is configured and proven inert, restore children are killed mid-flight until real interrupted evidence exists and recovery converges both profiles, removing an application reference is pure bookkeeping, the authorised cleanup retires exactly the departed profile's resources while the shared profile's generation survives untouched, repeat runs converge without kernel changes, and host IPv4/IPv6 routes, nftables rules and resolver contents are compared across every stage boundary. The two evidence seams the matrix exposed are fixed: retired allocations without bindings classify as consistently retired, and the 7.2 configuration agreement counts the live generation only.
 - [ ] Complete privileged acceptance of cleanup, recovery and the integrated Part 7 matrix against the corrected source, record the results, and design the host-domain default profile's protective routing. Ownership preflight and restoration have passed on the user's Arch Linux test system. The outstanding hand-off list for Part 8 is printed by the 7.6 matrix and recorded below under the production ownership boundary.
 
-### Part 8: Acceptance, security and documentation
+### Part 8: Production integration and security acceptance
+
+Increment 8.1 begins with read-only privileged state-directory trust inspection. This check rejects writable ancestors, symlinks and unsafe store entries but does not establish race-safe kernel ownership or grant mutation authority. Production authority remains blocked pending adversarial privileged acceptance.
+
+### Part 8 acceptance requirements
 
 - [ ] Run unit, integration, failure-injection, repeatability and privilege-boundary tests, including two simultaneous real tunnels.
 - [ ] Run Ruff check/format and full automated tests on the user's Arch Linux environment; record manual acceptance results.
 - [ ] Review README, command help and design documentation for internal consistency and natural formal British English (formality 7–8/10).
 - [ ] Confirm operational claims against evidence; leave unresolved safety issues open rather than declaring completion.
 
-The eight-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
+### Part 9: Final documentation reconciliation, hardening and consistency
+
+- [ ] Audit documentation, command help, security claims, tests and implementation for consistency.
+- [ ] Remove obsolete or redundant material without losing outstanding requirements or historical acceptance boundaries.
+- [ ] Re-run all quality gates and privileged acceptance checks appropriate to the final release candidate.
+
+The nine-part schedule is a planning limit, **not a waiver of safety requirements**. If privileged tests or leak-prevention checks fail, the manager remains incomplete until those issues are resolved. Do not start further discretionary features until the operational manager has met its acceptance criteria.
 
 ## Outstanding production ownership and recovery boundary
 
