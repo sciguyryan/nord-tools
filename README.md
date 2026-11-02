@@ -756,3 +756,7 @@ Namespace ownership verification now rejects invalid bound names and non-regular
 ### Part 8.1.4 host-interface mutation boundary
 
 The cleanup executor checks the live host-interface name and index mapping before issuing a Linux rtnetlink `RTM_DELLINK` request by numeric interface index, requiring an explicit kernel acknowledgement. This avoids userspace name re-resolution at deletion, but does not close the race if a privileged adversary replaces and reuses the index before the kernel processes the request. Namespace retirement also remains pathname-based; neither mutation is claimed to be safe against a concurrent privileged adversary. A kernel-supported identity-bound deletion mechanism or a justified exclusive authority model is required before Part 8.1.4 can be accepted.
+
+### Part 8.1.4 namespace-directory mutation precondition
+
+Before retiring a namespace, the executor requires `/run/netns` to be a root-owned directory without group/other write permission, and checks its opened descriptor against the current pathname. An unsafe or unavailable directory refuses retirement. This check does not protect against a privileged mount replacement between inspection and `ip netns del`, and it is not a substitute for an exclusive authority model or an atomic kernel mutation mechanism. Part 8.1.4 remains open.

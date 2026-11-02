@@ -16,6 +16,11 @@ import stat
 import subprocess
 from typing import Iterator
 
+from nord_tools_internal.nordvpn_namespace_directory_guard import (
+    NamespaceDirectoryError,
+    require_trusted_netns_directory,
+)
+
 
 class OwnershipError(RuntimeError):
     """Namespace ownership cannot be established or safely exercised."""
@@ -75,6 +80,10 @@ class OwnedNamespace:
 
         A nonempty namespace is left for operator review, not forcibly killed.
         """
+        try:
+            require_trusted_netns_directory(_NETNS_DIR)
+        except NamespaceDirectoryError as exc:
+            raise OwnershipError("namespace directory is not trusted for retirement") from exc
         self.verify()
         if _command("pids", self.name).strip():
             raise OwnershipError("namespace still contains processes")

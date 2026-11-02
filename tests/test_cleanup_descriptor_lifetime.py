@@ -29,6 +29,7 @@ def test_successful_namespace_retirement_closes_descriptor_once():
         patch("nord_tools_internal.nordvpn_cleanup_executor.os.open", return_value=73),
         patch("nord_tools_internal.nordvpn_cleanup_executor.os.close") as close,
         patch("nord_tools_internal.nordvpn_cleanup_executor.OwnedNamespace.verify"),
+        patch("nord_tools_internal.nordvpn_namespace_ownership.require_trusted_netns_directory"),
         patch("nord_tools_internal.nordvpn_namespace_ownership._command", side_effect=["", ""]),
     ):
         kernel.delete_namespace("nt-abcdefgh", {"device": 1, "inode": 2})

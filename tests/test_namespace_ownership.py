@@ -38,6 +38,7 @@ class NamespaceOwnershipTests(unittest.TestCase):
     def test_non_regular_held_descriptor_refuses_retirement(self):
         owned = OwnedNamespace("nt-abcdefgh", 42, 1, 2)
         with (
+            patch("nord_tools_internal.nordvpn_namespace_ownership.require_trusted_netns_directory"),
             patch(
                 "nord_tools_internal.nordvpn_namespace_ownership.os.fstat",
                 return_value=type("S", (), {"st_dev": 1, "st_ino": 2, "st_mode": 0o040700})(),
@@ -72,6 +73,7 @@ class NamespaceOwnershipTests(unittest.TestCase):
     def test_processes_block_retirement(self):
         owned = OwnedNamespace("nt-abcdefgh", 42, 1, 2)
         with (
+            patch("nord_tools_internal.nordvpn_namespace_ownership.require_trusted_netns_directory"),
             patch.object(owned, "verify"),
             patch("nord_tools_internal.nordvpn_namespace_ownership._command", return_value="1234\n") as command,
         ):
@@ -82,6 +84,7 @@ class NamespaceOwnershipTests(unittest.TestCase):
     def test_successful_retirement(self):
         owned = OwnedNamespace("nt-abcdefgh", 42, 1, 2)
         with (
+            patch("nord_tools_internal.nordvpn_namespace_ownership.require_trusted_netns_directory"),
             patch.object(owned, "verify") as verify,
             patch("nord_tools_internal.nordvpn_namespace_ownership._command", side_effect=["", ""]) as command,
             patch("nord_tools_internal.nordvpn_namespace_ownership.os.close") as close,
