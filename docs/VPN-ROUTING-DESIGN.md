@@ -111,7 +111,7 @@ The experiment still does not establish an actual VPN tunnel or demonstrate safe
 
 ## Desired-state persistence and startup (planned)
 
-The offline `nord_tools.py manage` interface now stores persistent configuration by default and selects transient session intent with `--transient`. Its atomic policy storage is not an active networking state registry and does not implement systemd startup, tunnel recovery or a kill switch. Future live management must track owned resources separately, reconcile drift and partial failures, preserve unaffected tunnels and avoid touching unrelated host networking. Startup should restore persistent desired configuration only after protective routing is established; transient intent must not be resurrected after reboot. Cleanup must remain separate from removal of saved policy intent.
+The offline `nord_tools.py manage` interface now stores persistent configuration by default and selects transient session intent with `--transient`. Its atomic policy storage is not an active networking state registry and does not implement tunnel recovery or a kill switch. Since Part 7.3, the separately installed `nord-tools-restore.service` unit reconciles and restores namespace-domain profiles whose owned resources are absent for this boot session, installing each profile's fail-closed firewall before any traffic configuration; the default profile's host-domain protective routing, race-safe replacement recording (the kill switch on changed host routing) and cleanup/recovery execution remain future work. Transient intent must not be resurrected after reboot, and the boot command refuses it outright. Cleanup must remain separate from removal of saved policy intent.
 
 ## Offline reconciliation prototype
 
@@ -155,7 +155,7 @@ The `manage dependency-plan` command accepts a version 1 graph whose `dependenci
 
 `manage cleanup-plan --inventory FILE` describes candidate profile retirements from an explicit simulated inventory. It excludes externally owned profiles, rejects malformed records, and always reports that it is unsafe to execute. This is not a replacement for `cleanup`: safe live removal will require independently verified resource ownership, an ordered dependency graph, durable recovery records and fail-closed protections. No host state is changed by either command.
 
-The README concentrates on commands and current capabilities; this design document retains the reasoning and safety boundaries. The five-increment offline management programme is complete, but privileged provisioning, real ownership binding, systemd restoration, rollback and cleanup execution are not implemented or certified.
+The README concentrates on commands and current capabilities; this design document retains the reasoning and safety boundaries. The five-increment offline management programme is complete, the 7.1 and 7.2 ownership-verification and reconciliation layers are accepted, and Part 7.3 adds the boot restoration executor. Privileged acceptance of that executor, the host-domain default profile's protective routing, rollback and cleanup execution remain outstanding.
 
 ### Read-only recovery triage (Part 2)
 
@@ -237,3 +237,31 @@ Owner bindings now optionally record the provisioned configuration for the profi
 With an optional dependency graph, a blocked prerequisite blocks every desired dependent, including independently converged ones — matching the offline dependency planner's treatment of unsafe parents. Verified evidence of the dependent's own resources does not compensate for a prerequisite that cannot safely proceed.
 
 Idempotence is a property of the pure classification: the same durable inputs produce a byte-identical report, and a run writes nothing. Interruption-state is deliberately not re-modelled here; pending or uncertain operation intents already surface through the preflight as blockers, and any run journal belongs with the boot wiring of 7.3 rather than with this layer. The plan/report split is unchanged from prior increments: `safe_to_execute` is always false, and 7.3's boot reconciliation must obtain a fresh preflight at startup and re-verify ownership at the moment of any privileged action.
+
+## Part 7.3: systemd startup restoration
+
+Part 7.2 produced the classification; the missing piece was a defined privileged actor that could act on it without handing the classification unearned authority. Part 7.3 introduces that actor as a boot-scoped restoration executor (`nord_tools_internal/nordvpn_restore_executor.py`) plus the systemd wiring that invokes it after the network has settled.
+
+### The restoration transaction
+
+`restore-startup` acquires one exclusive advisory lock so two restorations cannot interleave, then installs any absent store (journal, owner bindings, operation intents, run record) exclusively. Everything after that point happens against fresh evidence: a complete read-only discovery, a full 7.1 preflight over exactly this journal, and a 7.2 reconciliation of the saved persistent policy. Only two situations fall inside the boot path's mutation authority:
+
+- A desired profile with no owned resources at all is restored through its pinned provider tunnel plan.
+- A desired profile whose every allocation is freshly observed as kernel-absent (with journal state `active`, a previous boot's `failed` evidence, or a scope that no longer exists) has those stale allocations retired in the journal first, because a namespace that a reboot destroyed possesses no kernel state to delete; bookkeeping alone never removes a live resource.
+- Anything else stays untouched: verified-but-undesired resources belong to the confirmed cleanup command, configuration drift is a replacement plan, and present-but-unverifiable observations require review.
+
+The pinned tunnel plan is the operator's authority: one numeric endpoint, peer public key, tunnel addresses, allowed networks and an underlay address pair per profile. Profiles without a plan are reported as not restored, never guessed. The private key arrives through a separate credential input, wired in the unit as `LoadCredential`, so the executor's descriptor boundary from Part 3 is preserved end to end and no secret ever appears on a command line or in a store.
+
+### Executor mechanics
+
+The kernel surface is an injected structure (`RestoreKernel`) so offline tests can exercise the full transaction without networking; the production surface reuses the established primitives: descriptor-bound persistent namespace creation (a create-without-retire counterpart of `disposable_namespace`), one restricted underlay wire-up (a single veth pair created and removed only when nothing else exists, with two certified addresses), counter-instrumented firewall installation before any traffic configuration, underlay routing additions confined to the namespace, and the descriptor-validated disposable WireGuard configuration.
+
+The transaction boundary is one pending creation intent on the namespace allocation. Inside the gated operation, allocations advance to `creating`, each resource's kernel identity is recorded in the immutable owner binding store while the descriptor is still held, the namespace end and the tunnel are configured and verified, and only then do lifecycle states reach `active`. Any failure rolls back exclusively what this attempt created (namespace retirement through its own held identity, host-end removal), advances the allocations to `failed`, and re-raises; `execute_recorded_creation` then leaves the intent uncertain for review. The run stops at the first failure: profiles not yet attempted and everything unrelated remain exactly as observed.
+
+### Ordering and idempotency
+
+The unit waits for `network-online.target`, conditions on the startup configuration and the persistent policy, and remains a oneshot with `RemainAfterExit`. There is no timer; the reboot repeat is the only automatic invocation and everything else is operator-initiated. Two properties follow from the evidence-first design: a converged profile is never provisioned twice, so a repeated run within one boot session performs no kernel change, and names are drawn fresh per boot, because reusing a retired name would re-create the very `possible_name_reuse` ambiguity the preflight exists to detect. Dependency graphs, when configured, order restoration and refuse dependents of unrestorable prerequisites, matching the offline dependency planner.
+
+### Deliberately missing
+
+The default profile's host-domain routing, meaning the host kill switch and its host firewall and route changes, is not performed by this executor: configuring it from a boot path that cannot yet demonstrate real-tunnel rollback would put the most destructive class of change first. Its absence is reported, not papered over. Provider selection (fastest or country pools) likewise stays out: resolution requires provider data that the boot environment must not fetch or measure. Real-tunnel DNS confinement and IPv6 conformance remain the Part 4 programme; interrupted-intent recovery and cleanup execution follow in 7.5 and 7.4 respectively. Nothing in this layer grants read authority to a journal, binding or intent store owned by another actor, and a hostile process with store-directory access remains outside the evidence model, exactly as the ownership layer states.

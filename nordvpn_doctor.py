@@ -19,7 +19,7 @@ TOOLS = (
     ("ip", "Linux namespace and route management", False),
     ("nft", "Linux nftables isolation", False),
     ("wg", "Future WireGuard tunnel management", False),
-    ("systemctl", "Future automatic startup integration", False),
+    ("systemctl", "Systemd startup unit installation and boot restoration", False),
 )
 
 

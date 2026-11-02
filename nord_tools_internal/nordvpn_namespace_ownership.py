@@ -119,3 +119,30 @@ def disposable_namespace(name: str) -> Iterator[OwnedNamespace]:
                 owned.release()
         # If opening/verification failed, there is no deletion authority.
         # Leave the namespace for explicit operator inspection.
+
+
+def create_owned_namespace(name: str) -> OwnedNamespace:
+    """Create a named namespace and retain descriptor-bound authority after return.
+
+    This is the persistent counterpart of ``disposable_namespace``: the caller
+    intends the namespace to survive this process, so identity authority must be
+    recorded at creation time and the descriptor must be released explicitly with
+    ``release()`` rather than ``retire()``. If descriptor binding fails, the
+    namespace is left unchanged for operator inspection, exactly as the
+    disposable context manager does; no retirement authority is invented.
+    """
+    if not isinstance(name, str) or not _NAME.fullmatch(name):
+        raise OwnershipError("persistent namespace name must match nt-[a-z0-9]{8,24}")
+    if name in _namespace_names() or (_NETNS_DIR / name).exists():
+        raise OwnershipError("namespace already exists")
+    _command("add", name)
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    descriptor = os.open(_NETNS_DIR / name, flags)
+    try:
+        info = os.fstat(descriptor)
+        owned = OwnedNamespace(name, descriptor, info.st_dev, info.st_ino)
+        owned.verify()
+        return owned
+    except BaseException:
+        os.close(descriptor)
+        raise

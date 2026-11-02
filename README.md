@@ -48,7 +48,7 @@ The offline management foundation is complete, but **the operational tunnel mana
 | Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Implement authorised application execution through owned, fail-closed namespaces and verify desktop integration |
 | Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
 | Replacement and recovery | Non-executable transaction stages | Implement protected cut-over, rollback, crash recovery and durable operation journals |
-| Startup and persistence | Persistent desired policy by default | Install and test systemd restoration, including safe startup ordering and transient-policy exclusion |
+| Startup and persistence | Persistent desired policy by default; `startup-plan`/`startup-install` render a systemd restoration unit, and `restore-startup` runs an authorised, journal-gated boot executor | Privileged restoration acceptance on a disposable host, host-domain default-route protection, real-tunnel DNS/IPv6 conformance and interrupted-operation recovery |
 | Cleanup | Simulated cleanup preview | Remove only verified Nord Tools-owned resources and restore prior host state safely |
 | Integration and acceptance | Automated offline tests | Privileged Linux integration tests, failure injection and checks for compatibility with the official NordVPN client |
 
@@ -82,7 +82,7 @@ python nordvpn_policy.py --policy examples/vpn-policy.json --report benchmark.js
 
 ### Saved routing intent and restart behaviour
 
-The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking, install systemd units or restore a VPN on boot. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`) for future startup integration. Pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Persisting a policy does **not** currently activate automatic restoration.
+The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (Part 7.3)](#startup-restoration-with-systemd-part-73)); configuring a policy alone still activates nothing.
 
 ```bash
 python nord_tools.py manage plan --policy examples/vpn-policy.json
@@ -101,7 +101,7 @@ python nord_tools.py manage reconcile --inventory examples/managed-inventory.jso
 python nord_tools.py manage reconcile --inventory examples/managed-inventory.json --transient
 ```
 
-`plan` previews whether intent would be created, replaced or left unchanged; `configure` stores it atomically. `clear` removes only the saved intent for the selected scope, **not** networking resources. Transient and persistent settings are independent. The transient scope requires a valid session runtime directory and does not silently fall back to durable storage. A future manager will reconcile these policies against resources it owns, enforce fail-closed routing and restore persistent profiles at boot. No such guarantees are claimed for this offline stage.
+`plan` previews whether intent would be created, replaced or left unchanged; `configure` stores it atomically. `clear` removes only the saved intent for the selected scope, **not** networking resources. Transient and persistent settings are independent. The transient scope requires a valid session runtime directory and does not silently fall back to durable storage. Ownership-aware reconciliation and boot restoration are separate commands that consume this saved policy; neither is activated by configuring intent alone.
 
 ### Disposable namespace firewall probe
 
@@ -133,7 +133,7 @@ python nord_tools.py doctor --json
 python nord_tools.py doctor --strict
 ```
 
-The check reports the platform and Python version, and whether `ping`, `nordvpn`, `ip`, `nft`, `wg` and `systemctl` are available. Only the platform and Python version are universal requirements. Other executables are feature-specific: `ping` is needed for ICMP benchmarks, `nordvpn` for CLI connection support, and `ip`/`nft` for the privileged namespace experiment. WireGuard and systemd checks describe planned capabilities, not functionality already implemented. `--strict` fails if any listed tool is missing. This is a local executable-availability check, not a guarantee of kernel support, privileges, VPN credentials or working network connectivity.
+The check reports the platform and Python version, and whether `ping`, `nordvpn`, `ip`, `nft`, `wg` and `systemctl` are available. Only the platform and Python version are universal requirements. Other executables are feature-specific: `ping` is needed for ICMP benchmarks, `nordvpn` for CLI connection support, `ip`/`nft` for the privileged namespace and underlay work, and `systemctl` for installing and verifying the systemd restoration unit. The `wg` check still describes future tunnel paths. `--strict` fails if any listed tool is missing. This is a local executable-availability check, not a guarantee of kernel support, privileges, VPN credentials or working network connectivity.
 
 ## Quick start
 
@@ -497,6 +497,60 @@ python nord_tools.py manage reconcile-live --journal journal.json --bindings own
 ```
 
 Transient intent is structurally excluded: `--transient` is rejected, because session intent must never be restored at boot or reconciled later. `create_pending` never allocates anything automatically; retired verified resources re-enter creation only through a future authorised provisioner, and retirement of undesired verified resources is reserved for the separately confirmed cleanup command. Running the command twice on unchanged inputs produces an identical report.
+
+### Startup restoration with systemd (Part 7.3)
+
+Part 7.3 closes the loop between the reconciliation foundations and the boot system. `nord_tools_internal/nordvpn_restore_executor.py` binds durable creation intents, 7.1 owner records and the existing privileged namespace, isolation, routing and WireGuard primitives into one transactional boot path, and two `manage` commands expose it:
+
+```bash
+python nord_tools.py manage startup-plan --config path/to/startup.json
+python nord_tools.py manage startup-install --config path/to/startup.json --execute
+python nord_tools.py manage restore-startup --config path/to/startup.json
+```
+
+`startup-plan` renders the `nord-tools-restore.service` unit and reports what installation would do without writing anything. `startup-install` writes the unit atomically into the target directory, refuses to replace a foreign pre-existing unit, keeps an already-identical unit untouched, and rewrites a previously generated one as needed; it never enables the service. `restore-startup` is the unit's `ExecStart`: it obtains a fresh read-only ownership preflight, reconciles the persistent desired policy, restores only pinned profiles whose owned resources are entirely absent in this boot session, retires journal records for resources that an earlier boot lost, and appends a bounded startup run record. Transient intent is refused outright.
+
+The startup configuration is a version 1 JSON document pinning every persistent path (policy, journal, owner bindings, operation intents, run record), the provider tunnel plans and the credential inputs:
+
+```json
+{
+  "version": 1,
+  "policy": "/etc/nord-tools/desired-policy.json",
+  "journal": "/var/lib/nord-tools/lifecycle.json",
+  "bindings": "/var/lib/nord-tools/owner-bindings.json",
+  "intent": "/var/lib/nord-tools/operation-intents.json",
+  "run_record": "/var/lib/nord-tools/startup-runs.json",
+  "tunnels": {
+    "primary": {
+      "peer_public_key": "REDACTED_PUBLIC_PEER_KEY",
+      "endpoint_address": "198.51.100.10",
+      "endpoint_port": 51820,
+      "tunnel_address": "10.5.0.2/32",
+      "peer_allowed_ips": ["0.0.0.0/0"],
+      "underlay": {"namespace_address": "10.214.0.2/30", "host_address": "10.214.0.1/30"}
+    }
+  },
+  "credentials": {"primary": "/etc/nord-tools/primary.key"}
+}
+```
+
+The restoring service orders after `network-online.target`, is skipped while either the configuration or the persistent policy is absent, and runs `Type=oneshot` with `RemainAfterExit`. Private keys are never arguments, environment variables or configuration content: the unit declares `LoadCredential` entries, systemd hands the executor read-only descriptors, and the executor's descriptor boundary re-validates the file every time. Enable the unit explicitly when you want restoration at every boot:
+
+```fish
+sudo systemctl daemon-reload
+sudo systemctl enable --now nord-tools-restore.service
+```
+
+Idempotency is structural: a converged profile is left untouched, so a repeat run (manual or after a service restart) reports `network_changes_applied: false` and appends exactly one run record. Ordering follows an optional dependency graph, prerequisites are restored first, and a dependent is refused when a prerequisite cannot be restored or is merely blocked. Failure handling is fail-closed: the first uncertain step stops the whole run, the attempt's own namespace is rolled back, its allocations are recorded as failed and its creation intent stays uncertain for review, and running profiles that never began remain exactly as observed.
+
+Two boundaries must be stated plainly. First, provider tunnel plans pin a single numeric endpoint, peer key and addresses per profile: NordVPN's fastest-server selection and country pools are not resolvable at boot without provider data, so unpinned profiles are reported as not restored rather than guessed. Second, the restoration scope is the namespace domain: the default profile's host-domain routing (the host kill switch) modifies host firewall and routing state and is deliberately outside this increment, and the executor reports any such profile rather than partially configuring it. Real-tunnel DNS confinement, IPv6 conformance and leak-prevention acceptance remain the outstanding Part 4 programme; run the acceptance probe only on a disposable-capable Linux test system:
+
+```bash
+python tools/probe_restore_startup.py
+sudo python tools/probe_restore_startup.py --run-privileged
+```
+
+Inspect `sudo ip netns list` and the created host interfaces afterwards; the probe retires only the one disposable namespace whose recorded binding it re-verified, and removes only its own underlay pair.
 
 ## Internal package organisation
 

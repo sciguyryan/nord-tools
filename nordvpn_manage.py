@@ -21,11 +21,22 @@ from nord_tools_internal.nordvpn_identity import inspect_allocations
 from nord_tools_internal.nordvpn_lifecycle import inspect_lifecycle
 from nord_tools_internal.nordvpn_lifecycle_evidence import inspect_live_lifecycle
 from nord_tools_internal.nordvpn_identity_evidence import inspect_identity_evidence
+from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
+from nord_tools_internal.nordvpn_restore_executor import (
+    ProvisioningUncertainError,
+    restore_boot_state,
+)
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
 from nord_tools_internal.nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
 from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, read_json
+from nord_tools_internal.nordvpn_startup import (
+    install_startup_unit,
+    plan_install,
+    validate_startup_config,
+)
+from nord_tools_internal.nordvpn_underlay_install import UnderlayError
 from nord_tools_internal.nordvpn_transaction_plan import plan_transactions
 
 
@@ -107,6 +118,9 @@ def main(argv: list[str] | None = None) -> int:
         "lifecycle",
         "ownership-preflight",
         "reconcile-live",
+        "startup-plan",
+        "startup-install",
+        "restore-startup",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -137,6 +151,17 @@ def main(argv: list[str] | None = None) -> int:
                 "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
             )
             command.add_argument("--graph", help="Optional profile dependency graph JSON")
+        if name in ("startup-plan", "startup-install", "restore-startup"):
+            command.add_argument("--config", required=True, help="Explicit startup configuration JSON")
+        if name in ("startup-plan", "startup-install"):
+            command.add_argument(
+                "--unit-dir", default="/etc/systemd/system", help="Directory receiving nord-tools-restore.service"
+            )
+            command.add_argument("--python", help="Interpreter path recorded in the unit (default: this interpreter)")
+        if name == "startup-install":
+            command.add_argument(
+                "--execute", action="store_true", help="Write the rendered unit; the default invocation only plans"
+            )
         if name == "audit":
             command.add_argument("--registry", required=True, help="Explicit offline resource ledger JSON")
             command.add_argument("--inventory", required=True, help="Explicit simulated profile inventory JSON")
@@ -195,6 +220,31 @@ def main(argv: list[str] | None = None) -> int:
             graph = read_json(args.graph) if args.graph else None
             result = reconcile_desired(persistent, actual, graph)
             result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action in ("startup-plan", "startup-install", "restore-startup"):
+            if args.transient:
+                raise ManagementError(
+                    "startup management is persistent-only; transient intent is never restored or installed"
+                )
+            config = validate_startup_config(read_json(args.config))
+            if args.action == "startup-plan":
+                result = plan_install(
+                    config, args.config, args.unit_dir, python_executable=args.python or sys.executable
+                )
+                result["scope"] = "persistent"
+            elif args.action == "startup-install":
+                result = install_startup_unit(
+                    config,
+                    args.config,
+                    args.unit_dir,
+                    python_executable=args.python or sys.executable,
+                    execute=args.execute,
+                )
+                result["scope"] = "persistent"
+            else:
+                result = restore_boot_state(config)
+                result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "cleanup-plan":
@@ -266,7 +316,16 @@ def main(argv: list[str] | None = None) -> int:
                 path.unlink()
         print(json.dumps(result, indent=2, sort_keys=True))
         return 0
-    except (ManagementError, ReconciliationError, RegistryError, DiscoveryError, OSError) as exc:
+    except (
+        ManagementError,
+        ReconciliationError,
+        RegistryError,
+        DiscoveryError,
+        OwnershipError,
+        ProvisioningUncertainError,
+        UnderlayError,
+        OSError,
+    ) as exc:
         print(f"manage: {exc}", file=sys.stderr)
         return 2
 
