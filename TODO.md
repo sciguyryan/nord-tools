@@ -66,6 +66,8 @@ Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, c
 
 Part 8.1 is planned as six increments: 8.1.1 authority preflight, 8.1.2 descriptor-anchored inspection, 8.1.3 shared lifecycle locking and state continuity, 8.1.4 kernel identity and mutation authority, 8.1.5 adversarial race hardening, and 8.1.6 privileged integration acceptance. The read-only inspector remains diagnostic and cannot authorise mutation. The restoration, cleanup and recovery executors now share a descriptor-relative single-flight lock with identity and directory-continuity checks. This serialises cooperating executors, but does not make multi-file state transitions atomic or defend against hostile directory replacement after verification. Independent kernel ownership, hostile-process races and privileged acceptance remain production blockers.
 
+- [ ] Complete 8.1.4 kernel resource identity and mutation authority. The first correction ensures namespace descriptors are released on all cleanup outcomes; namespace pathname replacement and host-interface mutation identity remain unproven and must be resolved before acceptance.
+
 ### Part 8 acceptance requirements
 
 - [ ] Run unit, integration, failure-injection, repeatability and privilege-boundary tests, including two simultaneous real tunnels.

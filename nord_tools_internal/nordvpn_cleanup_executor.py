@@ -82,19 +82,25 @@ def _real_kernel() -> CleanupKernel:
         return {"device": info.st_dev, "inode": info.st_ino}
 
     def delete_namespace(name: str, binding: dict, netns_dir: Path = NETNS_MOUNT_DIR) -> None:
-        """Delete the namespace only while it matches the recorded owner binding."""
+        """Retire only a namespace whose live descriptor matches its recorded binding.
+
+        The caller owns the descriptor until ``retire`` consumes it. Every refusal
+        must release it, including failures before an OwnedNamespace is created.
+        """
         try:
             descriptor = os.open(netns_dir / name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
         except OSError as exc:
             raise ProvisioningUncertainError(f"namespace {name} is no longer openable: {exc}") from exc
+        owned = OwnedNamespace(name, descriptor, binding["device"], binding["inode"])
         try:
-            owned = OwnedNamespace(name, descriptor, binding["device"], binding["inode"])
             owned.verify()
             owned.retire()
         except OwnershipError as exc:
             raise ProvisioningUncertainError(
                 f"namespace {name} does not match its recorded owner binding at the moment of deletion: {exc}"
             ) from exc
+        finally:
+            owned.release()
 
     def delete_host_interface(name: str, ifindex: int) -> None:
         import subprocess
