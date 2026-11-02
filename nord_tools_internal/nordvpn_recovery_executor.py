@@ -138,7 +138,20 @@ def plan_recovery(
         report["executed"] = True
         report["network_changes_applied"] = any(action.get("kernel_changed") for action in actions)
         report["actions"] = actions
+        # The report describes the state after the run, not the pre-run plan.
+        final_journal = validate_journal(_read_document(journal_path))
+        final_bindings = _read_document(bindings_path)
         final_intents = _read_document(intent_path)
+        final_items = _classify(
+            final_journal,
+            final_intents,
+            helpers,
+            {entry["allocation_id"]: entry for entry in final_bindings["bindings"]},
+            preflight_ownership(final_journal, final_bindings, helpers.observe(), final_intents),
+        )
+        report["items"] = final_items
+        reviewed = [item for item in final_items if item["disposition"] == _REVIEW]
+        report["review_required"] = reviewed
         report["operator_review_required"] = bool(reviewed) or any(
             operation["outcome"] == "uncertain" for operation in final_intents.get("operations", [])
         )
@@ -277,6 +290,37 @@ def _classify(
     for token in sorted(set(allocations) - seen, key=lambda token: (allocations[token]["profile"], token)):
         allocation = allocations[token]
         state = states.get(token)
+        if (
+            state == "active"
+            and findings[token]["finding"]
+            not in (
+                "verified_current",
+                "consistent_retired",
+            )
+            and findings[token]["finding"] not in _ABSENT_FINDINGS
+        ):
+            # A present, undisputed-but-unverifiable allocation is the
+            # operator's review, with or without an unresolved intent.
+            finding = findings[token]["finding"]
+            entry = bindings_by_token.get(token)
+            items.append(
+                {
+                    "allocation_id": token,
+                    "profile": allocation["profile"],
+                    "kind": allocation["kind"],
+                    "identifier": allocation["identifier"],
+                    "action": "bookkeeping",
+                    "outcome": None,
+                    "lifecycle_state": state,
+                    "finding": finding,
+                    "binding_recorded": entry is not None,
+                    "disposition": _REVIEW,
+                    "authority": OPERATOR,
+                    "reason": f"the live allocation is not verifiable ({finding}); review before any action",
+                }
+            )
+            seen.add(token)
+            continue
         if state not in _INTERRUPTED_STATES:
             continue
         finding = findings[token]["finding"]

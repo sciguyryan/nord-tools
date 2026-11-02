@@ -39,18 +39,18 @@ The internal lifecycle modules provide permission-restricted atomic journal pers
 
 ## Tunnel management implementation status
 
-The offline management foundation is complete, but **the operational tunnel manager is not implemented or ready for production use**. The following work remains before Nord Tools can safely manage multiple live VPN connections:
+The ownership, restoration, cleanup and recovery executors for pinned provider plans exist and are offline-tested, but **no production NordVPN tunnel provisioning is implemented, so the manager is not ready for production use**. The following work remains before Nord Tools can safely manage multiple live VPN connections:
 
 | Area | Current state | Required before live use |
 | --- | --- | --- |
-| Tunnel provisioning | Experimental disposable WireGuard configuration, connectivity and journal-gated execution have been implemented and tested in controlled probes | Implement production-authorised provisioning, crash-safe ownership, provider credentials and endpoint selection |
-| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
+| Tunnel provisioning | Pinned-provider boot provisioning through durable creation intents, creation-time owner records and the privileged namespace, isolation, routing and WireGuard primitives | Provider credentials acquisition, fastest and country selection at boot, and real-tunnel endpoint handling |
+| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance; restored namespaces install the fail-closed firewall before any traffic configuration | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
 | Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Implement authorised application execution through owned, fail-closed namespaces and verify desktop integration |
-| Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
-| Replacement and recovery | No-executable transaction stages plus conservative recovery: the boot wall and the operator's `recovery --execute` | Real-tunnel cut-over and replacement machinery in later Parts, plus privileged acceptance on disposable systems |
-| Startup and persistence | Persistent desired policy by default; `startup-plan`/`startup-install` render a systemd restoration unit, and `restore-startup` runs an authorised, journal-gated boot executor | Privileged restoration acceptance on a disposable host, host-domain default-route protection, real-tunnel DNS/IPv6 conformance and interrupted-operation recovery |
-| Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives | Privileged acceptance on a disposable host, together with interrupted-cleanup recovery in Part 7.5 |
-| Integration and acceptance | Automated offline tests | Privileged Linux integration tests, failure injection and checks for compatibility with the official NordVPN client |
+| Ownership and reconciliation | Immutable creation-time owner bindings, fresh preflight verification, read-only convergence classification, restoration and cleanup executors | Race-safe ownership under hostile store access, and live update/replace authorities for verified resources |
+| Replacement and recovery | Conservative recovery executors: the boot wall and the operator's `recovery --execute`, covering crash, restart and interrupted-cleanup evidence | Real-tunnel cut-over and replacement machinery in later Parts, plus privileged acceptance on disposable systems |
+| Startup and persistence | `manage startup-install` renders the systemd unit, and `restore-startup` runs the boot executor with recovery | Privileged acceptance on a disposable host, and the host-domain default profile's protective routing |
+| Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives | Privileged acceptance on a disposable host |
+| Integration and acceptance | Automated offline tests plus the privileged Part 7 acceptance matrix (`tools/probe_part7_acceptance.py`) | Full privileged matrix execution, official NordVPN client coexistence checks and adversarial ownership testing |
 
 `manage graph` depicts **configured intent**, not live connectivity. Likewise, `manage cleanup-plan` and `manage transaction-plan` are advisory; they do not execute network changes. These boundaries apply even if a saved policy is persistent.
 
@@ -415,7 +415,7 @@ Routes, nftables rules, DNS and services still require stronger evidence models 
 
 ### Resource allocation identities
 
-`python nord_tools.py manage identities --registry examples/managed-allocations.json` validates a version 2 allocation ledger containing a random, per-resource `allocation_id`. Allocation identities are distinct from interface and namespace names, which can be reused. This command is read-only and does not establish that a kernel resource belongs to Nord Tools. A future provisioner must bind allocation identifiers to independently verifiable kernel or service evidence before authorising any update, replacement or cleanup.
+`python nord_tools.py manage identities --registry examples/managed-allocations.json` validates a version 2 allocation ledger containing a random, per-resource `allocation_id`. Allocation identities are distinct from interface and namespace names, which can be reused. This command is read-only and does not establish that a kernel resource belongs to Nord Tools. The Part 7.1 owner-record store and the Part 7 executors now provide that binding for namespaces and interfaces; route, firewall, DNS and service kinds still have no binding model and wait for their consumers.
 
 ### Allocation evidence and stale-state diagnostics
 
@@ -464,7 +464,7 @@ An experimental lifecycle journal can be compared with a complete live Linux dis
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --live
 ```
 
-The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion. Durable ownership proof and operational recovery remain future work; cooperating journal writers already use advisory locking. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
+The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion; the sanctioned resolution of interrupted evidence is the Part 7.5 recovery executor through the same immutable stores. Cooperating journal writers already use advisory locking. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
 
 ### Ownership and recovery diagnostics
 
@@ -593,7 +593,26 @@ python tools/probe_recovery.py
 sudo python tools/probe_recovery.py --run-privileged
 ```
 
-The retirement history the journal keeps deliberately means that even a fully resolved recovery retains past generations, so name reuse detection never loses its evidence. The reset separation remains: archived history is replaced only through `clear-ownership`, and the operators' description review remains the only path for mixed uncertainty.
+The retirement history the journal deliberately keeps means that even a fully resolved recovery retains past generations, so name reuse detection never loses its evidence; archived history is replaced only through `clear-ownership`.
+
+### Integrated Part 7 acceptance (Part 7.6)
+
+One privileged matrix binds the previous increments into an operational workflow with host-isolation evidence at every stage boundary:
+
+```fish
+python tools/probe_part7_acceptance.py
+sudo python tools/probe_part7_acceptance.py --run-privileged
+```
+
+Stage by stage it verifies exactly what the acceptance requires. Persistence: two pinned profiles restore together while a deliberately different transient policy sits in the runtime scope, and reconciliation proves the decisions identical with and without it. Recovery: restore children are SIGKILLed at escalating delays until real pending or uncertain evidence is recorded, then the boot wall and operator recovery converge everything back to both profiles. Authorised cleanup: removing an application reference is pure bookkeeping, the departed profile is cleaned with its exact four deletions, and the shared profile's namespace, bindings and convergence survive untouched. Convergence: repeat runs leave reconciliation decisions, cleanup plans, recovery items and the kernel unchanged. Isolation: host IPv4/IPv6 routes, nftables rules and resolver contents are compared across every stage boundary, and any drift fails the run. The matrix finishes by printing its explicit list of what nobody has yet established, which is the hand-off list for Part 8:
+
+```fish
+sudo ip netns list
+ip link | grep nthl
+cat /tmp/nt-part7-acceptance-*/startup-runs.json 2>/dev/null
+```
+
+Only pinned tunnel plans are provisioned, credentials travel through `LoadCredential`-style descriptor inputs, and no stage touches host firewall or resolver state. Run the privileged matrix only on the disposable test host and preserve the evidence directory when a stage fails.
 
 ## Internal package organisation
 
@@ -688,7 +707,7 @@ All four disposable Part 4 development increments have passed privileged accepta
 
 Per-application routing has an offline planning foundation in `nord_tools_internal/nordvpn_application_plan.py`. It resolves registered executables, default-profile inheritance and logical shared or isolated allocation keys without launching processes or authorising namespace operations. Production application routing remains unimplemented.
 
-The internal application-binding planner models registered applications as logical references to shared or isolated allocations. Binding and unbinding are deterministic, side-effect-free operations: releasing the final reference does not remove a namespace, terminate a process or authorise deletion of a tunnel. Conflicting rebinding requires explicit release before replanning. Operational process launch and resource ownership remain future work.
+The internal application-binding planner models registered applications as logical references to shared or isolated allocations. Binding and unbinding are deterministic, side-effect-free operations: releasing the final reference does not remove a namespace, terminate a process or authorise deletion of a tunnel. Conflicting rebinding requires explicit release before replanning. Operational process launch and launch execution remain future work; the resource ownership underneath the references is now established by the Part 7 executors.
 
 Part 5 Increment 5.3 adds offline application launch request preparation in `nord_tools_internal/nordvpn_application_launch.py`. It requires an exact existing logical binding and produces an immutable argument vector without shell interpretation. The execution entry point deliberately refuses all launches: verified production namespace ownership, firewall enforcement and authorised lifecycle coordination are not yet implemented.
 

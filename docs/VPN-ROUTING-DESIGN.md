@@ -216,7 +216,7 @@ This is continuity evidence within a boot session, not an unforgeable certificat
 
 ### Where this leaves Part 7
 
-7.1 provides the verification and recovery-preflight layer; it does not authorise mutation, install a boot-time reconciler or delete anything. Later increments consume it: persistent reconciliation (7.2, 7.3) and cleanup (7.4) must gate on a fresh preflight result and re-verify ownership at the moment of execution. The privileged acceptance probe is `tools/probe_ownership_preflight.py`; it exercises exactly one disposable namespace and the rejection path, and leaves the host otherwise untouched.
+7.1 provides the verification and recovery-preflight layer; it does not authorise mutation, install a boot-time reconciler or delete anything. The executors that consume it (7.3 restoration, 7.4 cleanup, 7.5 recovery) gate on a fresh preflight result and re-verify ownership at the moment of execution. The privileged acceptance probe is `tools/probe_ownership_preflight.py`; it exercises exactly one disposable namespace and the rejection path, and leaves the host otherwise untouched.
 
 ## Part 7.2: persistent desired-state reconciliation
 
@@ -234,7 +234,7 @@ Owner bindings now optionally record the provisioned configuration for the profi
 
 With an optional dependency graph, a blocked prerequisite blocks every desired dependent, including independently converged ones — matching the offline dependency planner's treatment of unsafe parents. Verified evidence of the dependent's own resources does not compensate for a prerequisite that cannot safely proceed.
 
-Idempotence is a property of the pure classification: the same durable inputs produce a byte-identical report, and a run writes nothing. Interruption-state is deliberately not re-modelled here; pending or uncertain operation intents already surface through the preflight as blockers, and any run journal belongs with the boot wiring of 7.3 rather than with this layer. The plan/report split is unchanged from prior increments: `safe_to_execute` is always false, and 7.3's boot reconciliation must obtain a fresh preflight at startup and re-verify ownership at the moment of any privileged action.
+Idempotence is a property of the pure classification: the same durable inputs produce a byte-identical report, and a run writes nothing. Interruption-state was deliberately left to the boot layer, and the 7.5 recovery executor now owns it; the 7.3 boot executor obtains a fresh preflight at startup and re-verifies ownership at the moment of any privileged action. The plan/report split is unchanged from prior increments: `safe_to_execute` is always false here, while the executors carry their own execution evidence fields.
 
 ## Part 7.3: systemd startup restoration
 
@@ -286,7 +286,15 @@ Ordering removes dependents before prerequisites (the reverse of the restoration
 
 ### The deliberate limits
 
-Resolver directories under `/etc/netns` are the one kind of created state whose identity was never recorded. Removal happens only with explicit `--resolvers` confirmation, only for a verified namespace, and only when the directory contains exactly the expected single `resolv.conf`; anything else is review-required. Routes, host nftables objects and services still have no binding kinds: their inclusion waits on consumers that need them, and cleanup inherits that scoping rather than inventing evidence. Interrupted-cleanup recovery, including a reviewable resume of uncertain retire attempts, belongs to Part 7.5. The acceptance probe (`tools/probe_cleanup.py --run-privileged`) exercises one real pinned restoration and then cleans it, on a disposable-capable Linux test host only.
+Resolver directories under `/etc/netns` are the one kind of created state whose identity was never recorded. Removal happens only with explicit `--resolvers` confirmation, only for a verified namespace, and only when the directory contains exactly the expected single `resolv.conf`; anything else is review-required. Routes, host nftables objects and services still have no binding kinds: their inclusion waits on consumers that need them, and cleanup inherits that scoping rather than inventing evidence. Interrupted-cleanup recovery, including a reviewable resume of uncertain retire attempts, is the Part 7.5 recovery executor's business; the acceptance probe (`tools/probe_cleanup.py --run-privileged`) exercises one real pinned restoration and then cleans it, on a disposable-capable Linux test host only.
+
+## Part 7.6: integrated persistence and cleanup acceptance
+
+The five increments before it each asserted their own contract; this one binds them into one workflow and records what nobody has yet established. `tools/probe_part7_acceptance.py` runs the whole matrix on a disposable-capable privileged host: two pinned profiles restore together while a deliberately different transient policy sits in the runtime scope and is proven inert, a real process death mid-restore is converged through the boot and operator authority walls, one authenticated profile is cleaned to its exact deletion set while the shared profile's namespace, bindings and convergence survive untouched, repeat operations leave every classification and the kernel unchanged, and the host's IPv4/IPv6 routes, nftables rules and resolver tables are compared across each stage boundary with any drift failing the run.
+
+Two seams the matrix exposed were fixed before it could pass. A recorded retirement without a binding used to wedge profiles as an eternal unbound claim, so the gate classifies retired-unbound allocations as consistently retired with the same evidence the bound case always used, and the 7.2 configuration agreement now counts only allocations that are not recorded retired, so cross-boot policy changes and partial rollbacks can no longer wedge a profile against convergence.
+
+The matrix's final output is the outstanding list for Part 8: provider credentials and fastest or country selection at boot, the host-domain default profile's protective routing, real-tunnel DNS and IPv6 acceptance, live replacement cut-over with verified rollback, adversarial ownership testing of store access, and application launch execution with desktop integration. These hand-offs are also recorded in the development plan.
 
 ## Part 7.5: crash, restart and interrupted-cleanup recovery
 

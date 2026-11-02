@@ -414,7 +414,13 @@ def preflight_ownership(
         elif token in unresolved:
             finding, verified = "uncertain_intent", False
         elif recorded is None:
-            finding, verified = "unbound_claim", False
+            if state == "retired":
+                # A recorded retirement without a binding: the lifecycle record
+                # is the retirement evidence, and a still-observable name
+                # surfaces through the unclaimed list instead of here.
+                finding, verified = "consistent_retired", True
+            else:
+                finding, verified = "unbound_claim", False
         elif kind == "namespace":
             observed_identity = None
             if identifier not in namespaces:

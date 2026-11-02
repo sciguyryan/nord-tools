@@ -84,6 +84,7 @@ def derive_actual_state(journal: object, bindings: object, preflight_result: obj
     findings = validate_preflight(preflight_result, validated)
     allocations_by_token = {item["allocation_id"]: item for item in validated["allocations"]["resources"]}
     bindings_by_token = {entry["allocation_id"]: entry for entry in validated_bindings["bindings"]}
+    lifecycle = {event["allocation_id"]: event["state"] for event in validated["events"]}
     profiles: dict[str, dict] = {}
     for allocation in sorted(
         allocations_by_token.values(), key=lambda item: (item["profile"], item["kind"], item["identifier"])
@@ -118,7 +119,14 @@ def derive_actual_state(journal: object, bindings: object, preflight_result: obj
                 }
             )
     for profile, record in sorted(profiles.items()):
-        tokens = [token for token, item in allocations_by_token.items() if item["profile"] == profile]
+        # Retired generations are history: their bindings record what was, not
+        # what should converge now, so only allocations not recorded retired
+        # participate in the configuration agreement.
+        tokens = [
+            token
+            for token, item in allocations_by_token.items()
+            if item["profile"] == profile and lifecycle.get(token) != "retired"
+        ]
         configured = [bindings_by_token[token].get("configuration") for token in tokens if token in bindings_by_token]
         recorded_values = [value for value in configured if value is not None]
         if len(recorded_values) == len(tokens) and len({json.dumps(v, sort_keys=True) for v in recorded_values}) == 1:
