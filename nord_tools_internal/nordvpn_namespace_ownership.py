@@ -53,13 +53,16 @@ class OwnedNamespace:
     def verify(self) -> None:
         if self.closed:
             raise OwnershipError("namespace ownership descriptor has been closed")
+        if not isinstance(self.name, str) or not _NAME.fullmatch(self.name):
+            raise OwnershipError("namespace ownership name is invalid")
         try:
             held = os.fstat(self.descriptor)
             current = os.stat(_NETNS_DIR / self.name, follow_symlinks=False)
         except OSError as exc:
             raise OwnershipError("namespace is no longer observable") from exc
         if (
-            not stat.S_ISREG(current.st_mode)
+            not stat.S_ISREG(held.st_mode)
+            or not stat.S_ISREG(current.st_mode)
             or (held.st_dev, held.st_ino) != (self.device, self.inode)
             or (current.st_dev, current.st_ino) != (self.device, self.inode)
         ):

@@ -748,3 +748,11 @@ Restoration, cleanup and recovery share a stable journal-specific execution lock
 ### Part 8.1.4 namespace descriptor lifetime
 
 The production cleanup adapter now releases its opened namespace descriptor on both successful retirement and ownership-verification refusal. This prevents a failed retirement from retaining a privileged reference to a namespace. It does not solve the pathname replacement race between verification and the kernel deletion command, or establish independent authority over host interfaces. Those issues remain blockers for completion of 8.1.4 and adversarial acceptance.
+
+### Part 8.1.4 additional namespace verification
+
+Namespace ownership verification now rejects invalid bound names and non-regular held descriptors before any retirement command. These checks do not eliminate pathname replacement between verification and deletion; kernel mutation authority remains incomplete.
+
+### Part 8.1.4 host-interface mutation boundary
+
+The cleanup executor now checks the live host-interface name and index mapping immediately before an indexed deletion and refuses missing, renamed or reused indices. This reduces stale-observation risk but does not close the race between the check and the `ip link del` command. Namespace retirement also remains pathname-based; neither mutation is claimed to be safe against a concurrent privileged adversary. A kernel-supported identity-bound deletion mechanism or a justified exclusive authority model is required before Part 8.1.4 can be accepted.

@@ -28,12 +28,36 @@ class NamespaceOwnershipTests(unittest.TestCase):
         with self.assertRaises(OwnershipError):
             owned.verify()
 
+    def test_invalid_bound_name_refuses_verification_before_filesystem_access(self):
+        owned = OwnedNamespace("../outside", 42, 1, 2)
+        with patch("nord_tools_internal.nordvpn_namespace_ownership.os.stat") as observe:
+            with self.assertRaisesRegex(OwnershipError, "name is invalid"):
+                owned.verify()
+            observe.assert_not_called()
+
+    def test_non_regular_held_descriptor_refuses_retirement(self):
+        owned = OwnedNamespace("nt-abcdefgh", 42, 1, 2)
+        with (
+            patch(
+                "nord_tools_internal.nordvpn_namespace_ownership.os.fstat",
+                return_value=type("S", (), {"st_dev": 1, "st_ino": 2, "st_mode": 0o040700})(),
+            ),
+            patch(
+                "nord_tools_internal.nordvpn_namespace_ownership.os.stat",
+                return_value=type("S", (), {"st_dev": 1, "st_ino": 2, "st_mode": 0o100600})(),
+            ),
+            patch("nord_tools_internal.nordvpn_namespace_ownership._command") as command,
+        ):
+            with self.assertRaisesRegex(OwnershipError, "identity changed"):
+                owned.retire()
+            command.assert_not_called()
+
     def test_identity_reuse_refuses_retirement(self):
         owned = OwnedNamespace("nt-abcdefgh", 42, 1, 2)
         with (
             patch(
                 "nord_tools_internal.nordvpn_namespace_ownership.os.fstat",
-                return_value=type("S", (), {"st_dev": 1, "st_ino": 2})(),
+                return_value=type("S", (), {"st_dev": 1, "st_ino": 2, "st_mode": 0o100600})(),
             ),
             patch(
                 "nord_tools_internal.nordvpn_namespace_ownership.os.stat",

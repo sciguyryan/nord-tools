@@ -103,8 +103,26 @@ def _real_kernel() -> CleanupKernel:
             owned.release()
 
     def delete_host_interface(name: str, ifindex: int) -> None:
+        """Refuse stale or renamed host links before the indexed deletion.
+
+        This check narrows the observation-to-command interval, but the ip
+        command is not an atomic compare-and-delete operation. A privileged
+        adversary can still replace the link after this check.
+        """
+        import socket
         import subprocess
 
+        if not isinstance(ifindex, int) or isinstance(ifindex, bool) or ifindex <= 0:
+            raise ProvisioningUncertainError("the recorded host interface index is invalid")
+        if not isinstance(name, str) or not name or "/" in name or "\x00" in name:
+            raise ProvisioningUncertainError("the recorded host interface name is invalid")
+        try:
+            actual_name = socket.if_indextoname(ifindex)
+            actual_index = socket.if_nametoindex(name)
+        except (OSError, ValueError) as exc:
+            raise ProvisioningUncertainError(f"the recorded host interface {name} is no longer identifiable") from exc
+        if actual_name != name or actual_index != ifindex:
+            raise ProvisioningUncertainError(f"the recorded host interface {name} changed identity before deletion")
         result = subprocess.run(
             ["ip", "link", "del", "dev", str(ifindex)], capture_output=True, timeout=15, check=False
         )
