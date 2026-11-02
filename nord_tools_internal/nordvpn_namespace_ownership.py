@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 import os
 from pathlib import Path
 import re
@@ -28,6 +29,23 @@ class OwnershipError(RuntimeError):
 
 _NAME = re.compile(r"nt-[a-z0-9]{8,24}\Z")
 _NETNS_DIR = Path("/run/netns")
+# Linux nsfs.h: NS_GET_NSTYPE; sched.h: CLONE_NEWNET.
+_NS_GET_NSTYPE = 0xB703
+_CLONE_NEWNET = 0x40000000
+
+
+def _require_network_namespace(descriptor: int) -> None:
+    """Ask nsfs to attest that the held descriptor is a network namespace.
+
+    A regular bind-mount entry or matching inode is not sufficient evidence
+    that the underlying object is actually a Linux network namespace.
+    """
+    try:
+        kind = fcntl.ioctl(descriptor, _NS_GET_NSTYPE)
+    except OSError as exc:
+        raise OwnershipError("held descriptor is not a verifiable kernel namespace") from exc
+    if kind != _CLONE_NEWNET:
+        raise OwnershipError("held descriptor does not identify a network namespace")
 
 
 def _command(*args: str) -> str:
@@ -72,6 +90,7 @@ class OwnedNamespace:
             or (current.st_dev, current.st_ino) != (self.device, self.inode)
         ):
             raise OwnershipError("namespace identity changed; refusing operation")
+        _require_network_namespace(self.descriptor)
         if self.name not in _namespace_names():
             raise OwnershipError("namespace no longer appears in kernel discovery")
 

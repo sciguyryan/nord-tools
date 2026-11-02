@@ -760,3 +760,7 @@ The cleanup executor checks the live host-interface name and index mapping befor
 ### Part 8.1.4 namespace-directory mutation precondition
 
 Before retiring a namespace, the executor requires `/run/netns` to be a root-owned directory without group/other write permission, and checks its opened descriptor against the current pathname. An unsafe or unavailable directory refuses retirement. This check does not protect against a privileged mount replacement between inspection and `ip netns del`, and it is not a substitute for an exclusive authority model or an atomic kernel mutation mechanism. Part 8.1.4 remains open.
+
+### Part 8.1 kernel namespace type attestation
+
+The ownership verifier now queries the Linux namespace filesystem (`NS_GET_NSTYPE`) through the held descriptor and requires `CLONE_NEWNET`. A matching path, inode and regular-file mode cannot substitute for kernel confirmation that the descriptor actually identifies a network namespace. This attestation does not make `ip netns del NAME` an identity-bound operation: a concurrent process with mount authority can still replace the pathname after verification. Namespace retirement against such an adversary remains blocked pending an exclusive-authority design or an identity-bound kernel primitive.
