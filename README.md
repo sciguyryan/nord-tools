@@ -47,7 +47,7 @@ The offline management foundation is complete, but **the operational tunnel mana
 | Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
 | Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Implement authorised application execution through owned, fail-closed namespaces and verify desktop integration |
 | Ownership and reconciliation | Allocation ledgers, read-only discovery and offline plans | Bind allocations to independently verifiable resources, detect drift and apply changes transactionally |
-| Replacement and recovery | Non-executable transaction stages | Implement protected cut-over, rollback, crash recovery and durable operation journals |
+| Replacement and recovery | No-executable transaction stages plus conservative recovery: the boot wall and the operator's `recovery --execute` | Real-tunnel cut-over and replacement machinery in later Parts, plus privileged acceptance on disposable systems |
 | Startup and persistence | Persistent desired policy by default; `startup-plan`/`startup-install` render a systemd restoration unit, and `restore-startup` runs an authorised, journal-gated boot executor | Privileged restoration acceptance on a disposable host, host-domain default-route protection, real-tunnel DNS/IPv6 conformance and interrupted-operation recovery |
 | Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives | Privileged acceptance on a disposable host, together with interrupted-cleanup recovery in Part 7.5 |
 | Integration and acceptance | Automated offline tests | Privileged Linux integration tests, failure injection and checks for compatibility with the official NordVPN client |
@@ -574,6 +574,26 @@ The privileged acceptance probe runs the full cycle on a disposable Linux test h
 python tools/probe_cleanup.py
 sudo python tools/probe_cleanup.py --run-privileged
 ```
+
+### Crash, restart and interrupted-cleanup recovery (Part 7.5)
+
+`nord_tools_internal/nordvpn_recovery_executor.py` is the only sanctioned path for resolving the uncertainty the provisioning and cleanup executors can leave behind. The `recovery` command plans from the evidence on disk and never from assumption: every unresolved operation intent and every interrupted lifecycle state is paired with a fresh read-only observation and classified with its exact obligations:
+
+```bash
+python nord_tools.py manage recovery --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json --intents path/to/operation-intents.json
+python nord_tools.py manage recovery --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json --intents path/to/operation-intents.json --execute
+```
+
+Two authority walls divide the plan. Boot execution, which now runs first inside every `restore-startup` run, only converges state already certified by recorded creation time bindings: it finishes the durable bookkeeping of a creation whose whole binding set was recorded and still matches the kernel, rolls back a half-built creation recorded with a pending intent by deleting the identity-verified namespace and re-provisioning fresh, resolves failed and retirement records for resources the kernel does not hold, and aborts the boot entirely when anything uncertain or disputed remains. Operator execution adds everything that deletes or resolves an uncertain outcome: resuming a confirmed retirement, rolling back anything the boot wall refused, and evidencing-gated resolution of uncertain intents with `completed` or `failed`. A lookalike namespace, a live-but-unbound resource or mixed evidence is never touched: it appears under `review_required` with its exact finding and the classifier treats the surrounding profile conservatively, so no executable item shares evidence with the same-name stranger.
+
+Recovery is idempotent by construction: an executed run changes evidence once, and a repeat run reports no items and no kernel changes. Interrupted snapshots stay honest: a failed attempt leaves its intents and journal states for review and nothing else moves. The host stays untouched outside the owned namespaces and interfaces, as in every other executor, and the command is persistent-scope only. Bring a disposable-capable Linux test host for the acceptance probe, which deliberately kills restore children at escalating delays until real uncertainty is recorded, then converges through the same recovery commands and finally cleans everything through the confirmed cleanup:
+
+```fish
+python tools/probe_recovery.py
+sudo python tools/probe_recovery.py --run-privileged
+```
+
+The retirement history the journal keeps deliberately means that even a fully resolved recovery retains past generations, so name reuse detection never loses its evidence. The reset separation remains: archived history is replaced only through `clear-ownership`, and the operators' description review remains the only path for mixed uncertainty.
 
 ## Internal package organisation
 

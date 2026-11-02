@@ -17,7 +17,12 @@ import tempfile
 from typing import Iterator
 
 from nord_tools_internal.nordvpn_lifecycle import validate_journal
-from nord_tools_internal.nordvpn_operation_intent import begin_intent, resolve_intent, validate_intents
+from nord_tools_internal.nordvpn_operation_intent import (
+    begin_intent,
+    resolve_intent,
+    resolve_recovered,
+    validate_intents,
+)
 from nord_tools_internal.nordvpn_registry import RegistryError
 
 
@@ -129,6 +134,28 @@ def update_intent(
             if mode == "begin"
             else resolve_intent(existing, validated_journal, operation_id, outcome)
         )
+        _write(target, revised)
+        return revised
+
+
+def update_recovered_intent(
+    path: str | Path,
+    journal: object,
+    *,
+    operation_id: str | None = None,
+    outcome: str | None = None,
+) -> dict:
+    """Persist one evidence-gated recovered resolution under the stable lock."""
+    target = Path(path).absolute()
+    validated_journal = validate_journal(journal)
+    if operation_id is None or outcome is None:
+        raise RegistryError("specify one operation identity and outcome")
+    with _locked(target):
+        try:
+            existing = _load(target, validated_journal)
+        except (OSError, ValueError, UnicodeError) as exc:
+            raise RegistryError("cannot load existing operation intents") from exc
+        revised = resolve_recovered(existing, validated_journal, operation_id, outcome)
         _write(target, revised)
         return revised
 

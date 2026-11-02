@@ -54,9 +54,11 @@ from nord_tools_internal.nordvpn_provision_execution import (
     ProvisioningUncertainError,
     execute_recorded_creation,
 )
+from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
+from nord_tools_internal.nordvpn_recovery_executor import plan_recovery
 from nord_tools_internal.nordvpn_startup import (
     initialise_startup_runs,
     read_boot_id,
@@ -583,6 +585,7 @@ def restore_boot_state(
     config: object,
     *,
     kernel: RestoreKernel | None = None,
+    cleanup_kernel: "CleanupKernel | None" = None,
     boot_id: str | None = None,
     recorded_at: str | None = None,
 ) -> dict:
@@ -605,11 +608,25 @@ def restore_boot_state(
     if not Path(validated["policy"]).exists():
         raise RegistryError(f"the saved persistent policy does not exist: {validated['policy']}")
     with _execution_lock(validated["journal"]):
-        namespace_journal = _ensure_stores(validated)
+        _ensure_stores(validated)
         desired = _restore_boot_policy(validated)
+        # Boot recovery next: it completes only certified bookkeeping and
+        # identity-verified rollback of half-built creations, and aborts the
+        # entire boot when uncertain evidence needs operator review.
+        recovery = plan_recovery(
+            validated["journal"],
+            validated["bindings"],
+            validated["intent"],
+            boot=True,
+            execute=True,
+            kernel=cleanup_kernel,
+            recorded_at=restart_at,
+            already_locked=True,
+        )
         bindings = _read_document(validated["bindings"])
         intents = _read_document(validated["intent"])
         observation = helpers.observe()
+        namespace_journal = validate_journal(_read_document(validated["journal"]))
         preflight = preflight_ownership(namespace_journal, bindings, observation, intents)
         actual = derive_actual_state(namespace_journal, bindings, preflight)
         graph = validated["graph"] and _read_document(validated["graph"])
@@ -681,6 +698,10 @@ def restore_boot_state(
             "unclaimed": final_preflight["unclaimed"],
             "decisions": final["decisions"],
             "recorded_at": restart_at,
+            "recovery": {
+                "actions": recovery["actions"],
+                "review_required": recovery["review_required"],
+            },
             "limitations": (
                 "Restores only pinned profiles whose owned resources are absent in this boot session. "
                 "Verified-but-undesired resources belong to the confirmed cleanup increment, "

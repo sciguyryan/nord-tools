@@ -12,6 +12,7 @@ from unittest.mock import patch
 import nordvpn_manage
 from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError
 from nord_tools_internal.nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
 from nord_tools_internal.nordvpn_restore_executor import restore_boot_state
 from nord_tools_internal.nordvpn_underlay_install import UnderlayError
 
@@ -128,10 +129,33 @@ class KernelHarness:
     def remove_host_interface(self, name: str) -> None:
         self.host_links.pop(name, None)
 
+    def delete_namespace(self, name: str, binding: dict) -> None:
+        record = self.namespaces.get(name)
+        if record is None or (binding["device"], binding["inode"]) != (record["device"], record["inode"]):
+            raise RegistryError(f"namespace {name} does not match its recorded owner binding")
+        del self.namespaces[name]
+
+    def delete_host_interface(self, name: str, ifindex: int) -> None:
+        if self.host_links.get(name) != ifindex:
+            raise RegistryError(f"interface {name} index changed before deletion")
+        del self.host_links[name]
+
     def wipe_kernel(self) -> None:
         """Simulate a reboot: no namespace or host link survives."""
         self.namespaces.clear()
         self.host_links.clear()
+
+
+def cleanup_surface(harness) -> CleanupKernel:
+    """Adapt the restore harness to the cleanup kernel contract for recovery."""
+    return CleanupKernel(
+        observe=harness.observe,
+        netns_identity=harness.identity,
+        delete_namespace=harness.delete_namespace,
+        delete_host_interface=harness.delete_host_interface,
+        resolver_state=lambda name: "absent",
+        remove_resolver=lambda name: None,
+    )
 
 
 class RestoreTestBase(unittest.TestCase):
@@ -185,7 +209,10 @@ class RestoreTestBase(unittest.TestCase):
     def restore(
         self, harness=None, boot_id="00000000-0000-0000-0000-000000000001", recorded_at="2026-11-02T00:00:00+00:00"
     ):
-        return restore_boot_state(self.config, kernel=harness or self.harness, boot_id=boot_id, recorded_at=recorded_at)
+        chosen = harness or self.harness
+        return restore_boot_state(
+            self.config, kernel=chosen, cleanup_kernel=cleanup_surface(chosen), boot_id=boot_id, recorded_at=recorded_at
+        )
 
     def load(self, name: str) -> dict:
         return json.loads((self.root / name).read_text(encoding="utf-8"))
@@ -268,7 +295,12 @@ class RebootRestorationTests(RestoreTestBase):
         self.restore()
         before = {entry["identifier"] for entry in self.load("owner-bindings.json")["bindings"]}
         self.harness.wipe_kernel()
-        report = restore_boot_state(self.config, kernel=self.harness, boot_id="00000000-0000-0000-0000-000000000002")
+        report = restore_boot_state(
+            self.config,
+            kernel=self.harness,
+            cleanup_kernel=cleanup_surface(self.harness),
+            boot_id="00000000-0000-0000-0000-000000000002",
+        )
         self.assertEqual(report["restored"], ["primary"])
         self.assertTrue(report["reconciled"])
         journal = self.load("lifecycle.json")
@@ -283,7 +315,12 @@ class RebootRestorationTests(RestoreTestBase):
         self.restore()
         before = {entry["identifier"] for entry in self.load("owner-bindings.json")["bindings"]}
         self.harness.wipe_kernel()
-        restore_boot_state(self.config, kernel=self.harness, boot_id="00000000-0000-0000-0000-000000000003")
+        restore_boot_state(
+            self.config,
+            kernel=self.harness,
+            cleanup_kernel=cleanup_surface(self.harness),
+            boot_id="00000000-0000-0000-0000-000000000003",
+        )
         fresh = {
             entry["identifier"]
             for entry in self.load("owner-bindings.json")["bindings"]

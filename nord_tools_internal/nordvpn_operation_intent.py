@@ -108,6 +108,27 @@ def resolve_intent(document: object, journal: object, operation_id: str, outcome
     return validate_intents(updated, journal)
 
 
+def resolve_recovered(document: object, journal: object, operation_id: str, outcome: str) -> dict:
+    """Resolve a pending or uncertain intent after a recovery assessment.
+
+    Uncertain intents are resolved only through this function, so the recovery
+    executor is the sole explicit path; plain resolutions never happen by
+    accident and the evidence the decision was based on is presented in the
+    recovery report rather than widened into the intent schema.
+    """
+    validated = validate_intents(document, journal)
+    if not isinstance(outcome, str) or outcome not in {"completed", "failed"}:
+        raise RegistryError("recovery resolutions must be completed or failed")
+    matching = [item for item in validated["operations"] if item["operation_id"] == operation_id]
+    if len(matching) != 1 or matching[0]["outcome"] not in {"pending", "uncertain"}:
+        raise RegistryError("operation is missing or already resolved")
+    updated = copy.deepcopy(validated)
+    for item in updated["operations"]:
+        if item["operation_id"] == operation_id:
+            item["outcome"] = outcome
+    return validate_intents(updated, journal)
+
+
 def inspect_intents(document: object, journal: object) -> dict:
     """Expose unresolved operations for manual recovery review."""
     validated = validate_intents(document, journal)
