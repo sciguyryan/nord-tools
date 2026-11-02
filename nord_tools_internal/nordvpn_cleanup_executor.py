@@ -110,7 +110,7 @@ def _real_kernel() -> CleanupKernel:
         adversary can still replace the link after this check.
         """
         import socket
-        import subprocess
+        from nord_tools_internal.nordvpn_link_netlink import LinkMutationError, delete_link_by_index
 
         if not isinstance(ifindex, int) or isinstance(ifindex, bool) or ifindex <= 0:
             raise ProvisioningUncertainError("the recorded host interface index is invalid")
@@ -123,11 +123,10 @@ def _real_kernel() -> CleanupKernel:
             raise ProvisioningUncertainError(f"the recorded host interface {name} is no longer identifiable") from exc
         if actual_name != name or actual_index != ifindex:
             raise ProvisioningUncertainError(f"the recorded host interface {name} changed identity before deletion")
-        result = subprocess.run(
-            ["ip", "link", "del", "dev", str(ifindex)], capture_output=True, timeout=15, check=False
-        )
-        if result.returncode:
-            raise ProvisioningUncertainError(f"the recorded host interface {name} could not be deleted")
+        try:
+            delete_link_by_index(ifindex)
+        except LinkMutationError as exc:
+            raise ProvisioningUncertainError(f"the recorded host interface {name} could not be deleted: {exc}") from exc
 
     def resolver_state(namespace: str, root: Path = _RESOLVER_ROOT) -> str:
         """Report whether the namespace resolver directory is clean to remove."""
