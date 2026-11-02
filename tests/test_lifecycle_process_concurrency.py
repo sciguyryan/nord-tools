@@ -22,7 +22,8 @@ class LifecycleProcessConcurrencyTests(unittest.TestCase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertEqual(result.stdout.count("PASS:"), 3)
+        self.assertEqual(result.stdout.count("PASS:"), 4)
+        self.assertIn("waiting contender refuses a replaced lifecycle lock inode", result.stdout)
 
     def test_default_invocation_is_non_mutating(self):
         result = subprocess.run(

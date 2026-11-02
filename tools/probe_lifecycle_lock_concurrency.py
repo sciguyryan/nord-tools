@@ -100,6 +100,67 @@ def run_probe(timeout: float = 8.0) -> None:
                     process.wait()
 
 
+def run_replacement_probe(timeout: float = 8.0) -> None:
+    """Show that an already-waiting contender refuses a replaced lock inode.
+
+    This does not prevent a hostile directory owner from creating a second lock
+    domain while the first holder is still running. Such actors are excluded
+    from the cooperating-process guarantee.
+    """
+    if sys.platform != "linux":
+        raise RuntimeError("this process-concurrency probe requires Linux")
+    with tempfile.TemporaryDirectory(prefix="nt-lock-replacement-") as temporary:
+        parent = Path(temporary) / "authority"
+        parent.mkdir(mode=0o700)
+        journal = parent / "journal.json"
+        lock = parent / "journal.json.restore.lock"
+        first_marker = parent / "holder.entered"
+        contender_marker = parent / "contender.entered"
+        first = _spawn(journal, first_marker, "hold")
+        contender = None
+        try:
+            _wait_for_marker(first_marker, first, timeout)
+            original = (lock.stat().st_dev, lock.stat().st_ino)
+            contender = _spawn(journal, contender_marker, "once")
+            # Wait until the contender actually holds an fd for the original
+            # inode; starting a process alone does not prove it has opened it.
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                if contender.poll() is not None or contender_marker.exists():
+                    raise RuntimeError("contender did not wait before lock substitution")
+                try:
+                    descriptors = (Path("/proc") / str(contender.pid) / "fd").iterdir()
+                    has_original = any(
+                        (info.st_dev, info.st_ino) == original for fd in descriptors if (info := fd.stat())
+                    )
+                except (OSError, FileNotFoundError):
+                    has_original = False
+                if has_original:
+                    break
+                time.sleep(0.02)
+            else:
+                raise RuntimeError("contender never opened the original lock inode")
+            # This deliberately models an actor with write access to the
+            # protected directory. The original holder retains its open inode.
+            lock.unlink()
+            lock.touch(mode=0o600)
+            if (lock.stat().st_dev, lock.stat().st_ino) == original:
+                raise RuntimeError("replacement unexpectedly retained the original inode")
+            first.kill()
+            first.wait(timeout=timeout)
+            _, stderr = contender.communicate(timeout=timeout)
+            if contender.returncode == 0 or contender_marker.exists():
+                raise RuntimeError("waiting contender entered after lock replacement")
+            if "lifecycle execution lock identity changed" not in stderr:
+                raise RuntimeError(f"contender refused for an unexpected reason: {stderr.strip()}")
+            print("PASS: a waiting contender refuses a replaced lifecycle lock inode")
+        finally:
+            for process in (first, contender):
+                if process is not None and process.poll() is None:
+                    process.kill()
+                    process.wait()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run", action="store_true", help="run the disposable multi-process probe")
@@ -111,6 +172,7 @@ def main() -> int:
         return 0
     try:
         run_probe()
+        run_replacement_probe()
     except (OSError, RuntimeError, subprocess.TimeoutExpired) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
