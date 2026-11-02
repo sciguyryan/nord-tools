@@ -64,7 +64,7 @@ Increment 6.1 adds an offline reconciliation evidence gate that rejects stale, c
 
 ### Part 8: Production integration and security acceptance
 
-Increment 8.1 begins with read-only privileged state-directory trust inspection. This check rejects writable ancestors, symlinks and unsafe store entries but does not establish race-safe kernel ownership or grant mutation authority. Production authority remains blocked pending adversarial privileged acceptance.
+Increment 8.1 includes read-only privileged state-directory trust inspection and descriptor-anchored path traversal. The inspector opens each directory relative to an already-open parent, refuses symlinks and unsafe state entries, and never grants mutation authority. Path renaming after inspection, live kernel ownership and operation-specific locking remain unresolved; production authority stays blocked pending adversarial privileged acceptance. Production authority remains blocked pending adversarial privileged acceptance.
 
 ### Part 8 acceptance requirements
 

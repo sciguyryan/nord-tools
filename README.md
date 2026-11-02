@@ -736,3 +736,7 @@ The five-increment Part 6 offline programme is complete, but the live reconcilia
 ### Part 8 production authority preflight
 
 `nord_tools_internal.nordvpn_authority_preflight.inspect_authority_directory` provides a read-only inspection of a dedicated privileged state directory and its path components. It rejects symlinks, writable ancestors, unexpected ownership, and unsafe state entries. The report is advisory and explicitly non-authorising: even a trusted directory cannot establish crash-persistent kernel ownership or permit mutation without independent live verification and operation-specific coordination. Part 8 integration and adversarial privileged acceptance remain outstanding. Part 9 is reserved for the final project-wide documentation, security and consistency reconciliation.
+
+### Part 8.1 authority preflight boundary
+
+The read-only authority-directory inspector now traverses path components using opened directory descriptors and refuses symlink traversal, writable ancestors, unsafe file modes and multiply linked  state files. Its report is diagnostic, not an authorisation token: directory renames after inspection, independent kernel resource identity and operation-specific locking remain production blockers.

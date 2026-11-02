@@ -52,3 +52,30 @@ class AuthorityPreflightTests(unittest.TestCase):
         before = sorted(p.name for p in self.path.iterdir())
         self.inspect()
         self.assertEqual(before, sorted(p.name for p in self.path.iterdir()))
+
+    def test_unsafe_regular_state_file_is_rejected(self):
+        entry = self.path / "state.json"
+        entry.write_text("{}")
+        os.chmod(entry, 0o644)
+        report = self.inspect()
+        self.assertTrue(any("unsafe state entry" in item for item in report["findings"]))
+
+    def test_symlinked_state_entry_is_rejected(self):
+        (self.path / "state.json").symlink_to("/etc/passwd")
+        report = self.inspect()
+        self.assertTrue(any("unsafe state entry" in item for item in report["findings"]))
+
+    def test_hardlinked_state_entry_is_rejected(self):
+        entry = self.path / "state.json"
+        entry.write_text("{}")
+        os.chmod(entry, 0o600)
+        os.link(entry, self.path / "alias.json")
+        report = self.inspect()
+        self.assertTrue(any("unsafe state entry" in item for item in report["findings"]))
+
+    def test_nested_symlink_is_rejected_without_following_it(self):
+        child = self.path / "child"
+        child.symlink_to("/etc", target_is_directory=True)
+        report = inspect_authority_directory(child, trusted_uid=self.uid)
+        self.assertFalse(report["trusted"])
+        self.assertTrue(any("symlink component" in item for item in report["findings"]))
