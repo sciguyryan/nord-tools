@@ -23,23 +23,21 @@ unrelated remain exactly as observed. A fresh boot restores the profile again.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 import datetime
 from dataclasses import dataclass
-import fcntl
 import ipaddress
 import json
 import os
 from pathlib import Path
 import secrets
-import stat
 import subprocess
-from typing import Callable, Iterator
+from typing import Callable
 
 from nord_tools_internal.nordvpn_discovery import discover
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
 from nord_tools_internal.nordvpn_identity import allocate_identity
 from nord_tools_internal.nordvpn_isolation_install import install_disposable_isolation
+from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock as _execution_lock
 from nord_tools_internal.nordvpn_lifecycle import record_transition, validate_journal, write_journal
 from nord_tools_internal.nordvpn_lifecycle_store import update_journal
 from nord_tools_internal.nordvpn_namespace_ownership import OwnedNamespace, create_owned_namespace
@@ -173,30 +171,6 @@ def _real_kernel() -> RestoreKernel:
         verify_wireguard=verify_wireguard,
         remove_host_interface=remove_host_interface,
     )
-
-
-@contextmanager
-def _execution_lock(journal_path: str | Path) -> Iterator[None]:
-    """Hold one boot-scoped advisory lock so two restorations cannot interleave."""
-    target = Path(journal_path).absolute()
-    lock = target.with_name(target.name + ".restore.lock")
-    for component in (target, *target.parents):
-        if component.is_symlink():
-            raise RegistryError("refusing symlinked restoration lock path")
-    if not target.parent.is_dir():
-        raise RegistryError("restoration requires an existing journal parent directory")
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-    try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_mode & 0o077:
-            raise RegistryError("unsafe restoration execution lock")
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        current = os.stat(lock, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
-            raise RegistryError("restoration execution lock identity changed")
-        yield
-    finally:
-        os.close(fd)
 
 
 def _read_document(path: str | Path) -> dict:

@@ -20,16 +20,15 @@ retired ecosystem plans no actions and changes nothing.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime
-import fcntl
 import json
 import os
 from pathlib import Path
 import stat
-from typing import Callable, Iterator
+from typing import Callable
 
+from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock as _execution_lock
 from nord_tools_internal.nordvpn_lifecycle import (
     record_transition,
     validate_journal,
@@ -140,30 +139,6 @@ def _real_kernel() -> CleanupKernel:
         resolver_state=resolver_state,
         remove_resolver=remove_resolver,
     )
-
-
-@contextmanager
-def _execution_lock(journal_path: str | Path) -> Iterator[None]:
-    """Share the boot path's single-flight lock so cleanup and restore never race."""
-    target = Path(journal_path).absolute()
-    lock = target.with_name(target.name + ".restore.lock")
-    for component in (target, *target.parents):
-        if component.is_symlink():
-            raise RegistryError("refusing symlinked cleanup lock path")
-    if not target.parent.is_dir():
-        raise RegistryError("cleanup requires an existing journal parent directory")
-    fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-    try:
-        metadata = os.fstat(fd)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1 or metadata.st_mode & 0o077:
-            raise RegistryError("unsafe cleanup execution lock")
-        fcntl.flock(fd, fcntl.LOCK_EX)
-        current = os.stat(lock, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
-            raise RegistryError("cleanup execution lock identity changed")
-        yield
-    finally:
-        os.close(fd)
 
 
 def _read_document(path: str | Path) -> dict:

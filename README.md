@@ -739,4 +739,9 @@ The five-increment Part 6 offline programme is complete, but the live reconcilia
 
 ### Part 8.1 authority preflight boundary
 
-The read-only authority-directory inspector now traverses path components using opened directory descriptors and refuses symlink traversal, writable ancestors, unsafe file modes and multiply linked  state files. Its report is diagnostic, not an authorisation token: directory renames after inspection, independent kernel resource identity and operation-specific locking remain production blockers.
+The read-only authority-directory inspector now traverses path components using opened directory descriptors and refuses symlink traversal, writable ancestors, unsafe file modes and multiply linked state files. Its report is diagnostic, not an authorisation token: directory renames after inspection, independent kernel
+resource identity and operation-specific locking remain production blockers.
+
+### Part 8.1 lifecycle execution lock
+
+Restoration, cleanup and recovery share a stable journal-specific execution lock. The lock is opened relative to the journal directory and checked for safe ownership, permissions and identity after acquisition. This prevents cooperating executors from interleaving their lifecycle operations; it does not authorise kernel mutations, make separate state stores atomic, or protect against a hostile actor with directory replacement privileges. The remaining authority and adversarial tests are tracked in TODO.md.
