@@ -32,10 +32,10 @@ def _run(argv: list[str], runner=subprocess.run) -> None:
     try:
         result = runner(argv, check=False, capture_output=True, timeout=_TIMEOUT)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise UnderlayError("an underlay wiring command could not complete") from exc
+        raise UnderlayError(f"underlay step {argv[1:3]!r} could not complete") from exc
     if result.returncode:
         # Command output can reveal addressing details; keep the message plain.
-        raise UnderlayError("an underlay wiring command failed")
+        raise UnderlayError(f"underlay step {argv[1:3]!r} failed (exit {result.returncode})")
 
 
 def _canonical_interface(name: object, field: str) -> str:

@@ -134,7 +134,7 @@ def _real_kernel() -> RestoreKernel:
                 raise ProvisioningUncertainError("the WireGuard public key could not be derived") from exc
         if result.returncode:
             raise ProvisioningUncertainError("the WireGuard public key derivation failed")
-        return result.stdout.strip()
+        return result.stdout.decode("ascii").strip()
 
     def verify_wireguard(namespace: str, interface: str, expected_public_key: str, peer_public_key: str) -> bool:
         try:
@@ -154,7 +154,9 @@ def _real_kernel() -> RestoreKernel:
             return False
         if key.returncode or peers.returncode:
             return False
-        return key.stdout == f"{expected_public_key}\n" and peers.stdout == f"{peer_public_key}\n"
+        return key.stdout == f"{expected_public_key}\n".encode(
+            "ascii"
+        ) and peers.stdout == f"{peer_public_key}\n".encode("ascii")
 
     def remove_host_interface(name: str) -> None:
         subprocess.run(["ip", "link", "del", "dev", name], capture_output=True, timeout=15, check=False)
@@ -493,6 +495,14 @@ def _restore_profile(
                 {"scope": "host", "ifindex": _host_index(helpers.observe(), underlay_host)},
                 configuration=configuration,
             )
+            # The route targets the WireGuard device, which must exist before
+            # iproute2 can install a route through it. Keep isolation in place
+            # before creating or raising the device so failure remains closed.
+            key_fd = os.open(credential_path, os.O_RDONLY | os.O_CLOEXEC)
+            try:
+                helpers.configure_wireguard(specification, owned, key_fd)
+            finally:
+                os.close(key_fd)
             helpers.route_tunnel(
                 namespace,
                 interface,
@@ -501,11 +511,6 @@ def _restore_profile(
                 plan["tunnel_address"],
                 gateway,
             )
-            key_fd = os.open(credential_path, os.O_RDONLY | os.O_CLOEXEC)
-            try:
-                helpers.configure_wireguard(specification, owned, key_fd)
-            finally:
-                os.close(key_fd)
             if helpers.verify_wireguard(namespace, interface, public_key, plan["peer_public_key"]) is not True:
                 raise ProvisioningUncertainError("the restored WireGuard peer does not match the pinned provider plan")
             record_binding(

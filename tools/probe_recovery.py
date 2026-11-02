@@ -37,11 +37,19 @@ class ProbeError(RuntimeError):
 def interrupted_evidence(root: Path) -> list[str]:
     """Report the uncertainty evidence recorded by an interrupted run."""
     findings: list[str] = []
-    intents = json.loads((root / "operation-intents.json").read_text(encoding="utf-8"))
+    intent_file = root / "operation-intents.json"
+    if not intent_file.exists():
+        # A killed child may not yet have reached the first durable write.
+        # Absence is not evidence of a partial transaction.
+        return findings
+    intents = json.loads(intent_file.read_text(encoding="utf-8"))
     for operation in intents["operations"]:
         if operation["outcome"] in {"pending", "uncertain"}:
             findings.append(f"operation {operation['operation_id']}: {operation['outcome']}")
-    journal = json.loads((root / "lifecycle.json").read_text(encoding="utf-8"))
+    journal_file = root / "lifecycle.json"
+    if not journal_file.exists():
+        return findings
+    journal = json.loads(journal_file.read_text(encoding="utf-8"))
     states: dict[str, str] = {}
     for event in journal["events"]:
         states[event["allocation_id"]] = event["state"]

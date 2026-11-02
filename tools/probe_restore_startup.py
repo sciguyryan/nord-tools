@@ -42,6 +42,31 @@ def command(*argv: str, input_data: bytes | None = None) -> bytes:
     return result.stdout.strip()
 
 
+def verify_retired_resources(namespace_name: str, host_end: str) -> None:
+    """Verify retirement without deleting a potentially unrelated host interface.
+
+    Deleting a namespace destroys its veth endpoint, which normally removes the
+    paired host interface as well. A second unconditional ``ip link del`` would
+    therefore fail even when retirement succeeded. If the host interface still
+    exists, leave it untouched for operator review rather than using a stale
+    name as deletion authority.
+    """
+    remaining = command("ip", "netns", "list")
+    names = {line.split()[0] for line in remaining.decode("utf-8").splitlines() if line.strip()}
+    if namespace_name in names or Path("/run/netns", namespace_name).exists():
+        raise ProbeError("the retired namespace remains observable")
+    try:
+        result = subprocess.run(["ip", "link", "show", "dev", host_end], capture_output=True, check=False, timeout=15)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ProbeError("host underlay retirement could not be inspected") from exc
+    if result.returncode == 0:
+        raise ProbeError("the host underlay remains; refusing unverified deletion")
+    # An absent link is the expected outcome, but distinguish that from a
+    # failing ip invocation by checking a known missing-interface diagnostic.
+    if b"does not exist" not in result.stderr and b"Cannot find device" not in result.stderr:
+        raise ProbeError("host underlay absence could not be established")
+
+
 def run_probe() -> str:
     """Restore one pinned profile, verify, then retire only what this run created."""
     if os.geteuid() != 0:
@@ -63,7 +88,7 @@ def run_probe() -> str:
                     "version": 1,
                     "defaults": {"vpn": "accepted"},
                     "vpn_profiles": {
-                        "accepted": {"selection": {"mode": "pinned", "server": "probe"}, "sharing": "shared"}
+                        "accepted": {"selection": {"mode": "pinned", "server": "uk715"}, "sharing": "shared"}
                     },
                     "applications": {},
                 }
@@ -145,20 +170,21 @@ def run_probe() -> str:
         # Identity-verified retirement of the single resource this probe created.
         with open(f"/run/netns/{namespace_name}") as descriptor:
             metadata = os.fstat(descriptor.fileno())
-            owned = OwnedNamespace(namespace_name, descriptor.fileno(), metadata.st_dev, metadata.st_ino)
-            owned.verify()
-            owned.retire()
-        command("ip", "link", "del", "dev", host_end)
-        remaining = command("ip", "netns", "list")
-        if namespace_name.encode() in remaining or any(output for output in [remaining]):
-            raise ProbeError(f"unexpected namespaces remain: {remaining!r}")
+            # retire() closes its authority descriptor. Retain a separate descriptor
+            # so the surrounding file context can close its own descriptor safely.
+            owned = OwnedNamespace(namespace_name, os.dup(descriptor.fileno()), metadata.st_dev, metadata.st_ino)
+            try:
+                owned.verify()
+                owned.retire()
+            finally:
+                owned.release()
+        verify_retired_resources(namespace_name, host_end)
         print("PASS: the verified namespace and the host underlay were removed", flush=True)
-        return namespace_name
     except BaseException:
         print(f"Retained restoration evidence for review: {temporary}", file=sys.stderr)
         raise
-    else:
-        shutil.rmtree(temporary, ignore_errors=True)
+    shutil.rmtree(temporary)
+    return namespace_name
 
 
 def main(argv: list[str] | None = None) -> int:

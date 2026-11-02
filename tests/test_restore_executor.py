@@ -100,6 +100,11 @@ class KernelHarness:
         return object()
 
     def route_tunnel(self, namespace, tunnel_interface, underlay_interface, endpoint, tunnel_address, gateway):
+        # Mirror iproute2: a route cannot target a device not yet created.
+        if tunnel_interface not in self.namespaces[namespace]["interfaces"]:
+            raise UnderlayError("cannot route through an absent WireGuard interface")
+        if not any(item[0] == namespace for item in self.isolation):
+            raise UnderlayError("routing before fail-closed isolation")
         self.routes.append((namespace, tunnel_interface, underlay_interface, gateway))
 
     def configure_wireguard(self, specification, owned, key_fd: int) -> None:
