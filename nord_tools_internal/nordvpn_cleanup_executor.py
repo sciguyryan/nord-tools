@@ -21,6 +21,7 @@ retired ecosystem plans no actions and changes nothing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 import datetime
 import json
 import os
@@ -87,6 +88,14 @@ def _real_kernel() -> CleanupKernel:
         The caller owns the descriptor until ``retire`` consumes it. Every refusal
         must release it, including failures before an OwnedNamespace is created.
         """
+        # Reject untrusted journal names before constructing a filesystem path.
+        # OwnedNamespace.verify also checks this, but only after the open.
+        if not isinstance(name, str) or re.fullmatch(r"nt-[a-z0-9]{8,24}", name) is None:
+            raise ProvisioningUncertainError("recorded namespace name is invalid")
+        if not isinstance(binding, dict) or any(
+            type(binding.get(field)) is not int or binding[field] < 0 for field in ("device", "inode")
+        ):
+            raise ProvisioningUncertainError("recorded namespace binding is invalid")
         try:
             descriptor = os.open(netns_dir / name, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
         except OSError as exc:
