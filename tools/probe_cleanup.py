@@ -30,6 +30,11 @@ class ProbeError(RuntimeError):
     """The controlled cleanup acceptance probe cannot complete safely."""
 
 
+def _namespace_names(raw: bytes) -> set[str]:
+    """Parse the names from ``ip netns list`` without claiming other entries."""
+    return {line.split(maxsplit=1)[0].decode("utf-8") for line in raw.splitlines() if line.strip()}
+
+
 def command(*argv: str, input_data: bytes | None = None) -> bytes:
     try:
         result = subprocess.run(argv, input=input_data, capture_output=True, check=False, timeout=15)
@@ -143,8 +148,8 @@ def run_probe() -> str:
             raise ProbeError(f"unexpected cleanup report: {report['deletions']}")
         print("PASS: the cleanup executed only the four verified owned resources", flush=True)
         remaining = command("ip", "netns", "list")
-        if namespace_name.encode() in remaining or any(part for part in [remaining]):
-            raise ProbeError(f"unexpected namespaces remain: {remaining!r}")
+        if namespace_name in _namespace_names(remaining):
+            raise ProbeError(f"the cleaned namespace remains: {namespace_name}")
         print("PASS: the namespace and the host underlay are gone after the verified cleanup", flush=True)
         return namespace_name
     except BaseException:

@@ -550,6 +550,43 @@ class UnboundStagedGenerationTests(RecoveryTestBase):
         repeated = self.recover(fixture, boot=True, execute=True)
         self.assertEqual(repeated["actions"], [])
 
+    def test_retired_history_does_not_block_recreated_generation_recovery(self):
+        old_resources = ecosystem(
+            "alpha", "nt-oldalpha00", "ntwgoldalpha", "ntluoldalpha", "nthloldalpha", states="retired"
+        )[0]["allocations"]["resources"]
+        new_resources = ecosystem(
+            "alpha", "nt-newalpha00", "ntwgnewalpha", "ntlunewalpha", "nthlnewalpha", states="creating"
+        )[0]["allocations"]["resources"]
+        journal = {
+            "version": 1,
+            "allocations": {"version": 2, "resources": [*old_resources, *new_resources]},
+            "events": [],
+        }
+        for resource in old_resources:
+            for state in ("reserved", "creating", "active", "retiring", "retired"):
+                journal = record_transition(journal, resource["allocation_id"], state)
+        for resource in new_resources:
+            for state in ("reserved", "creating"):
+                journal = record_transition(journal, resource["allocation_id"], state)
+        fixture = self.make_fixture(
+            journal,
+            {"version": 1, "bindings": []},
+            namespace_name="nt-newalpha00",
+            wg_name="ntwgnewalpha",
+            ul_name="ntlunewalpha",
+            host_name="nthlnewalpha",
+        )
+        self.harness.namespaces.clear()
+        self.harness.host_links.clear()
+        self.pending_create_intent(fixture, fixture["tokens"]["nt-newalpha00"])
+
+        report = self.recover(fixture, boot=True, execute=True)
+
+        self.assertFalse(report["operator_review_required"])
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
+        self.assertEqual(self.intent_outcomes(fixture), ["failed"])
+        self.assertEqual(self.harness.deleted, [])
+
     def test_unbound_live_host_name_blocks_dependent_retirement(self):
         fixture = self.staged()
         self.harness.host_links["nthlalpha000"] = 91

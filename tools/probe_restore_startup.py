@@ -55,16 +55,18 @@ def verify_retired_resources(namespace_name: str, host_end: str) -> None:
     names = {line.split()[0] for line in remaining.decode("utf-8").splitlines() if line.strip()}
     if namespace_name in names or Path("/run/netns", namespace_name).exists():
         raise ProbeError("the retired namespace remains observable")
+    # Enumerate the host link table successfully instead of interpreting
+    # version-dependent iproute2 error wording for a missing device.
     try:
-        result = subprocess.run(["ip", "link", "show", "dev", host_end], capture_output=True, check=False, timeout=15)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        raise ProbeError("host underlay retirement could not be inspected") from exc
-    if result.returncode == 0:
-        raise ProbeError("the host underlay remains; refusing unverified deletion")
-    # An absent link is the expected outcome, but distinguish that from a
-    # failing ip invocation by checking a known missing-interface diagnostic.
-    if b"does not exist" not in result.stderr and b"Cannot find device" not in result.stderr:
+        observed = json.loads(command("ip", "-j", "link", "show"))
+    except (ProbeError, ValueError, TypeError) as exc:
+        raise ProbeError("host underlay absence could not be established") from exc
+    if not isinstance(observed, list) or any(
+        not isinstance(link, dict) or not isinstance(link.get("ifname"), str) for link in observed
+    ):
         raise ProbeError("host underlay absence could not be established")
+    if any(link["ifname"] == host_end for link in observed):
+        raise ProbeError("the host underlay remains; refusing unverified deletion")
 
 
 def run_probe() -> str:

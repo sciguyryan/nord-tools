@@ -77,6 +77,20 @@ def _retire_chain(current: str | None) -> tuple[str, ...]:
     return sequence + ("retired",)
 
 
+def _current_generation(allocations: dict[str, dict], states: dict[str, str], profile: str) -> list[dict]:
+    """Return the profile generation that can still affect the live host.
+
+    Allocation history is append-only, so recreating a cleaned profile leaves
+    its retired generations in the journal.  Those historical allocations
+    must not make a newly staged generation look mixed or partially bound.
+    """
+    return [
+        resource
+        for resource in allocations.values()
+        if resource["profile"] == profile and states.get(resource["allocation_id"]) != "retired"
+    ]
+
+
 def plan_recovery(
     journal_path: str | Path,
     bindings_path: str | Path,
@@ -219,7 +233,7 @@ def _classify(
         if root["kind"] != "namespace" or operation["action"] != "create":
             continue
         profile = root["profile"]
-        generation = [resource for resource in allocations.values() if resource["profile"] == profile]
+        generation = _current_generation(allocations, states, profile)
         if any(resource["allocation_id"] in bindings_by_token for resource in generation):
             continue
         if any(
@@ -261,7 +275,7 @@ def _classify(
         if operation["action"] != "create" or namespace["kind"] != "namespace":
             continue
         profile = namespace["profile"]
-        generation = [resource for resource in allocations.values() if resource["profile"] == profile]
+        generation = _current_generation(allocations, states, profile)
         if (
             helpers.netns_identity(namespace["identifier"]) is None
             and not any(resource["allocation_id"] in bindings_by_token for resource in generation)
@@ -485,7 +499,8 @@ def _generation_complete(
     if bindings_by_token.get(allocation["allocation_id"]) is None:
         return False
     links = _observed_links(helpers.observe())
-    resources = [resource for resource in allocations.values() if resource["profile"] == allocation["profile"]]
+    states = {event["allocation_id"]: event["state"] for event in journal["events"]}
+    resources = _current_generation(allocations, states, allocation["profile"])
     for resource in resources:
         entry = bindings_by_token.get(resource["allocation_id"])
         if entry is None:

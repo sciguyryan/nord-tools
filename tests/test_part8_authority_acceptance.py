@@ -61,3 +61,18 @@ def test_confirmed_root_dispatches_only_through_runner():
     ):
         assert module.main(["--run-privileged"]) == 0
     runner.assert_called_once_with()
+
+
+def test_cleanup_probe_scopes_namespace_absence_to_its_fixture():
+    from tools.probe_cleanup import _namespace_names
+
+    observed = _namespace_names(b"nt-unrelated (id: 2)\nnt-fixture (id: 3)\n")
+    assert "nt-fixture" in observed
+    assert "nt-missing" not in observed
+
+
+def test_recovery_probe_scopes_namespace_absence_to_its_fixture():
+    from tools.probe_recovery import _namespace_names
+
+    observed = _namespace_names(b"nt-unrelated (id: 2)\n")
+    assert observed == {"nt-unrelated"}

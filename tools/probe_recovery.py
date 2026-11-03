@@ -33,6 +33,11 @@ class ProbeError(RuntimeError):
     """The controlled recovery acceptance probe cannot complete safely."""
 
 
+def _namespace_names(raw: bytes) -> set[str]:
+    """Parse the names from ``ip netns list`` without claiming other entries."""
+    return {line.split(maxsplit=1)[0].decode("utf-8") for line in raw.splitlines() if line.strip()}
+
+
 def interrupted_evidence(root: Path) -> list[str]:
     """Report the uncertainty evidence recorded by an interrupted run."""
     findings: list[str] = []
@@ -207,6 +212,9 @@ def run_probe() -> str:
             raise ProbeError("recovery did not converge the interrupted ecosystem")
         print("PASS: the recovery converged the interrupted stores to the pinned desired state", flush=True)
 
+        bindings_doc = json.loads((temporary / "owner-bindings.json").read_text(encoding="utf-8"))
+        namespace_name = next(entry["identifier"] for entry in bindings_doc["bindings"] if entry["kind"] == "namespace")
+
         # Final full teardown through the confirmed cleanup for a clean host.
         other = {
             "version": 1,
@@ -231,9 +239,11 @@ def run_probe() -> str:
         if code != 0:
             raise ProbeError("the final settled cleanup reported failure")
         remaining = command("ip", "netns", "list")
-        if remaining.returncode or remaining.stdout.strip():
-            raise ProbeError(f"unexpected namespaces remain: {remaining.stdout!r}")
-        print("PASS: the confirmed cleanup retired the restored generation; the host shows none left", flush=True)
+        if remaining.returncode:
+            raise ProbeError("the final namespace inventory failed")
+        if namespace_name in _namespace_names(remaining.stdout):
+            raise ProbeError(f"the recovered generation's namespace remains: {namespace_name}")
+        print("PASS: the confirmed cleanup retired the recovered generation", flush=True)
         result = ",".join(all_findings)
     except BaseException:
         print(f"Retained recovery evidence for review: {temporary}", file=sys.stderr)

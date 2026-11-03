@@ -15,17 +15,17 @@ stage boundary.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import contextlib
 import io
 import json
 import os
-import random
 import shutil
 import subprocess
 import signal
 import sys
 import tempfile
-import time
+import select
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -55,10 +55,102 @@ def _observe() -> dict:
     return observation
 
 
-def _assert_no_host_drift(before_name: str, after_name: str, before: dict, after: dict) -> None:
+def _expected_underlay_routes(matrix: Matrix) -> dict[str, str]:
+    """Map verified host underlay interfaces to their exact fixture routes.
+
+    Never exempt a route on the strength of its interface name alone.
+    """
+    if not matrix.bindings.exists():
+        return {}
+    bindings = json.loads(matrix.bindings.read_text(encoding="utf-8"))
+    config = json.loads((matrix.temporary / "startup.json").read_text(encoding="utf-8"))
+    expected = {}
+    for tunnel in config["tunnels"].values():
+        address = ipaddress.ip_interface(tunnel["underlay"]["host_address"])
+        expected[str(address.network)] = str(address.ip)
+    result = {}
+    for entry in bindings["bindings"]:
+        if entry["kind"] != "interface" or entry["binding"].get("scope") != "host":
+            continue
+        # A binding alone does not authorise a route exception: the live
+        # interface index must still agree with the recorded creation identity.
+        name = entry["identifier"]
+        observed = subprocess.run(
+            ["ip", "-j", "link", "show", "dev", name], capture_output=True, check=False, timeout=15
+        )
+        if observed.returncode:
+            continue
+        links = json.loads(observed.stdout)
+        if len(links) != 1 or links[0]["ifindex"] != entry["binding"]["ifindex"]:
+            continue
+        for prefix, source in expected.items():
+            result[(name, prefix, source)] = True
+    return result
+
+
+def _normalised_routes(raw: bytes, allowed: dict) -> list[dict]:
+    """Exclude only kernel-connected fixture routes on identity-bound links."""
+    routes = json.loads(raw)
+    result = []
+    for route in routes:
+        key = (route.get("dev"), route.get("dst"), route.get("prefsrc"))
+        if (
+            key in allowed
+            and route.get("protocol") == "kernel"
+            and route.get("scope") == "link"
+            and route.get("type", "unicast") == "unicast"
+            and route.get("gateway") is None
+            and route.get("table", "main") == "main"
+        ):
+            continue
+        result.append(route)
+    return result
+
+
+def _normalised_nftables(raw: bytes) -> dict:
+    """Compare firewall configuration, not live packet/byte counter readings.
+
+    Retain counter expressions and all other fields, including rule order,
+    handles, policies, matches, verdicts and named counter objects.
+    """
+    document = json.loads(raw)
+    if not isinstance(document, dict) or not isinstance(document.get("nftables"), list):
+        raise ProbeError("the host nftables snapshot has an invalid JSON structure")
+
+    def normalise(value):
+        if isinstance(value, list):
+            return [normalise(item) for item in value]
+        if isinstance(value, dict):
+            result = {}
+            for key, child in value.items():
+                if key == "counter" and isinstance(child, dict) and {"packets", "bytes"} <= child.keys():
+                    result[key] = {
+                        field: (0 if field in {"packets", "bytes"} else normalise(content))
+                        for field, content in child.items()
+                    }
+                else:
+                    result[key] = normalise(child)
+            return result
+        return value
+
+    return normalise(document)
+
+
+def _assert_no_host_drift(before_name: str, after_name: str, before: dict, after: dict, allowed: dict) -> None:
     for label in before:
-        if label in after and before[label] != after[label]:
-            raise ProbeError(f"the host's {label} changed from {before_name} to {after_name}; inspect manually")
+        if label not in after:
+            raise ProbeError(f"the host snapshot is missing {label} at {after_name}")
+        old, new = before[label], after[label]
+        if label == "ipv4_routes":
+            old = _normalised_routes(old, allowed)
+            new = _normalised_routes(new, allowed)
+        elif label == "nftables":
+            old = _normalised_nftables(old)
+            new = _normalised_nftables(new)
+        if old != new:
+            raise ProbeError(
+                f"the host's {label} changed from {before_name} to {after_name}; inspect retained snapshots"
+            )
 
 
 def interrupted_evidence(root: Path) -> list[str]:
@@ -74,6 +166,29 @@ def interrupted_evidence(root: Path) -> list[str]:
     if any(state not in {"active", "retired"} for state in states.values()):
         findings.append("interrupted lifecycle states present")
     return findings
+
+
+def _active_namespaces_by_profile(journal_path: Path) -> dict[str, str]:
+    """Return only this matrix's currently active namespace allocations."""
+    journal = json.loads(journal_path.read_text(encoding="utf-8"))
+    states = {event["allocation_id"]: event["state"] for event in journal["events"]}
+    active = {}
+    for resource in journal["allocations"]["resources"]:
+        if resource["kind"] != "namespace" or states.get(resource["allocation_id"]) != "active":
+            continue
+        profile = resource["profile"]
+        if profile in active:
+            raise ProbeError(f"profile {profile} has multiple active namespace allocations")
+        active[profile] = resource["identifier"]
+    return active
+
+
+def _retain_startup_profiles(config_path: Path, profiles: set[str]) -> None:
+    """Keep the startup provider data aligned with the reduced saved policy."""
+    config = json.loads(config_path.read_text(encoding="utf-8"))
+    config["tunnels"] = {name: plan for name, plan in config["tunnels"].items() if name in profiles}
+    config["credentials"] = {name: path for name, path in config["credentials"].items() if name in profiles}
+    config_path.write_text(json.dumps(config), encoding="utf-8")
 
 
 class Matrix:
@@ -92,24 +207,28 @@ class Matrix:
         self.intents = temporary / "operation-intents.json"
         self.run_record = temporary / "startup-runs.json"
         self.previous_snapshot = _observe()
+        self.previous_underlay_routes = {}
         self.report: dict[str, dict] = {}
 
-    def write_policy(self, profiles: dict[str, dict], applications: dict = None) -> None:
+    def write_policy(self, profiles: dict[str, dict], applications: dict = None, *, default: str = "primary") -> None:
         if applications is None:
             applications = {}
         self.policy.write_text(
             json.dumps(
-                {"version": 1, "defaults": {"vpn": "primary"}, "vpn_profiles": profiles, "applications": applications}
+                {"version": 1, "defaults": {"vpn": default}, "vpn_profiles": profiles, "applications": applications}
             ),
             encoding="utf-8",
         )
 
     def call(self, *args: str) -> dict:
         buffer = io.StringIO()
-        with contextlib.redirect_stdout(buffer):
+        error = io.StringIO()
+        with contextlib.redirect_stdout(buffer), contextlib.redirect_stderr(error):
             code = nordvpn_manage.main([*args])
         if code != 0:
-            raise ProbeError(f"the {' '.join(args)} invocation reported failure")
+            detail = error.getvalue().strip()
+            suffix = f": {detail[:500]}" if detail else ""
+            raise ProbeError(f"the {' '.join(args)} invocation reported failure{suffix}")
         return json.loads(buffer.getvalue())
 
     def cleanup_args(self, execute: bool = False) -> list[str]:
@@ -139,24 +258,42 @@ class Matrix:
     def reconcile(self) -> dict:
         return self.call("reconcile-live", "--journal", str(self.journal), "--bindings", str(self.bindings))
 
-    def restore_child(self, pause: float) -> None:
-        child = subprocess.Popen(
-            [
-                sys.executable,
-                "nordvpn_manage.py",
-                "restore-startup",
-                "--config",
-                str(self.temporary / "startup.json"),
-            ],
-            cwd=str(Path(__file__).resolve().parent.parent),
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-        time.sleep(pause)
-        if child.poll() is None:
-            os.killpg(child.pid, signal.SIGKILL)
-        child.wait(timeout=30)
+    def interrupt_at_durable_intent(self) -> None:
+        """Kill a child only after a durable pending intent, before kernel creation."""
+        read_fd, write_fd = os.pipe()
+        child = None
+        try:
+            child = subprocess.Popen(
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve().parent / "probe_recovery.py"),
+                    "--checkpoint-child",
+                    str(self.temporary / "startup.json"),
+                    str(write_fd),
+                ],
+                cwd=str(Path(__file__).resolve().parent.parent),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
+                start_new_session=True,
+            )
+            os.close(write_fd)
+            write_fd = -1
+            ready, _, _ = select.select([read_fd], [], [], 30)
+            if not ready or os.read(read_fd, 1) != b"R":
+                raise ProbeError("restore child did not reach the durable creation-intent checkpoint")
+            if not interrupted_evidence(self.temporary):
+                raise ProbeError("checkpoint was reached without durable interrupted evidence")
+        finally:
+            os.close(read_fd)
+            if write_fd >= 0:
+                os.close(write_fd)
+            if child is not None:
+                if child.poll() is None:
+                    os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=30)
+        if not interrupted_evidence(self.temporary):
+            raise ProbeError("the terminated child left no pending intent")
 
     def restore(self) -> dict:
         buffer = io.StringIO()
@@ -198,35 +335,43 @@ def stage_persistence(matrix: Matrix) -> None:
 
 
 def stage_recovery(matrix: Matrix) -> None:
-    """A real process death mid-restore converges through recovery."""
-    uncertain = False
-    for attempt in range(10):
-        delay = random.uniform(0.05 * attempt, 0.1 * attempt + 0.02)
-        matrix.restore_child(delay)
-        findings = interrupted_evidence(matrix.temporary)
-        print(f"  crash attempt {attempt + 1}: pause {delay:.2f}s -> {findings or 'settled'}", flush=True)
-        if findings:
-            uncertain = True
-            break
-    if not uncertain:
-        raise ProbeError("no interrupted evidence was produced; cannot drive the recovery stage")
+    """Create a real missing generation, then interrupt its recreation at a durable boundary."""
+    # A repeat restore of two already-active profiles is a no-op. Earlier
+    # random-delay SIGKILL attempts could never guarantee an in-flight write.
+    # Retire only the other profile through the ordinary verified cleanup,
+    # preserving the primary profile and its application bindings.
+    policy = json.loads(matrix.policy.read_text(encoding="utf-8"))
+    reduced = {**policy, "vpn_profiles": {"primary": policy["vpn_profiles"]["primary"]}}
+    matrix.policy.write_text(json.dumps(reduced), encoding="utf-8")
+    matrix.call(*matrix.cleanup_args(execute=True))
+    remaining = matrix.reconcile()
+    if not remaining["reconciled"]:
+        raise ProbeError("the primary profile did not survive recovery fixture retirement")
+    matrix.policy.write_text(json.dumps(policy), encoding="utf-8")
+
+    matrix.interrupt_at_durable_intent()
+    print("  PASS: durable pending creation intent observed before SIGKILL", flush=True)
     recovered = False
+    failures = []
     for _ in range(4):
         try:
             matrix.restore()
             recovered = True
             break
-        except ProbeError:
+        except ProbeError as exc:
+            failures.append(str(exc))
             try:
                 matrix.call(*matrix.recovery_args(execute=True))
-            except ProbeError:
+            except ProbeError as exc:
+                failures.append(str(exc))
                 break
     if not recovered:
-        raise ProbeError("the recovery stage did not converge the interrupted stores")
+        detail = "; ".join(failures[-2:])
+        raise ProbeError(f"the recovery stage did not converge the interrupted stores: {detail}")
     report = matrix.reconcile()
     if not report["reconciled"]:
         raise ProbeError("recovery did not reach the pinned desired state")
-    print("PASS B: the crashed generation converged back to both pinned profiles", flush=True)
+    print("PASS B: deterministic interrupted generation recovered; both profiles converge", flush=True)
 
 
 def stage_cleanup(matrix: Matrix) -> None:
@@ -242,6 +387,9 @@ def stage_cleanup(matrix: Matrix) -> None:
     reconciled = matrix.reconcile()
     if not reconciled["reconciled"]:
         raise ProbeError("removing one application reference disturbed reconciliation")
+    active_before = _active_namespaces_by_profile(matrix.journal)
+    if set(active_before) != {"primary", "other"}:
+        raise ProbeError(f"cleanup fixture does not have exactly both active profiles: {sorted(active_before)}")
     # The other profile leaves the retained scope; cleanup retires it only.
     matrix.write_policy(
         {
@@ -250,12 +398,16 @@ def stage_cleanup(matrix: Matrix) -> None:
         {"app-b": {"executable": "/usr/bin/app-b", "vpn": "primary"}},
     )
     matrix.call(*matrix.cleanup_args(execute=True))
+    _retain_startup_profiles(matrix.temporary / "startup.json", {"primary"})
     listing = subprocess.run(["ip", "-j", "netns", "list"], capture_output=True, check=False, timeout=15)
     if listing.returncode:
         raise ProbeError("the namespace listing could not complete")
-    survived = [namespace.get("name") for namespace in json.loads(listing.stdout.decode("utf-8"))]
-    if len(survived) != 1:
-        raise ProbeError(f"exactly the shared profile's namespace should remain: {survived}")
+    survived = {namespace.get("name") for namespace in json.loads(listing.stdout.decode("utf-8"))}
+    if active_before["primary"] not in survived or active_before["other"] in survived:
+        raise ProbeError(
+            "cleanup did not preserve this run's shared namespace and retire its other namespace: "
+            f"primary={active_before['primary']!r}, other={active_before['other']!r}, observed={sorted(survived)}"
+        )
     final = matrix.reconcile()
     if not final["reconciled"]:
         raise ProbeError("the shared profile no longer converges after the authorised cleanup")
@@ -278,6 +430,27 @@ def stage_convergence(matrix: Matrix) -> None:
     if restored["network_changes_applied"]:
         raise ProbeError("a converged repeat restoration mutated the kernel again")
     print("PASS D: repeat operations converge without further kernel changes", flush=True)
+
+
+def stage_final_teardown(matrix: Matrix) -> None:
+    """Retire the surviving fixture before its ownership evidence is removed."""
+    active_before = _active_namespaces_by_profile(matrix.journal)
+    if set(active_before) != {"primary"}:
+        raise ProbeError(f"final teardown expected only the primary fixture: {sorted(active_before)}")
+    matrix.write_policy(
+        {"teardown": {"selection": {"mode": "pinned", "server": "uk715"}, "sharing": "shared"}},
+        default="teardown",
+    )
+    matrix.call(*matrix.cleanup_args(execute=True))
+    listing = subprocess.run(["ip", "-j", "netns", "list"], capture_output=True, check=False, timeout=15)
+    if listing.returncode:
+        raise ProbeError("the final namespace listing could not complete")
+    remaining = {namespace.get("name") for namespace in json.loads(listing.stdout.decode("utf-8"))}
+    if active_before["primary"] in remaining:
+        raise ProbeError(f"the final fixture namespace remains: {active_before['primary']}")
+    if _active_namespaces_by_profile(matrix.journal):
+        raise ProbeError("the final teardown left an active fixture allocation")
+    print("PASS E: final verified teardown retired the surviving fixture", flush=True)
 
 
 def run_matrix() -> dict:
@@ -312,7 +485,9 @@ def run_matrix() -> dict:
         stage_cleanup(matrix)
         _snapshot_gate(matrix, "cleanup", "convergence")
         stage_convergence(matrix)
-        print("PASS E: the host routes, nftables rules and resolver contents never moved", flush=True)
+        stage_final_teardown(matrix)
+        _snapshot_gate(matrix, "convergence", "final-cleanup")
+        print("PASS F: the host routes, nftables rules and resolver contents never moved", flush=True)
         unresolved = [
             "provider credentials acquisition and fastest/country selection at boot remain operator-pinned plans",
             "the default profile's host-domain protective routing and the kill switch are not implemented",
@@ -321,7 +496,7 @@ def run_matrix() -> dict:
             "adversarial ownership testing of the stores under racing privileged actors is outstanding",
             "per-application launch execution and desktop integration remain disabled",
         ]
-        print("--- outstanding before Part 8 ---", flush=True)
+        print("--- remaining production work after lifecycle acceptance ---", flush=True)
         for line in unresolved:
             print(f"  {line}", flush=True)
         return {"interrupted_evidence": all_findings, "unresolved": unresolved}
@@ -385,8 +560,20 @@ def _write_startup_config(matrix: Matrix) -> None:
 
 def _snapshot_gate(matrix: Matrix, before_name: str, after_name: str) -> None:
     fresh = _observe()
-    _assert_no_host_drift(before_name, after_name, matrix.previous_snapshot, fresh)
+    current_underlay_routes = _expected_underlay_routes(matrix)
+    snapshots = matrix.temporary / "host-snapshots"
+    snapshots.mkdir(exist_ok=True)
+    for name, observation in ((before_name, matrix.previous_snapshot), (after_name, fresh)):
+        for label, value in observation.items():
+            target = snapshots / f"{name}-{label}.json" if label != "resolver" else snapshots / f"{name}-resolver.txt"
+            target.write_bytes(value if isinstance(value, bytes) else value.encode("utf-8"))
+    # A cleanup boundary legitimately removes an exact fixture route together
+    # with its identity-bound interface.  Accept routes verified in either
+    # endpoint snapshot, while continuing to compare every other host route.
+    allowed_routes = {**matrix.previous_underlay_routes, **current_underlay_routes}
+    _assert_no_host_drift(before_name, after_name, matrix.previous_snapshot, fresh, allowed_routes)
     matrix.previous_snapshot = fresh
+    matrix.previous_underlay_routes = current_underlay_routes
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -396,7 +583,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.run_privileged:
         print(
             "DRY RUN: the Part 7 acceptance matrix would restore two pinned profiles while a transient policy "
-            "deliberately differs, kill restore children mid-flight until real uncertainty is recorded, converge "
+            "deliberately differs, interrupt a missing generation at a durable creation-intent checkpoint, converge "
             "through boot and operator recovery, clean one profile while the shared one survives to exact "
             "deletions, repeat operations to prove convergence, and compare host routes, nftables rules and "
             "resolver contents across every stage. No changes made."
