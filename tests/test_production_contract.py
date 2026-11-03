@@ -154,3 +154,58 @@ def test_owner_correlation_refuses_incomplete_or_conflicting_evidence(change):
         bindings["bindings"][0]["binding"] = {"device": True, "inode": 100}
     with pytest.raises(RegistryError):
         validate_provisioning_owner_bindings(policy, tunnels, allocations, bindings)
+
+
+def test_lifecycle_inspection_refuses_mismatched_journal():
+    from nord_tools_internal.nordvpn_production_contract import inspect_provisioning_lifecycle
+
+    policy, tunnels, allocations, bindings = binding_fixture()
+    journal = {"version": 1, "allocations": {"version": 2, "resources": []}, "events": []}
+    with pytest.raises(RegistryError, match="complete provisioning allocation ledger"):
+        inspect_provisioning_lifecycle(policy, tunnels, allocations, bindings, journal, {})
+
+
+def test_lifecycle_inspection_is_not_mutation_authority():
+    from nord_tools_internal.nordvpn_production_contract import inspect_provisioning_lifecycle
+
+    policy, tunnels, allocations, bindings = binding_fixture()
+    journal = {"version": 1, "allocations": allocations, "events": []}
+    result = inspect_provisioning_lifecycle(
+        policy,
+        tunnels,
+        allocations,
+        bindings,
+        journal,
+        {
+            "mode": "live_read_only",
+            "network_changes_applied": False,
+            "namespaces": [],
+            "host_interfaces": [],
+            "namespace_details": [],
+        },
+    )
+    assert result["mutation_authorised"] is False
+    assert result["ownership_verified"] is False
+    assert result["network_changes_applied"] is False
+    assert result["operator_review_required"] is True
+    assert result["requires_reverification_at_execution"] is True
+
+
+def test_lifecycle_inspection_rejects_incomplete_bindings():
+    from nord_tools_internal.nordvpn_production_contract import inspect_provisioning_lifecycle
+
+    policy, tunnels, allocations, bindings = binding_fixture()
+    journal = {"version": 1, "allocations": allocations, "events": []}
+    bindings["bindings"].pop()
+    with pytest.raises(RegistryError):
+        inspect_provisioning_lifecycle(policy, tunnels, allocations, bindings, journal, {})
+
+
+@pytest.mark.parametrize("observation", [None, {}, {"mode": "live_read_only"}, {"mode": "offline"}])
+def test_lifecycle_inspection_rejects_invalid_discovery(observation):
+    from nord_tools_internal.nordvpn_production_contract import inspect_provisioning_lifecycle
+
+    policy, tunnels, allocations, bindings = binding_fixture()
+    journal = {"version": 1, "allocations": allocations, "events": []}
+    with pytest.raises(RegistryError):
+        inspect_provisioning_lifecycle(policy, tunnels, allocations, bindings, journal, observation)

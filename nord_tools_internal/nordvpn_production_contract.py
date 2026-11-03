@@ -89,3 +89,49 @@ def validate_provisioning_owner_bindings(
         "recorded_bindings_consistent": True,
         "recorded_binding_count": len(actual),
     }
+
+
+def inspect_provisioning_lifecycle(
+    policy: object,
+    tunnels: object,
+    allocations: object,
+    bindings: object,
+    journal: object,
+    observation: object,
+    intents: object | None = None,
+    *,
+    netns_identity: dict[str, dict] | None = None,
+) -> dict:
+    """Correlate a provisioning proposal with lifecycle and observation evidence.
+
+    This is a read-only diagnostic boundary. Observations passed by callers are
+    not an executor-held kernel snapshot, and even verified continuity cannot
+    authorise a later mutation. Executors must independently acquire lifecycle
+    authority, inspect live resources and persist operation intents.
+    """
+    from nord_tools_internal.nordvpn_lifecycle import validate_journal
+    from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
+
+    contract = validate_provisioning_owner_bindings(policy, tunnels, allocations, bindings)
+    checked_journal = validate_journal(journal)
+    expected = validate_allocations(allocations)
+    if checked_journal["allocations"] != expected:
+        raise RegistryError("lifecycle journal does not describe the complete provisioning allocation ledger")
+    result = preflight_ownership(checked_journal, bindings, observation, intents, netns_identity=netns_identity)
+    expected_tokens = {item["allocation_id"] for item in expected["resources"]}
+    observed_tokens = {item["allocation_id"] for item in result["resources"]}
+    if observed_tokens != expected_tokens or len(result["resources"]) != len(expected_tokens):
+        raise RegistryError("ownership preflight does not cover the complete provisioning ledger")
+    return {
+        **contract,
+        "mode": "read_only_provisioning_lifecycle_inspection",
+        "lifecycle_continuity_verified": result["ownership_verified"],
+        "operator_review_required": result["operator_review_required"],
+        "resources": result["resources"],
+        "unresolved_intents": result["unresolved_intents"],
+        "unclaimed": result["unclaimed"],
+        "requires_reverification_at_execution": True,
+        "ownership_verified": False,
+        "mutation_authorised": False,
+        "network_changes_applied": False,
+    }

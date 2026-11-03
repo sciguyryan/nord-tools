@@ -20,7 +20,7 @@ Offline lifecycle journalling, advisory locks, read-only identity correlation, o
 
 Part 8.1's six authority increments are accepted within the documented cooperating-process authority model. Independent privileged kernel mutators remain outside that model. Part 8.2 is divided into seven increments; none of the production provisioning work is accepted merely because the offline contract validates.
 
-- [ ] 8.2.1 Provisioning contracts and ownership: reconcile policy, public tunnel plans and candidate allocations; require privileged creation-time ownership evidence and lifecycle authority before any mutation. The read-only cross-document contract and complete owner-binding correlation are implemented; live ownership verification, executor integration and privileged authority acceptance remain outstanding.
+- [ ] 8.2.1 Provisioning contracts and ownership: reconcile policy, public tunnel plans and candidate allocations; require privileged creation-time ownership evidence and lifecycle authority before any mutation. The read-only cross-document contract, complete owner-binding correlation and lifecycle/observation diagnostic integration are implemented; executor-held live ownership verification, privileged mutation authority integration and privileged acceptance remain outstanding.
 - [ ] 8.2.2 Real WireGuard interface provisioning, configuration and verified retirement.
 - [ ] 8.2.3 Multiple named profile lifecycle management and deterministic resolution.
 - [ ] 8.2.4 Shared and isolated tunnel ownership foundations, without application launching.
