@@ -55,13 +55,10 @@ def validate_provisioning_contract(policy: object, tunnels: object, allocations:
         "ownership_verified": False,
         "mutation_authorised": False,
         "default_profile": checked["defaults"]["vpn"],
-        "profiles": {
-            name: {
-                "sharing": checked["vpn_profiles"][name]["sharing"],
-                "tunnel": validated_tunnels[name],
-            }
-            for name in sorted(validated_tunnels)
-        },
+        "profiles": {name: {
+            "sharing": checked["vpn_profiles"][name]["sharing"],
+            "tunnel": validated_tunnels[name],
+        } for name in sorted(validated_tunnels)},
     }
 
 
@@ -79,8 +76,14 @@ def validate_provisioning_owner_bindings(
     contract = validate_provisioning_contract(policy, tunnels, allocations)
     ledger = validate_allocations(allocations)
     recorded = validate_bindings(bindings)
-    expected = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in ledger["resources"]}
-    actual = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in recorded["bindings"]}
+    expected = {
+        item["allocation_id"]: (item["kind"], item["identifier"])
+        for item in ledger["resources"]
+    }
+    actual = {
+        item["allocation_id"]: (item["kind"], item["identifier"])
+        for item in recorded["bindings"]
+    }
     if actual != expected:
         raise RegistryError("creation-time owner bindings do not match the complete provisioning allocation ledger")
     return {
@@ -117,7 +120,9 @@ def inspect_provisioning_lifecycle(
     expected = validate_allocations(allocations)
     if checked_journal["allocations"] != expected:
         raise RegistryError("lifecycle journal does not describe the complete provisioning allocation ledger")
-    result = preflight_ownership(checked_journal, bindings, observation, intents, netns_identity=netns_identity)
+    result = preflight_ownership(
+        checked_journal, bindings, observation, intents, netns_identity=netns_identity
+    )
     expected_tokens = {item["allocation_id"] for item in expected["resources"]}
     observed_tokens = {item["allocation_id"] for item in result["resources"]}
     if observed_tokens != expected_tokens or len(result["resources"]) != len(expected_tokens):

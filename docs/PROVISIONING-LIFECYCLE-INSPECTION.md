@@ -5,3 +5,5 @@
 The result is diagnostic. The `lifecycle_continuity_verified` field reports the ownership preflight classification of supplied evidence; it is not a capability or authorisation token. The returned `ownership_verified`, `mutation_authorised` and `network_changes_applied` fields remain false. The inspection does not hold an executor lock, obtain fresh kernel descriptors or write durable mutation intents.
 
 Privileged provisioning must independently establish the accepted 8.1 lifecycle authority boundary at the point of mutation. In particular, previously collected discovery snapshots and recorded creation identities must not be reused as permission to create, modify or remove an interface. Integration of that privileged execution path and its Linux acceptance tests remains outstanding within 8.2.1.
+
+Read-only discovery refuses absent, non-positive, boolean or non-integer interface indices and duplicate indices within an observation scope. This guards against incomplete or contradictory diagnostic evidence; it does not establish live kernel ownership or production mutation authority.

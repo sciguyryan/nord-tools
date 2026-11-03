@@ -43,10 +43,7 @@ def test_namespace_replacement_before_retirement_refuses_and_closes_descriptor()
         patch("nord_tools_internal.nordvpn_cleanup_executor.os.open", return_value=73),
         patch("nord_tools_internal.nordvpn_cleanup_executor.os.close") as close,
         patch("nord_tools_internal.nordvpn_namespace_ownership.require_trusted_netns_directory"),
-        patch(
-            "nord_tools_internal.nordvpn_namespace_ownership.OwnedNamespace.verify",
-            side_effect=[None, OwnershipError("replaced")],
-        ),
+        patch("nord_tools_internal.nordvpn_namespace_ownership.OwnedNamespace.verify", side_effect=[None, OwnershipError("replaced")]),
         patch("nord_tools_internal.nordvpn_namespace_ownership._command") as command,
         pytest.raises(ProvisioningUncertainError, match="recorded owner binding"),
     ):

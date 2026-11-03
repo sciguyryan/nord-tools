@@ -92,8 +92,9 @@ def _real_kernel() -> CleanupKernel:
         # OwnedNamespace.verify also checks this, but only after the open.
         if not isinstance(name, str) or re.fullmatch(r"nt-[a-z0-9]{8,24}", name) is None:
             raise ProvisioningUncertainError("recorded namespace name is invalid")
-        if not isinstance(binding, dict) or any(
-            type(binding.get(field)) is not int or binding[field] < 0 for field in ("device", "inode")
+        if (
+            not isinstance(binding, dict)
+            or any(type(binding.get(field)) is not int or binding[field] < 0 for field in ("device", "inode"))
         ):
             raise ProvisioningUncertainError("recorded namespace binding is invalid")
         try:
