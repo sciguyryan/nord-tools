@@ -43,8 +43,17 @@ def delete_link_by_index(ifindex: int) -> None:
             channel.bind((0, 0))
             channel.send(request)
             while True:
-                response, sender = channel.recvfrom(65536)
-                if sender[0] != 0:
+                # recvmsg exposes MSG_TRUNC; recvfrom may silently truncate a
+                # datagram and conceal malformed messages after a valid ACK.
+                if hasattr(channel, "recvmsg"):
+                    response, _, message_flags, sender = channel.recvmsg(65536)
+                    if message_flags & socket.MSG_TRUNC:
+                        raise LinkMutationError("truncated rtnetlink deletion response")
+                else:
+                    # Compatibility with test doubles lacking recvmsg. Production
+                    # Linux sockets always expose recvmsg.
+                    response, sender = channel.recvfrom(65536)
+                if len(sender) != 2 or sender[0] != 0 or sender[1] != 0:
                     raise LinkMutationError("link deletion response was not sent by the kernel")
                 offset = 0
                 acknowledged = False

@@ -93,3 +93,28 @@ def test_matching_ack_cannot_hide_trailing_invalid_header():
         pytest.raises(LinkMutationError, match="malformed"),
     ):
         delete_link_by_index(42)
+
+
+def test_truncated_kernel_ack_is_never_accepted():
+    """A matching ACK in a truncated datagram cannot authorise success."""
+    import socket
+
+    class TruncatedChannel(Channel):
+        def recvmsg(self, size):
+            response, sender = self.recvfrom(size)
+            return response, [], socket.MSG_TRUNC, sender
+
+    with (
+        patch("socket.socket", return_value=TruncatedChannel()),
+        pytest.raises(LinkMutationError, match="truncated"),
+    ):
+        delete_link_by_index(42)
+
+
+def test_multicast_sender_cannot_authorise_deletion():
+    """A kernel-originated multicast datagram is not a unicast ACK."""
+    with (
+        patch("socket.socket", return_value=Channel(sender=(0, 1))),
+        pytest.raises(LinkMutationError, match="kernel"),
+    ):
+        delete_link_by_index(42)
