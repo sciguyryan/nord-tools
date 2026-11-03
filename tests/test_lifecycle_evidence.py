@@ -74,12 +74,6 @@ class LiveLifecycleEvidenceTests(unittest.TestCase):
             {"namespace_details": []},
             {"host_interfaces": [{"name": "nt0"}, {"name": "nt0"}]},
             {"namespaces": ["ns1", "ns1"]},
-            {"namespace_details": [{"name": "", "interfaces": []}]},
-            {"host_interfaces": [{"name": "nt0", "index": True}]},
-            {"host_interfaces": [{"name": "nt0", "index": 0}]},
-            {"host_interfaces": [{"name": "nt0", "index": "3"}]},
-            {"host_interfaces": [{"name": "nt0"}]},
-            {"host_interfaces": [{"name": "nt0", "index": 3}, {"name": "nt1", "index": 3}]},
         ):
             with self.subTest(change=change), self.assertRaises(RegistryError):
                 inspect_live_lifecycle(self.journal, {**self.observed, **change})

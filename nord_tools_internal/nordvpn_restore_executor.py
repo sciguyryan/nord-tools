@@ -53,6 +53,7 @@ from nord_tools_internal.nordvpn_provision_execution import (
     execute_recorded_creation,
 )
 from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
+from nord_tools_internal.nordvpn_production_contract import validate_executor_creation_contract
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
@@ -417,6 +418,23 @@ def _restore_profile(
     ]
     ns_token, wg_token, ul_ns_token, ul_host_token = (resource["allocation_id"] for resource in resources)
     tokens = [ns_token, wg_token, ul_ns_token, ul_host_token]
+    validate_executor_creation_contract(
+        profile,
+        specification,
+        resources,
+        underlay_ns,
+        underlay_host,
+        namespace_journal["allocations"],
+    )
+    # The initial observation selected names, but must not be treated as
+    # authority to create them later. Refuse names newly occupied in the kernel.
+    fresh = helpers.observe()
+    occupied = set(fresh.get("namespaces", []))
+    occupied.update(link["name"] for link in fresh.get("host_interfaces", []))
+    for details in fresh.get("namespace_details", []):
+        occupied.update(link["name"] for link in details.get("interfaces", []))
+    if occupied.intersection((namespace, interface, underlay_ns, underlay_host)):
+        raise ProvisioningUncertainError("a proposed production resource name became occupied before creation")
     journal = _append_allocations(journal_path, resources)
     for token in tokens:
         journal = _advance(journal_path, token, "reserved")

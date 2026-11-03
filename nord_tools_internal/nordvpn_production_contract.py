@@ -55,10 +55,13 @@ def validate_provisioning_contract(policy: object, tunnels: object, allocations:
         "ownership_verified": False,
         "mutation_authorised": False,
         "default_profile": checked["defaults"]["vpn"],
-        "profiles": {name: {
-            "sharing": checked["vpn_profiles"][name]["sharing"],
-            "tunnel": validated_tunnels[name],
-        } for name in sorted(validated_tunnels)},
+        "profiles": {
+            name: {
+                "sharing": checked["vpn_profiles"][name]["sharing"],
+                "tunnel": validated_tunnels[name],
+            }
+            for name in sorted(validated_tunnels)
+        },
     }
 
 
@@ -76,14 +79,8 @@ def validate_provisioning_owner_bindings(
     contract = validate_provisioning_contract(policy, tunnels, allocations)
     ledger = validate_allocations(allocations)
     recorded = validate_bindings(bindings)
-    expected = {
-        item["allocation_id"]: (item["kind"], item["identifier"])
-        for item in ledger["resources"]
-    }
-    actual = {
-        item["allocation_id"]: (item["kind"], item["identifier"])
-        for item in recorded["bindings"]
-    }
+    expected = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in ledger["resources"]}
+    actual = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in recorded["bindings"]}
     if actual != expected:
         raise RegistryError("creation-time owner bindings do not match the complete provisioning allocation ledger")
     return {
@@ -120,9 +117,7 @@ def inspect_provisioning_lifecycle(
     expected = validate_allocations(allocations)
     if checked_journal["allocations"] != expected:
         raise RegistryError("lifecycle journal does not describe the complete provisioning allocation ledger")
-    result = preflight_ownership(
-        checked_journal, bindings, observation, intents, netns_identity=netns_identity
-    )
+    result = preflight_ownership(checked_journal, bindings, observation, intents, netns_identity=netns_identity)
     expected_tokens = {item["allocation_id"] for item in expected["resources"]}
     observed_tokens = {item["allocation_id"] for item in result["resources"]}
     if observed_tokens != expected_tokens or len(result["resources"]) != len(expected_tokens):
@@ -140,3 +135,43 @@ def inspect_provisioning_lifecycle(
         "mutation_authorised": False,
         "network_changes_applied": False,
     }
+
+
+def validate_executor_creation_contract(
+    profile: str,
+    specification: TunnelSpecification,
+    resources: object,
+    underlay_namespace: str,
+    underlay_host: str,
+    existing_allocations: object,
+) -> dict:
+    """Validate the complete four-resource creation batch before journal mutation.
+
+    Creation-time owner bindings cannot exist yet. They are recorded separately
+    by the privileged executor while it holds live resource authority.
+    """
+    if not isinstance(profile, str) or not profile or not isinstance(specification, TunnelSpecification):
+        raise RegistryError("invalid production creation profile or WireGuard specification")
+    ledger = validate_allocations({"version": 2, "resources": resources})
+    existing = validate_allocations(existing_allocations)
+    expected = [
+        ("namespace", specification.namespace),
+        ("interface", specification.interface),
+        ("interface", underlay_namespace),
+        ("interface", underlay_host),
+    ]
+    if len(ledger["resources"]) != len(expected):
+        raise RegistryError("production creation requires exactly four allocated resources")
+    for resource, (kind, identifier) in zip(ledger["resources"], expected, strict=True):
+        if (resource["kind"], resource["identifier"]) != (kind, identifier) or resource["profile"] != profile:
+            raise RegistryError("production creation resource identity does not match the tunnel plan")
+    names = [resource["identifier"] for resource in ledger["resources"]]
+    if len(set(names)) != len(names):
+        raise RegistryError("production creation resource names must be distinct")
+    old_tokens = {resource["allocation_id"] for resource in existing["resources"]}
+    old_names = {resource["identifier"] for resource in existing["resources"]}
+    if any(resource["allocation_id"] in old_tokens for resource in ledger["resources"]) or old_names.intersection(
+        names
+    ):
+        raise RegistryError("production creation conflicts with recorded resource identities")
+    return ledger

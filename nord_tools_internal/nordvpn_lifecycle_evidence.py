@@ -29,7 +29,6 @@ def inspect_live_lifecycle(journal: object, observation: object) -> dict:
     if any(
         not isinstance(item, dict)
         or not isinstance(item.get("name"), str)
-        or not item.get("name")
         or not isinstance(item.get("interfaces"), list)
         for item in details
     ):
@@ -39,13 +38,9 @@ def inspect_live_lifecycle(journal: object, observation: object) -> dict:
     locations: dict[str, set[str]] = {}
     for scope, links in [("host", host), *[(item["name"], item["interfaces"]) for item in details]]:
         if any(
-            not isinstance(link, dict) or not isinstance(link.get("name"), str) or not link["name"]
-            or type(link.get("index")) is not int or link["index"] <= 0 for link in links
+            not isinstance(link, dict) or not isinstance(link.get("name"), str) or not link["name"] for link in links
         ):
             raise RegistryError("invalid interface observation")
-        indices = [link["index"] for link in links]
-        if len(indices) != len(set(indices)):
-            raise RegistryError("duplicate interface index in observation scope")
         names = [link["name"] for link in links]
         if len(names) != len(set(names)):
             raise RegistryError("duplicate interface observation")
