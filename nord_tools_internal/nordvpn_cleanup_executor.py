@@ -494,9 +494,7 @@ def _execute_removals(
                 {token: begin_retire(token) for token in [*namespace_tokens, *nested_tokens, *host_tokens]}
             )
             for token in namespace_tokens:
-                _delete_namespace(
-                    token, tokens[token], bindings_by_token[token]["binding"], helpers, resolvers, deletions
-                )
+                _delete_namespace(token, tokens[token], bindings_by_token[token]["binding"], helpers, resolvers)
             deleted_namespaces = [tokens[token]["identifier"] for token in namespace_tokens]
 
             fresh = helpers.observe()
@@ -513,7 +511,7 @@ def _execute_removals(
                         f"the namespace-local interface {tokens[token]['identifier']} is still observable"
                     )
             for token in host_tokens:
-                _delete_host_interface(token, tokens[token], bindings_by_token[token]["binding"], helpers, deletions)
+                _delete_host_interface(token, tokens[token], bindings_by_token[token]["binding"], helpers)
             for token in [*namespace_tokens, *nested_tokens, *host_tokens]:
                 record_absent(token)
         return deletions
@@ -539,21 +537,12 @@ def _delete_namespace(
     binding: dict,
     helpers: CleanupKernel,
     resolvers: bool,
-    deletions: list[dict],
+    deletions: list[dict] | None = None,
 ) -> None:
     name = resource["identifier"]
     live = helpers.netns_identity(name)
     if live is None:
-        # Already absent at the moment of action: record-only retirement.
-        deletions.append(
-            {
-                "allocation_id": token,
-                "profile": resource["profile"],
-                "kind": "namespace",
-                "identifier": name,
-                "confirmed_absent": True,
-            }
-        )
+        # The final record_absent() accounts for this allocation once.
         return
     if live != binding:
         raise ProvisioningUncertainError(f"namespace {name} no longer matches its recorded owner identity")
@@ -571,21 +560,13 @@ def _delete_host_interface(
     resource: dict,
     binding: dict,
     helpers: CleanupKernel,
-    deletions: list[dict],
+    deletions: list[dict] | None = None,
 ) -> None:
     """Delete a host-scope interface only at its freshly re-observed index."""
     name = resource["identifier"]
     index = _observed_links(helpers.observe()).get(("host", name))
     if index is None:
-        deletions.append(
-            {
-                "allocation_id": token,
-                "profile": resource["profile"],
-                "kind": "interface",
-                "identifier": name,
-                "confirmed_absent": True,
-            }
-        )
+        # Namespace retirement may already have removed the veth peer.
         return
     if index != binding["ifindex"]:
         raise ProvisioningUncertainError(f"host interface {name} no longer matches its recorded interface index")

@@ -472,3 +472,87 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PristineGenerationRecoveryTests(RecoveryTestBase):
+    def test_pending_namespace_before_kernel_mutation_retires_staged_dependants(self):
+        journal, bindings, tokens = ecosystem(
+            "alpha", "nt-alpha00000", "ntwgalpha000", "ntlualpha000", "nthlalpha000", states="creating"
+        )
+        bindings["bindings"] = []
+        fixture = self.make_fixture(
+            journal,
+            bindings,
+            namespace_name="nt-alpha00000",
+            wg_name="ntwgalpha000",
+            ul_name="ntlualpha000",
+            host_name="nthlalpha000",
+        )
+        self.harness.namespaces.clear()
+        self.harness.host_links.clear()
+        self.pending_create_intent(fixture, tokens["nt-alpha00000"])
+        result = self.recover(fixture, boot=True, execute=True)
+        self.assertFalse(result["operator_review_required"])
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
+        self.assertEqual(self.intent_outcomes(fixture), ["failed"])
+        self.assertEqual(self.harness.deleted, [])
+        self.assertEqual(self.recover(fixture, boot=True, execute=True)["actions"], [])
+
+    def test_unbound_host_lookalike_blocks_pristine_generation_retirement(self):
+        journal, bindings, tokens = ecosystem(
+            "alpha", "nt-alpha00000", "ntwgalpha000", "ntlualpha000", "nthlalpha000", states="creating"
+        )
+        bindings["bindings"] = []
+        fixture = self.make_fixture(
+            journal,
+            bindings,
+            namespace_name="nt-alpha00000",
+            wg_name="ntwgalpha000",
+            ul_name="ntlualpha000",
+            host_name="nthlalpha000",
+        )
+        self.harness.namespaces.clear()
+        self.harness.host_links["nthlalpha000"] = 99
+        self.pending_create_intent(fixture, tokens["nt-alpha00000"])
+        with self.assertRaises(ProvisioningUncertainError):
+            self.recover(fixture, boot=True, execute=True)
+        self.assertIn("creating", self.journal_states(fixture).values())
+        self.assertEqual(self.harness.deleted, [])
+
+class UnboundStagedGenerationTests(RecoveryTestBase):
+    """The pre-kernel checkpoint leaves a staged generation without bindings."""
+
+    def staged(self):
+        journal, _, tokens = ecosystem(
+            "alpha", "nt-alpha00000", "ntwgalpha000", "ntlualpha000", "nthlalpha000", states="creating"
+        )
+        fixture = self.make_fixture(
+            journal,
+            {"version": 1, "bindings": []},
+            namespace_name="nt-alpha00000",
+            wg_name="ntwgalpha000",
+            ul_name="ntlualpha000",
+            host_name="nthlalpha000",
+        )
+        self.harness.namespaces.clear()
+        self.harness.host_links.clear()
+        self.pending_create_intent(fixture, tokens["nt-alpha00000"])
+        return fixture
+
+    def test_absent_staged_dependants_converge_without_kernel_mutation(self):
+        fixture = self.staged()
+        report = self.recover(fixture, boot=True, execute=True)
+        self.assertFalse(report["operator_review_required"])
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
+        self.assertEqual(self.intent_outcomes(fixture), ["failed"])
+        self.assertEqual(self.harness.deleted, [])
+        repeated = self.recover(fixture, boot=True, execute=True)
+        self.assertEqual(repeated["actions"], [])
+
+    def test_unbound_live_host_name_blocks_dependent_retirement(self):
+        fixture = self.staged()
+        self.harness.host_links["nthlalpha000"] = 91
+        report = self.recover(fixture, boot=True)
+        self.assertTrue(report["operator_review_required"])
+        self.assertEqual(self.journal_states(fixture)[fixture["tokens"]["nthlalpha000"]], "creating")
+        self.assertEqual(self.harness.deleted, [])

@@ -3,8 +3,8 @@
 
 The dry run describes the cycle without touching any store. The privileged run
 restores one pinned profile in a child process on a disposable-capable Linux
-test system, separately repeats the process with escalating kill delays until a
-genuinely uncertain mid-state is recorded, then converges the ecosystem through
+test system, kills the child at a deterministic durable-intent checkpoint before any
+kernel creation, then converges the ecosystem through
 the boot recovery path and explicit operator recovery before the confirmed
 cleanup retires everything. Verify with sudo ip netns list afterwards.
 """
@@ -16,13 +16,12 @@ import contextlib
 import io
 import json
 import os
-import random
 import shutil
 import signal
+import select
 import subprocess
 import sys
 import tempfile
-import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -143,32 +142,40 @@ def run_probe() -> str:
             encoding="utf-8",
         )
 
-        killed = 0
-        for attempt in range(10):
-            delay = random.uniform(0.05 * attempt, 0.1 * attempt + 0.02)
+        # The child pauses at the exact operation callback boundary. The
+        # production adapter has already fsynced its pending intent, but no
+        # kernel resource creation callback has been entered. This checkpoint
+        # exists only in the probe child; production modules are unchanged.
+        read_fd, write_fd = os.pipe()
+        try:
             child = subprocess.Popen(
-                [sys.executable, "nordvpn_manage.py", "restore-startup", "--config", str(startup)],
+                [sys.executable, str(Path(__file__).resolve()), "--checkpoint-child", str(startup), str(write_fd)],
                 cwd=str(Path(__file__).resolve().parent.parent),
                 stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+                pass_fds=(write_fd,),
                 start_new_session=True,
             )
-            time.sleep(delay)
-            if child.poll() is None:
-                os.killpg(child.pid, signal.SIGKILL)
-                killed += 1
-            child.wait(timeout=30)
+            os.close(write_fd)
+            write_fd = -1
+            ready, _, _ = select.select([read_fd], [], [], 30)
+            if not ready or os.read(read_fd, 1) != b"R":
+                raise ProbeError("checkpoint child did not reach the durable intent boundary")
             findings = interrupted_evidence(temporary)
-            print(f"  attempt {attempt + 1}: pause {delay:.2f}s -> {findings or 'settled'}", flush=True)
-            all_findings.extend(findings)
-            if uncertain_stores(temporary):
-                break
-        if not uncertain_stores(temporary):
-            raise ProbeError("no interrupted consumption was produced; unable to drive the recovery test")
-        print(
-            f"PASS: {killed} processes were killed mid-flight and the stores carry real interrupted evidence",
-            flush=True,
-        )
+            if not findings:
+                raise ProbeError("checkpoint fired without a durable pending intent")
+            print("PASS: checkpoint reached after durable intent, before kernel creation", flush=True)
+        finally:
+            os.close(read_fd)
+            if write_fd >= 0:
+                os.close(write_fd)
+            if "child" in locals() and child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait(timeout=30)
+        all_findings.extend(interrupted_evidence(temporary))
+        if not all_findings:
+            raise ProbeError("interrupted child did not retain durable uncertainty")
+        print("PASS: SIGKILL retained a real pending operation for recovery", flush=True)
 
         # Boot recovery first: the boot wall refuses uncertain evidence, but the
         # operator's explicit recovery resolves exactly what is certified.
@@ -227,21 +234,46 @@ def run_probe() -> str:
         if remaining.returncode or remaining.stdout.strip():
             raise ProbeError(f"unexpected namespaces remain: {remaining.stdout!r}")
         print("PASS: the confirmed cleanup retired the restored generation; the host shows none left", flush=True)
-        return ",".join(all_findings)
+        result = ",".join(all_findings)
     except BaseException:
         print(f"Retained recovery evidence for review: {temporary}", file=sys.stderr)
         raise
-    else:
-        shutil.rmtree(temporary, ignore_errors=True)
+    shutil.rmtree(temporary)
+    return result
+
+
+def checkpoint_child(startup: str, ready_fd: int) -> int:
+    """Probe-only wrapper: stop after intent persistence, before kernel mutation."""
+    from nord_tools_internal import nordvpn_restore_executor as restore
+
+    original = restore.execute_recorded_creation
+
+    def intercepted(store_path, journal, allocation_id, operation, verify):
+        def paused_operation():
+            os.write(ready_fd, b"R")
+            # The parent must kill this process; do not enter kernel mutation.
+            while True:
+                signal.pause()
+
+        return original(store_path, journal, allocation_id, paused_operation, verify)
+
+    restore.execute_recorded_creation = intercepted
+    try:
+        return nordvpn_manage.main(["restore-startup", "--config", startup])
+    finally:
+        os.close(ready_fd)
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--checkpoint-child", nargs=2, metavar=("STARTUP", "FD"), help=argparse.SUPPRESS)
     parser.add_argument("--run-privileged", action="store_true", help="authorise a disposable privileged probe")
     args = parser.parse_args(argv)
+    if args.checkpoint_child is not None:
+        return checkpoint_child(args.checkpoint_child[0], int(args.checkpoint_child[1]))
     if not args.run_privileged:
         print(
-            "DRY RUN: would restore one pinned profile inside child processes, kill them mid-flight until real "
+            "DRY RUN: would restore one pinned profile inside child processes, stop them at a durable intent checkpoint until real "
             "uncertainty is recorded, converge via boot and operator recovery, and then clean everything. "
             "No changes made."
         )

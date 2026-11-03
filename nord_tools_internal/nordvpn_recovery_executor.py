@@ -209,6 +209,71 @@ def _classify(
         for token, operation in unresolved_by_token.items()
         if operation["outcome"] == "uncertain"
     }
+    # A namespace creation intent can precede all kernel mutations while its
+    # dependent allocations have already entered "creating". Converge that
+    # generation only when every allocation is unbound, no named resource is
+    # observed, and no other operation could have started a mutation.
+    pristine_profiles: set[str] = set()
+    for token, operation in unresolved_by_token.items():
+        root = allocations[token]
+        if root["kind"] != "namespace" or operation["action"] != "create":
+            continue
+        profile = root["profile"]
+        generation = [resource for resource in allocations.values() if resource["profile"] == profile]
+        if any(resource["allocation_id"] in bindings_by_token for resource in generation):
+            continue
+        if any(
+            other["allocation_id"] != token
+            for other in intents.get("operations", [])
+            if allocations[other["allocation_id"]]["profile"] == profile
+        ):
+            continue
+        if any(states.get(resource["allocation_id"]) != "creating" for resource in generation):
+            continue
+        if any(
+            helpers.netns_identity(resource["identifier"]) is not None
+            for resource in generation
+            if resource["kind"] == "namespace"
+        ):
+            continue
+        if any(
+            (scope, resource["identifier"]) in links
+            for resource in generation
+            if resource["kind"] == "interface"
+            for scope in ("host", root["identifier"])
+        ):
+            continue
+        pristine_profiles.add(profile)
+
+    # A namespace creation may be interrupted before its first kernel call,
+    # leaving its dependent allocations staged but never bound. Only permit
+    # record-only retirement when the entire unbound generation is absent in
+    # the fresh observation and the namespace has a pending create intent.
+    # A same-name host link or any live namespace prevents this proof.
+    observed = helpers.observe()
+    observed_names = {link["name"] for link in observed.get("host_interfaces", [])}
+    observed_names.update(
+        link["name"] for namespace in observed.get("namespace_details", []) for link in namespace.get("interfaces", [])
+    )
+    absent_staged_profiles: set[str] = set()
+    for token, operation in unresolved_by_token.items():
+        namespace = allocations[token]
+        if operation["action"] != "create" or namespace["kind"] != "namespace":
+            continue
+        profile = namespace["profile"]
+        generation = [resource for resource in allocations.values() if resource["profile"] == profile]
+        if (
+            helpers.netns_identity(namespace["identifier"]) is None
+            and not any(resource["allocation_id"] in bindings_by_token for resource in generation)
+            and not any(resource["identifier"] in observed_names for resource in generation)
+            and not any(
+                other["allocation_id"] != token and other["allocation_id"] in unresolved_by_token
+                for other in generation
+            )
+            and all(states.get(resource["allocation_id"]) == "creating" for resource in generation)
+        ):
+            absent_staged_profiles.add(profile)
+
     items: list[dict] = []
     seen: set[str] = set()
 
@@ -344,13 +409,21 @@ def _classify(
             "finding": finding,
             "binding_recorded": entry is not None,
         }
-        if binding is None and (
+        if allocation["profile"] in pristine_profiles and state == "creating":
+            item["disposition"] = "complete_retirement_records"
+            item["authority"] = BOOT if not uncertain_profiles.intersection({allocation["profile"]}) else OPERATOR
+            item["reason"] = "the entire unbound generation is absent and only its namespace creation intent began"
+        if state == "creating" and binding is None and allocation["profile"] in absent_staged_profiles:
+            item["disposition"] = "complete_retirement_records"
+            item["authority"] = BOOT
+            item["reason"] = "the entire unbound staged generation is absent; retire records only"
+        elif binding is None and (
             allocation["kind"] == "namespace" and helpers.netns_identity(allocation["identifier"]) is not None
         ):
             item["disposition"] = _REVIEW
             item["authority"] = OPERATOR
             item["reason"] = "the live resource has no recorded binding; review, never adopt or delete"
-        if finding in _ABSENT_FINDINGS:
+        elif finding in _ABSENT_FINDINGS:
             item["disposition"] = "complete_retirement_records"
             item["authority"] = BOOT
             item["reason"] = "kernel-absent interrupted record; bookkeeping completes without kernel effects"
