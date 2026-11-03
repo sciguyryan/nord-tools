@@ -519,6 +519,7 @@ class PristineGenerationRecoveryTests(RecoveryTestBase):
         self.assertIn("creating", self.journal_states(fixture).values())
         self.assertEqual(self.harness.deleted, [])
 
+
 class UnboundStagedGenerationTests(RecoveryTestBase):
     """The pre-kernel checkpoint leaves a staged generation without bindings."""
 
