@@ -92,3 +92,65 @@ def test_rejects_ambiguous_claims(change):
         tunnels["primary"] = {"namespace": "nt-abcdef12"}
     with pytest.raises(RegistryError):
         validate_provisioning_contract(policy, tunnels, allocations)
+
+
+def binding_fixture():
+    policy, tunnels, allocations = fixture()
+    bindings = {
+        "version": 1,
+        "bindings": [
+            {
+                "allocation_id": item["allocation_id"],
+                "kind": item["kind"],
+                "identifier": item["identifier"],
+                "binding": (
+                    {"device": 1, "inode": 100}
+                    if item["kind"] == "namespace"
+                    else {"scope": item["identifier"], "ifindex": 15}
+                ),
+            }
+            for item in allocations["resources"]
+        ],
+    }
+    return policy, tunnels, allocations, bindings
+
+
+def test_owner_correlation_does_not_grant_live_authority():
+    from nord_tools_internal.nordvpn_production_contract import validate_provisioning_owner_bindings
+
+    result = validate_provisioning_owner_bindings(*binding_fixture())
+    assert result["recorded_bindings_consistent"] is True
+    assert result["recorded_binding_count"] == 2
+    assert result["ownership_verified"] is False
+    assert result["mutation_authorised"] is False
+    assert result["network_changes_applied"] is False
+
+
+@pytest.mark.parametrize("change", ["missing", "extra", "wrong_token", "wrong_kind", "wrong_name", "malformed_binding"])
+def test_owner_correlation_refuses_incomplete_or_conflicting_evidence(change):
+    from nord_tools_internal.nordvpn_production_contract import validate_provisioning_owner_bindings
+
+    policy, tunnels, allocations, bindings = binding_fixture()
+    bindings = deepcopy(bindings)
+    if change == "missing":
+        bindings["bindings"].pop()
+    elif change == "extra":
+        bindings["bindings"].append(
+            {
+                "allocation_id": "c" * 32,
+                "kind": "interface",
+                "identifier": "ntwgother",
+                "binding": {"scope": "ntwgother", "ifindex": 16},
+            }
+        )
+    elif change == "wrong_token":
+        bindings["bindings"][0]["allocation_id"] = "c" * 32
+    elif change == "wrong_kind":
+        bindings["bindings"][0]["kind"] = "interface"
+        bindings["bindings"][0]["binding"] = {"scope": "other", "ifindex": 1}
+    elif change == "wrong_name":
+        bindings["bindings"][0]["identifier"] = "nt-deadbeef"
+    elif change == "malformed_binding":
+        bindings["bindings"][0]["binding"] = {"device": True, "inode": 100}
+    with pytest.raises(RegistryError):
+        validate_provisioning_owner_bindings(policy, tunnels, allocations, bindings)

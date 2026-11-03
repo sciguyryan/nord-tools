@@ -63,3 +63,29 @@ def validate_provisioning_contract(policy: object, tunnels: object, allocations:
             for name in sorted(validated_tunnels)
         },
     }
+
+
+def validate_provisioning_owner_bindings(
+    policy: object, tunnels: object, allocations: object, bindings: object
+) -> dict:
+    """Correlate recorded creation identities with the complete proposed plan.
+
+    This is a read-only evidence consistency check, not a live ownership
+    inspection. Even matching records require fresh privileged verification,
+    lifecycle locking and durable intents at the mutation boundary.
+    """
+    from nord_tools_internal.nordvpn_ownership_verify import validate_bindings
+
+    contract = validate_provisioning_contract(policy, tunnels, allocations)
+    ledger = validate_allocations(allocations)
+    recorded = validate_bindings(bindings)
+    expected = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in ledger["resources"]}
+    actual = {item["allocation_id"]: (item["kind"], item["identifier"]) for item in recorded["bindings"]}
+    if actual != expected:
+        raise RegistryError("creation-time owner bindings do not match the complete provisioning allocation ledger")
+    return {
+        **contract,
+        "mode": "offline_production_provisioning_owner_correlation",
+        "recorded_bindings_consistent": True,
+        "recorded_binding_count": len(actual),
+    }
