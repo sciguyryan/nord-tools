@@ -4,7 +4,7 @@
 
 Nord Tools coordinates cooperating restoration, cleanup and recovery processes using one journal-specific execution lock. The lock directory must belong to the effective execution identity and must not be writable by group or other users. A stable lock inode, descriptor-relative opening and directory continuity checks prevent accidental split-lock operation among cooperating processes using the same protected directory. A process with equivalent privileges that intentionally bypasses the lock is not a cooperating actor.
 
-The kernel namespace descriptor and nsfs type attestation establish the identity of an observed network namespace. The owner-binding journal records the observed identity at creation. The cleanup executor also checks the observed host link name and index, then requests indexed rtnetlink deletion. These measures reject many stale, accidental or unprivileged substitutions. They are not atomic compare-and-delete operations.
+The kernel namespace descriptor and nsfs type attestation establish the identity of an observed network namespace. The owner-binding journal records the observed identity at creation. The cleanup executor also checks the observed host link name and index, then requests indexed rtnetlink deletion. The indexed rtnetlink deletion client validates the entire response datagram before accepting a matching kernel acknowledgement, including rejecting malformed trailing messages. These measures reject many stale, accidental or unprivileged substitutions. They are not atomic compare-and-delete operations.
 
 ## Excluded adversary and residual risk
 

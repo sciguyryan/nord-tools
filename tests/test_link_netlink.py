@@ -63,3 +63,33 @@ def test_kernel_ack_is_required(error, malformed, sender, passes):
         else:
             with pytest.raises(LinkMutationError):
                 delete_link_by_index(42)
+
+
+def test_matching_ack_cannot_hide_trailing_malformed_message():
+    """An ACK does not excuse malformed trailing data in the same datagram."""
+
+    class TrailingChannel(Channel):
+        def recvfrom(self, size):
+            response, sender = super().recvfrom(size)
+            return response + b"\x00", sender
+
+    with (
+        patch("socket.socket", return_value=TrailingChannel()),
+        pytest.raises(LinkMutationError, match="alignment"),
+    ):
+        delete_link_by_index(42)
+
+
+def test_matching_ack_cannot_hide_trailing_invalid_header():
+    """Reject an invalid second message rather than returning on the first ACK."""
+
+    class InvalidHeaderChannel(Channel):
+        def recvfrom(self, size):
+            response, sender = super().recvfrom(size)
+            return response + struct.pack("=IHHII", 8, 2, 0, 0, 0), sender
+
+    with (
+        patch("socket.socket", return_value=InvalidHeaderChannel()),
+        pytest.raises(LinkMutationError, match="malformed"),
+    ):
+        delete_link_by_index(42)

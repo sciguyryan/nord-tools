@@ -47,6 +47,7 @@ def delete_link_by_index(ifindex: int) -> None:
                 if sender[0] != 0:
                     raise LinkMutationError("link deletion response was not sent by the kernel")
                 offset = 0
+                acknowledged = False
                 while offset + _HEADER.size <= len(response):
                     length, kind, _, received_sequence, pid = _HEADER.unpack_from(response, offset)
                     if length < _HEADER.size or offset + length > len(response):
@@ -57,9 +58,11 @@ def delete_link_by_index(ifindex: int) -> None:
                         error = _ERROR.unpack_from(response, offset + _HEADER.size)[0]
                         if error:
                             raise LinkMutationError(f"kernel rejected link deletion: errno {-error}")
-                        return
+                        acknowledged = True
                     offset += (length + 3) & ~3
                 if offset != len(response):
                     raise LinkMutationError("malformed rtnetlink response alignment")
+                if acknowledged:
+                    return
     except (OSError, TimeoutError) as exc:
         raise LinkMutationError("rtnetlink deletion failed") from exc
