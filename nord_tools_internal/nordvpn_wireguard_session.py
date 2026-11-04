@@ -13,6 +13,7 @@ import subprocess
 from nord_tools_internal.nordvpn_namespace_ownership import OwnedNamespace
 from nord_tools_internal.nordvpn_wireguard_credentials import private_key_from_fd
 from nord_tools_internal.nordvpn_wireguard_provision import TunnelSpecification
+from nord_tools_internal.nordvpn_underlay_install import namespace_interface_index
 
 
 class SessionError(RuntimeError):
@@ -48,6 +49,12 @@ def configure_disposable_wireguard(spec: TunnelSpecification, owned: OwnedNamesp
         owned.verify()
         _run(["ip", "-n", spec.namespace, "link", "add", "dev", spec.interface, "type", "wireguard"])
         owned.verify()
+        try:
+            created_index = namespace_interface_index(spec.namespace, spec.interface)
+        except Exception as exc:
+            raise SessionError("new WireGuard interface identity could not be verified") from exc
+        if type(created_index) is not int or created_index <= 0:
+            raise SessionError("new WireGuard interface has an invalid kernel index")
         read_fd, write_fd = os.pipe()
         try:
             try:
@@ -85,6 +92,12 @@ def configure_disposable_wireguard(spec: TunnelSpecification, owned: OwnedNamesp
         finally:
             os.close(read_fd)
         owned.verify()
+        try:
+            configured_index = namespace_interface_index(spec.namespace, spec.interface)
+        except Exception as exc:
+            raise SessionError("configured WireGuard interface identity could not be verified") from exc
+        if configured_index != created_index:
+            raise SessionError("WireGuard interface identity changed during configuration")
         _run(["ip", "-n", spec.namespace, "address", "add", spec.tunnel_address, "dev", spec.interface])
         owned.verify()
         _run(["ip", "-n", spec.namespace, "link", "set", "dev", spec.interface, "up"])

@@ -35,9 +35,10 @@ class SessionTests(TestCase):
         finally:
             os.close(read_fd)
 
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")
     @patch.object(OwnedNamespace, "verify")
-    def test_command_sequence_and_no_key_in_arguments(self, verify, run):
+    def test_command_sequence_and_no_key_in_arguments(self, verify, run, index):
         self.execute()
         self.assertEqual(run.call_count, 4)
         commands = [call.args[0] for call in run.call_args_list]
@@ -48,32 +49,36 @@ class SessionTests(TestCase):
         self.assertEqual(commands[-1][-1], "up")
         self.assertGreaterEqual(verify.call_count, 4)
 
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")
     @patch.object(OwnedNamespace, "verify")
-    def test_invalid_key_never_mutates(self, verify, run):
+    def test_invalid_key_never_mutates(self, verify, run, index):
         with self.assertRaises(ValueError):
             self.execute(b"bad")
         run.assert_not_called()
 
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")
     @patch.object(OwnedNamespace, "verify")
-    def test_mismatched_namespace_never_mutates(self, verify, run):
+    def test_mismatched_namespace_never_mutates(self, verify, run, index):
         self.owned.name = "nt-ffffffff"
         with self.assertRaises(SessionError):
             self.execute()
         run.assert_not_called()
 
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")
     @patch.object(OwnedNamespace, "verify")
-    def test_failed_creation_does_not_attempt_further_commands(self, verify, run):
+    def test_failed_creation_does_not_attempt_further_commands(self, verify, run, index):
         run.side_effect = SessionError("failed")
         with self.assertRaises(SessionError):
             self.execute()
         run.assert_called_once()
 
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")
     @patch.object(OwnedNamespace, "verify")
-    def test_identity_change_halts_sequence(self, verify, run):
+    def test_identity_change_halts_sequence(self, verify, run, index):
         verify.side_effect = [None, None, SessionError("identity changed")]
         with self.assertRaises(SessionError):
             self.execute()
@@ -87,3 +92,29 @@ class SessionTests(TestCase):
         with self.assertRaisesRegex(SessionError, "command failed") as error:
             _run(["wg", "show"])
         self.assertNotIn("secret", str(error.exception))
+
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", side_effect=[12, 13])
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_replaced_interface_refuses_address_and_activation(self, verify, run, index):
+        with self.assertRaisesRegex(SessionError, "identity changed"):
+            self.execute()
+        self.assertEqual(run.call_count, 2)
+
+    @patch(
+        "nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", side_effect=RuntimeError("missing")
+    )
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_missing_new_interface_refuses_configuration(self, verify, run, index):
+        with self.assertRaisesRegex(SessionError, "could not be verified"):
+            self.execute()
+        run.assert_called_once()
+
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=0)
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_invalid_new_interface_index_refuses_configuration(self, verify, run, index):
+        with self.assertRaisesRegex(SessionError, "invalid kernel index"):
+            self.execute()
+        run.assert_called_once()
