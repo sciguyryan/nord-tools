@@ -573,6 +573,20 @@ def _restore_profile(
                     step()
                 except Exception as exc:
                     rollback_failures.append(type(exc).__name__)
+            # Rollback callbacks succeeding does not prove that their effects
+            # survived in the kernel. Re-observe both resource scopes before
+            # treating the best-effort rollback as complete. Never delete an
+            # unexpected occupant of a reused name during this assessment.
+            try:
+                after_rollback = helpers.observe()
+                remaining_namespaces = set(after_rollback.get("namespaces", ()))
+                remaining_host_links = {link["name"] for link in after_rollback.get("host_interfaces", ())}
+                if namespace in remaining_namespaces:
+                    rollback_failures.append("namespace_still_present")
+                if underlay_host in remaining_host_links:
+                    rollback_failures.append("host_interface_still_present")
+            except Exception:
+                rollback_failures.append("rollback_observation_unavailable")
             # An incomplete rollback is never silently represented as clean.
             # The durable creation intent remains uncertain for recovery.
             if rollback_failures:

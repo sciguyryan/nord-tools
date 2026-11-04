@@ -99,3 +99,7 @@ The operator confirmed successful privileged execution of the expanded adversari
 ## Failed provisioning rollback identity
 
 A failed restoration attempt retains an uncertain creation intent even when best-effort rollback appears to succeed. The host underlay interface rollback captures the interface index immediately after creation and uses the same identity-checked indexed deletion mechanism as confirmed cleanup. A replaced or missing host interface is not deleted by name alone. Rollback failures are reported on the original exception; subsequent recovery must use fresh ownership evidence rather than assuming the kernel is clean. This does not establish transaction-wide atomicity or safe deletion against independent privileged kernel mutators.
+
+## Provisioning failure and rollback assessment
+
+A failed creation retains an uncertain durable operation intent even when its best-effort rollback callbacks succeed. The restoration executor re-observes the namespace and host-interface scopes after rollback and records an exception note when a resource remains or observation is unavailable. This assessment is not deletion authority: unexpected resources and reused names remain subject to creation-time ownership verification and operator recovery. Deterministic fault injection covers each provisioning boundary, but process interruption after partial kernel mutation and privileged recovery acceptance remain separate requirements.

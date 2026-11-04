@@ -14,6 +14,7 @@ from nord_tools_internal.nordvpn_namespace_ownership import OwnershipError
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
 from nord_tools_internal.nordvpn_restore_executor import restore_boot_state
+from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_underlay_install import UnderlayError
 
 _KEY = base64.b64encode(secrets.token_bytes(32)).decode("ascii")
@@ -342,6 +343,65 @@ class RebootRestorationTests(RestoreTestBase):
 class FailureInjectionTests(RestoreTestBase):
     def setUp(self):
         super().setUp()
+
+    def test_failures_at_each_provisioning_boundary_preserve_uncertain_evidence(self):
+        """Every failed stage must retain durable uncertainty and avoid stale success."""
+        stages = (
+            "create_namespace",
+            "prepare_underlay",
+            "public_key_from_fd",
+            "install_isolation",
+            "configure_wireguard",
+            "route_tunnel",
+            "verify_wireguard",
+        )
+        for stage in stages:
+            # A fresh fixture is essential: one failed transaction must
+            # never be reused as the starting point for another stage.
+            with (
+                self.subTest(stage=stage),
+                tempfile.TemporaryDirectory() as temporary,
+            ):
+                previous = self.config
+                self.config = {
+                    **previous,
+                    **{
+                        field: str(Path(temporary) / Path(previous[field]).name)
+                        for field in ("journal", "bindings", "intent", "run_record")
+                    },
+                }
+                harness = KernelHarness()
+                original = getattr(harness, stage)
+
+                def failing(*args, **kwargs):
+                    if stage == "verify_wireguard":
+                        return False
+                    raise UnderlayError(f"injected failure at {stage}")
+
+                setattr(harness, stage, failing)
+                try:
+                    with self.assertRaises((UnderlayError, ProvisioningUncertainError)):
+                        self.restore(harness=harness)
+                    self.assertEqual(harness.namespaces, {})
+                    self.assertEqual(harness.host_links, {})
+                    self.assertEqual(
+                        [item["outcome"] for item in self.load_at(temporary, "operation-intents.json")["operations"]],
+                        ["uncertain"],
+                    )
+                    states = {
+                        item["allocation_id"]: item["state"]
+                        for item in self.load_at(temporary, "lifecycle.json")["events"]
+                    }
+                    self.assertEqual(set(states.values()), {"failed"})
+                    self.assertEqual(len(states), 4)
+                    self.assertEqual(self.load_at(temporary, "startup-runs.json")["runs"], [])
+                finally:
+                    setattr(harness, stage, original)
+                    self.config = previous
+
+    @staticmethod
+    def load_at(directory, filename):
+        return json.loads((Path(directory) / filename).read_text(encoding="utf-8"))
 
     def test_rollback_refuses_replaced_host_link(self):
         def replace_link(owned, policy):
