@@ -21,6 +21,7 @@ retired ecosystem plans no actions and changes nothing.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 import re
 import datetime
 import json
@@ -43,7 +44,11 @@ from nord_tools_internal.nordvpn_ownership_verify import NETNS_MOUNT_DIR, initia
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_sharing_lifecycle import plan_consumer_release
-from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError, read_consumer_references
+from nord_tools_internal.nordvpn_consumer_reference_store import (
+    ConsumerReferenceError,
+    read_consumer_references,
+    locked_consumer_references,
+)
 from nord_tools_internal.nordvpn_profiles import ProfileError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 
@@ -357,6 +362,7 @@ def plan_cleanup(
     consumer_policy: dict | None = None,
     released_consumers: tuple[str, ...] | None = None,
     consumer_references_path: str | Path | None = None,
+    runtime_consumers_path: str | Path | None = None,
     resolvers: bool = False,
     execute: bool = False,
     kernel: CleanupKernel | None = None,
@@ -411,7 +417,13 @@ def plan_cleanup(
         )
     helpers = kernel or _real_kernel()
     restart_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    with _execution_lock(journal_path):
+    reference_lock = (
+        locked_consumer_references(consumer_references_path) if consumer_references_path is not None else nullcontext()
+    )
+    runtime_lock = (
+        locked_consumer_references(runtime_consumers_path) if runtime_consumers_path is not None else nullcontext()
+    )
+    with _execution_lock(journal_path), reference_lock, runtime_lock:
         if consumer_references_path is not None:
             if consumer_policy is None or selected_profiles is None:
                 raise RegistryError("persisted consumer references require a validated policy and selected profiles")
@@ -425,6 +437,19 @@ def plan_cleanup(
                 raise RegistryError(
                     "persisted active consumer references retain selected profiles: " + ", ".join(sorted(blocked))
                 )
+        if runtime_consumers_path is not None:
+            if consumer_policy is None or selected_profiles is None:
+                raise RegistryError("runtime consumer retirement requires a policy and selected profiles")
+            from nord_tools_internal.nordvpn_runtime_consumers import _read as read_runtime_locked
+
+            try:
+                runtime = read_runtime_locked(runtime_consumers_path, consumer_policy)
+            except ConsumerReferenceError as exc:
+                raise RegistryError(f"invalid runtime consumer evidence: {exc}") from exc
+            retained = {item["profile"] for item in runtime["leases"]}
+            blocked = set(selected_profiles) & retained
+            if blocked:
+                raise RegistryError("runtime consumer leases retain selected profiles: " + ", ".join(sorted(blocked)))
         journal = validate_journal(_read_document(journal_path))
         bindings = _read_document(bindings_path)
         intents = _read_document(intent_path) if intent_path else None

@@ -69,3 +69,13 @@ The snapshot is not yet a runtime reference registry. Its active flags are decla
 ## Consumer reference transitions
 
 Declared consumer references can be updated under a private advisory lock with an expected-state check. The transition refuses absent snapshots, unknown applications and stale state. This prevents competing cooperating writers from silently overwriting each other, but does not establish that an application started, stopped or released its tunnel. Privileged lifecycle authority and independent runtime evidence remain necessary before these transitions can be used to authorise resource retirement.
+
+## Consumer reference coordination during retirement
+
+The cleanup executor holds the consumer-reference store's advisory lock throughout a guarded retirement operation, including kernel mutation. Cooperating reference transitions use the same lock, preventing a new declared acquisition from racing between the retirement check and deletion. Unsafe or replaced lock files are refused. This protects the consistency of declared reference evidence but does not establish process identity or authoritative runtime ownership. Operations that do not opt into the reference guard are not protected by this mechanism.
+
+## Process-bound consumer evidence
+
+The runtime consumer lease store is distinct from the earlier declared-reference snapshot. It records a registered executable, process ID, boot identity and process start time, together with the logical allocation key. Acquisition checks the live Linux process identity and refuses mismatched executables or duplicate consumer leases. Release refuses a process that still has the original identity, and accepts a vanished process or a reused PID with a different start identity. The store is policy-fingerprinted, serialised and atomically persisted. A failed or inaccessible process inspection does not silently discard a lease.
+
+The cleanup executor can additionally veto selected-profile retirement while a runtime lease names that profile. This is a retention safeguard, not a complete allocation authority. A lease does not itself prove that a corresponding namespace or WireGuard interface was provisioned or bound to that consumer. Production restoration still provisions by profile, so isolated application allocations and an authoritative end-to-end acquisition/release transaction are not yet implemented. Operators must not use an empty runtime lease store as sufficient evidence for deletion; creation-time ownership verification and the existing cleanup controls remain mandatory.

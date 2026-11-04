@@ -1,0 +1,207 @@
+"""Linux process-bound consumer leases for cooperating lifecycle operations.
+
+A lease is never evidence that a tunnel was provisioned. Its allocation key must
+be independently matched to creation-time resource bindings before routing or
+retirement. A missing or unreadable process is not silently released.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from pathlib import Path
+
+from nord_tools_internal.nordvpn_consumer_reference_store import (
+    ConsumerReferenceError,
+    locked_consumer_references,
+)
+from nord_tools_internal.nordvpn_profiles import validate_policy
+from nord_tools_internal.nordvpn_sharing_contract import resolve_ownership_groups
+
+
+def _identity(pid: int) -> tuple[str, str, str]:
+    """Obtain a boot-scoped process identity without trusting the PID alone."""
+    if type(pid) is not int or pid <= 0:
+        raise ConsumerReferenceError("consumer PID must be positive")
+    try:
+        boot = Path("/proc/sys/kernel/random/boot_id").read_text(encoding="ascii").strip()
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        # comm is parenthesised and may itself contain spaces and parentheses.
+        end = raw.rfind(")")
+        if end < 0:
+            raise ValueError("invalid process stat")
+        start = raw[end + 2 :].split()[19]
+        executable = os.readlink(f"/proc/{pid}/exe")
+        # A process which exits while being inspected cannot be acquired.
+        repeated = Path(f"/proc/{pid}/stat").read_text(encoding="ascii")
+        repeated_end = repeated.rfind(")")
+        if repeated_end < 0 or repeated[repeated_end + 2 :].split()[19] != start:
+            raise ValueError("process changed during inspection")
+        return boot, start, executable
+    except (OSError, UnicodeError, IndexError, ValueError) as exc:
+        raise ConsumerReferenceError(f"cannot establish consumer process identity: {exc}") from exc
+
+
+def _fingerprint(policy: dict) -> str:
+    checked = validate_policy(policy)
+    return hashlib.sha256(json.dumps(checked, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _validate(policy: dict, document: object) -> dict:
+    checked = validate_policy(policy)
+    expected = {
+        app: (group.profile, group.allocation_key)
+        for group in resolve_ownership_groups(checked)
+        for app in group.consumers
+    }
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"version", "policy_sha256", "leases"}
+        or document["version"] != 1
+        or document["policy_sha256"] != _fingerprint(checked)
+        or not isinstance(document["leases"], list)
+    ):
+        raise ConsumerReferenceError("invalid runtime consumer lease document or policy fingerprint")
+    seen = set()
+    leases = []
+    for lease in document["leases"]:
+        if not isinstance(lease, dict) or set(lease) != {
+            "application",
+            "profile",
+            "allocation_key",
+            "pid",
+            "boot_id",
+            "start_time",
+            "executable",
+        }:
+            raise ConsumerReferenceError("invalid runtime consumer lease fields")
+        name = lease["application"]
+        if (
+            not isinstance(name, str)
+            or name not in expected
+            or name in seen
+            or (lease["profile"], lease["allocation_key"]) != expected[name]
+        ):
+            raise ConsumerReferenceError("duplicate, unknown or mismatched runtime consumer")
+        if (
+            type(lease["pid"]) is not int
+            or lease["pid"] <= 0
+            or any(not isinstance(lease[key], str) or not lease[key] for key in ("boot_id", "start_time", "executable"))
+        ):
+            raise ConsumerReferenceError("invalid runtime process identity")
+        if lease["executable"] != checked["applications"][name]["executable"]:
+            raise ConsumerReferenceError("runtime executable does not match registered application")
+        seen.add(name)
+        leases.append(dict(lease))
+    return {
+        "version": 1,
+        "policy_sha256": _fingerprint(checked),
+        "leases": sorted(leases, key=lambda item: item["application"]),
+    }
+
+
+def initialise_runtime_consumers(path: str | Path, policy: dict) -> dict:
+    """Create a fresh, empty store; never replace existing or unknown evidence."""
+    document = {"version": 1, "policy_sha256": _fingerprint(policy), "leases": []}
+    with locked_consumer_references(path):
+        if Path(path).exists() or Path(path).is_symlink():
+            raise ConsumerReferenceError("runtime lease store already exists")
+        # Exclusive placeholder prevents accidental initialisation over a live store.
+        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+        os.close(fd)
+        try:
+            _write(path, policy, document)
+        except BaseException:
+            # Retain the placeholder: an interrupted initialisation requires review.
+            raise
+    return document
+
+
+def _read(path: str | Path, policy: dict) -> dict:
+    # Reuse the same private, no-follow reader and its size limits by validating
+    # the file shape ourselves after descriptor-safe reading.
+    from nord_tools_internal.nordvpn_consumer_reference_store import read_private_json
+
+    return _validate(policy, read_private_json(path))
+
+
+def _write(path: str | Path, policy: dict, document: dict) -> None:
+    from nord_tools_internal.nordvpn_consumer_reference_store import write_private_json
+
+    write_private_json(path, _validate(policy, document))
+
+
+def read_runtime_consumers(path: str | Path, policy: dict) -> dict:
+    with locked_consumer_references(path):
+        return _read(path, policy)
+
+
+def acquire_runtime_consumer(path: str | Path, policy: dict, application: str, pid: int) -> dict:
+    """Acquire only for a live, registered executable with stable process identity."""
+    checked = validate_policy(policy)
+    if application not in checked["applications"]:
+        raise ConsumerReferenceError("application is not registered")
+    with locked_consumer_references(path):
+        document = _read(path, checked)
+        if any(lease["application"] == application for lease in document["leases"]):
+            raise ConsumerReferenceError("consumer already has a lease; release or recover it first")
+        before = _identity(pid)
+        if before[2] != checked["applications"][application]["executable"]:
+            raise ConsumerReferenceError("running executable does not match registered application")
+        if _identity(pid) != before:
+            raise ConsumerReferenceError("consumer process changed during acquisition")
+        group = next(group for group in resolve_ownership_groups(checked) if application in group.consumers)
+        document["leases"].append(
+            {
+                "application": application,
+                "profile": group.profile,
+                "allocation_key": group.allocation_key,
+                "pid": pid,
+                "boot_id": before[0],
+                "start_time": before[1],
+                "executable": before[2],
+            }
+        )
+        _write(path, checked, document)
+        return _validate(checked, document)
+
+
+def release_exited_consumer(path: str | Path, policy: dict, application: str) -> dict:
+    """Release only when the original process has ceased to exist.
+
+    An inaccessible /proc entry fails closed. PID reuse is safe because the
+    original boot identity and process start time are checked together.
+    """
+    with locked_consumer_references(path):
+        document = _read(path, policy)
+        matches = [lease for lease in document["leases"] if lease["application"] == application]
+        if len(matches) != 1:
+            raise ConsumerReferenceError("consumer has no recorded runtime lease")
+        lease = matches[0]
+        try:
+            identity = _identity(lease["pid"])
+        except ConsumerReferenceError:
+            # A vanished /proc entry can mean process exit or a permissions
+            # failure. Only an unambiguous ESRCH/ENOENT is safe to release.
+            try:
+                os.stat(f"/proc/{lease['pid']}")
+            except FileNotFoundError:
+                identity = None
+            except OSError as exc:
+                raise ConsumerReferenceError(f"cannot establish whether leased process exited: {exc}") from exc
+            else:
+                raise ConsumerReferenceError("cannot establish whether leased process exited") from None
+        if identity is not None and identity[:2] == (lease["boot_id"], lease["start_time"]):
+            raise ConsumerReferenceError("consumer process remains alive")
+        document["leases"] = [item for item in document["leases"] if item["application"] != application]
+        _write(path, policy, document)
+        return _validate(policy, document)
+
+
+def assert_allocation_unreferenced(path: str | Path, policy: dict, allocation_key: str) -> None:
+    """Fail closed when a durable lease still names the allocation."""
+    with locked_consumer_references(path):
+        document = _read(path, policy)
+        if any(item["allocation_key"] == allocation_key for item in document["leases"]):
+            raise ConsumerReferenceError("allocation retains a durable runtime consumer lease")

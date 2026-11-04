@@ -7,6 +7,9 @@ snapshot cannot prove absence, and callers must not use it to authorise deletion
 from __future__ import annotations
 
 import json
+import fcntl
+import stat
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import tempfile
@@ -56,7 +59,7 @@ def validate_consumer_references(policy: dict, document: object) -> dict:
     return {"version": 1, "consumers": [dict(seen[name]) for name in sorted(seen)]}
 
 
-def read_consumer_references(path: str | Path, policy: dict) -> dict:
+def read_private_json(path: str | Path) -> object:
     """Read and validate a private, regular reference document."""
     target = Path(path)
     try:
@@ -73,7 +76,11 @@ def read_consumer_references(path: str | Path, policy: dict) -> dict:
             os.close(fd)
     except (OSError, ValueError, UnicodeError) as exc:
         raise ConsumerReferenceError(f"cannot read consumer reference evidence: {exc}") from exc
-    return validate_consumer_references(policy, raw)
+    return raw
+
+
+def read_consumer_references(path: str | Path, policy: dict) -> dict:
+    return validate_consumer_references(policy, read_private_json(path))
 
 
 def write_consumer_references(path: str | Path, policy: dict, document: object) -> None:
@@ -83,6 +90,11 @@ def write_consumer_references(path: str | Path, policy: dict, document: object) 
     caller must serialise writers and establish its own runtime evidence.
     """
     checked = validate_consumer_references(policy, document)
+    write_private_json(path, checked)
+
+
+def write_private_json(path: str | Path, checked: dict) -> None:
+    """Write a prevalidated private JSON document atomically."""
     target = Path(path)
     descriptor = None
     temporary = None
@@ -109,6 +121,34 @@ def write_consumer_references(path: str | Path, policy: dict, document: object) 
             os.unlink(temporary)
 
 
+@contextmanager
+def locked_consumer_references(path: str | Path):
+    """Hold the reference-store lock across an entire ownership operation.
+
+    Readers making retirement decisions must hold this same lock until the
+    cleanup executor has finished. Otherwise an acquisition can race between
+    reference inspection and destructive kernel work.
+    """
+    target = Path(path)
+    lock_path = target.with_name(target.name + ".lock")
+    try:
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise ConsumerReferenceError(f"cannot open reference transition lock: {exc}") from exc
+    try:
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077 or metadata.st_nlink != 1:
+            raise ConsumerReferenceError("unsafe reference transition lock")
+        fcntl.flock(descriptor, fcntl.LOCK_EX)
+        # Refuse a lock-file replacement while waiting for an existing writer.
+        current = os.stat(lock_path, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+            raise ConsumerReferenceError("reference transition lock was replaced")
+        yield
+    finally:
+        os.close(descriptor)
+
+
 def transition_consumer_reference(
     path: str | Path,
     policy: dict,
@@ -122,26 +162,12 @@ def transition_consumer_reference(
     This is not proof of process lifetime. The caller must establish runtime
     authority before requesting a transition; no absent file is initialised.
     """
-    import fcntl
-
     if type(expected_active) is not bool or type(active) is not bool:
         raise ConsumerReferenceError("reference transition states must be boolean")
     if not isinstance(application, str):
         raise ConsumerReferenceError("invalid consumer name")
-    target = Path(path)
-    lock_path = target.with_name(target.name + ".lock")
-    try:
-        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
-    except OSError as exc:
-        raise ConsumerReferenceError(f"cannot open reference transition lock: {exc}") from exc
-    try:
-        metadata = os.fstat(lock_fd)
-        import stat
-
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
-            raise ConsumerReferenceError("unsafe reference transition lock")
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-        document = read_consumer_references(target, policy)
+    with locked_consumer_references(path):
+        document = read_consumer_references(path, policy)
         entry = next((item for item in document["consumers"] if item["application"] == application), None)
         if entry is None:
             raise ConsumerReferenceError("unknown consumer reference")
@@ -149,7 +175,5 @@ def transition_consumer_reference(
             raise ConsumerReferenceError("stale consumer reference transition")
         entry["active"] = active
         if active != expected_active:
-            write_consumer_references(target, policy, document)
+            write_consumer_references(path, policy, document)
         return document
-    finally:
-        os.close(lock_fd)
