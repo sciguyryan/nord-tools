@@ -107,3 +107,49 @@ def write_consumer_references(path: str | Path, policy: dict, document: object) 
             os.close(descriptor)
         if temporary is not None:
             os.unlink(temporary)
+
+
+def transition_consumer_reference(
+    path: str | Path,
+    policy: dict,
+    application: str,
+    *,
+    expected_active: bool,
+    active: bool,
+) -> dict:
+    """Serialise a declared-reference transition with compare-and-swap semantics.
+
+    This is not proof of process lifetime. The caller must establish runtime
+    authority before requesting a transition; no absent file is initialised.
+    """
+    import fcntl
+
+    if type(expected_active) is not bool or type(active) is not bool:
+        raise ConsumerReferenceError("reference transition states must be boolean")
+    if not isinstance(application, str):
+        raise ConsumerReferenceError("invalid consumer name")
+    target = Path(path)
+    lock_path = target.with_name(target.name + ".lock")
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+    except OSError as exc:
+        raise ConsumerReferenceError(f"cannot open reference transition lock: {exc}") from exc
+    try:
+        metadata = os.fstat(lock_fd)
+        import stat
+
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077:
+            raise ConsumerReferenceError("unsafe reference transition lock")
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        document = read_consumer_references(target, policy)
+        entry = next((item for item in document["consumers"] if item["application"] == application), None)
+        if entry is None:
+            raise ConsumerReferenceError("unknown consumer reference")
+        if entry["active"] is not expected_active:
+            raise ConsumerReferenceError("stale consumer reference transition")
+        entry["active"] = active
+        if active != expected_active:
+            write_consumer_references(target, policy, document)
+        return document
+    finally:
+        os.close(lock_fd)
