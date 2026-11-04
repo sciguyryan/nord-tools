@@ -43,6 +43,7 @@ from nord_tools_internal.nordvpn_ownership_verify import NETNS_MOUNT_DIR, initia
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_sharing_lifecycle import plan_consumer_release
+from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError, read_consumer_references
 from nord_tools_internal.nordvpn_profiles import ProfileError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 
@@ -355,6 +356,7 @@ def plan_cleanup(
     selected_profiles: tuple[str, ...] | None = None,
     consumer_policy: dict | None = None,
     released_consumers: tuple[str, ...] | None = None,
+    consumer_references_path: str | Path | None = None,
     resolvers: bool = False,
     execute: bool = False,
     kernel: CleanupKernel | None = None,
@@ -410,6 +412,19 @@ def plan_cleanup(
     helpers = kernel or _real_kernel()
     restart_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _execution_lock(journal_path):
+        if consumer_references_path is not None:
+            if consumer_policy is None or selected_profiles is None:
+                raise RegistryError("persisted consumer references require a validated policy and selected profiles")
+            try:
+                references = read_consumer_references(consumer_references_path, consumer_policy)
+            except ConsumerReferenceError as exc:
+                raise RegistryError(f"invalid persisted consumer references: {exc}") from exc
+            active_profiles = {item["profile"] for item in references["consumers"] if item["active"]}
+            blocked = set(selected_profiles) & active_profiles
+            if blocked:
+                raise RegistryError(
+                    "persisted active consumer references retain selected profiles: " + ", ".join(sorted(blocked))
+                )
         journal = validate_journal(_read_document(journal_path))
         bindings = _read_document(bindings_path)
         intents = _read_document(intent_path) if intent_path else None

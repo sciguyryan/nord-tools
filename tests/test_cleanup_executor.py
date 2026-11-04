@@ -646,3 +646,50 @@ class ConsumerAwareCleanupTests(CleanupTestBase):
             self.cleanup(selected_profiles=("alpha",), consumer_policy=consumer_policy)
         with self.assertRaisesRegex(RegistryError, "explicit selected"):
             self.cleanup(consumer_policy=consumer_policy, released_consumers=())
+
+
+class PersistedConsumerVetoTests(CleanupTestBase):
+    """A persisted active reference vetoes retirement even after policy release."""
+
+    def test_active_reference_vetoes_selected_retirement(self):
+        from nord_tools_internal.nordvpn_consumer_reference_store import write_consumer_references
+
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {"browser": {"executable": "/usr/bin/browser"}},
+        }
+        path = self.root / "consumer-references.json"
+        entry = {"application": "browser", "profile": "alpha", "allocation_key": "profile:alpha", "active": True}
+        write_consumer_references(path, consumer_policy, {"version": 1, "consumers": [entry]})
+        args = dict(
+            selected_profiles=("alpha",),
+            consumer_policy=consumer_policy,
+            released_consumers=("browser",),
+            consumer_references_path=path,
+        )
+        with self.assertRaisesRegex(RegistryError, "persisted active consumer references"):
+            self.cleanup(**args, execute=True)
+        self.assertEqual(self.harness.deleted, [])
+        entry["active"] = False
+        write_consumer_references(path, consumer_policy, {"version": 1, "consumers": [entry]})
+        report = self.cleanup(**args)
+        self.assertEqual({item["profile"] for item in report["plan"]}, {"alpha"})
+
+    def test_missing_reference_snapshot_fails_closed(self):
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {"browser": {"executable": "/usr/bin/browser"}},
+        }
+        with self.assertRaisesRegex(RegistryError, "invalid persisted consumer references"):
+            self.cleanup(
+                selected_profiles=("alpha",),
+                consumer_policy=consumer_policy,
+                released_consumers=("browser",),
+                consumer_references_path=self.root / "missing.json",
+                execute=True,
+            )
+        self.assertEqual(self.harness.deleted, [])
