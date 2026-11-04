@@ -350,6 +350,7 @@ def plan_cleanup(
     intent_path: str | Path | None = None,
     graph_path: str | Path | None = None,
     desired_policy: object | None = None,
+    selected_profiles: tuple[str, ...] | None = None,
     resolvers: bool = False,
     execute: bool = False,
     kernel: CleanupKernel | None = None,
@@ -365,6 +366,13 @@ def plan_cleanup(
     preserved by construction. A missing intent store is allowed for planning
     and refused for execution, so uncertain prior attempts stay visible.
     """
+    if selected_profiles is not None:
+        if (
+            not isinstance(selected_profiles, tuple)
+            or any(not isinstance(name, str) or not name or name.strip() != name for name in selected_profiles)
+            or len(set(selected_profiles)) != len(selected_profiles)
+        ):
+            raise RegistryError("selected profiles must be a tuple of distinct, non-empty names")
     desired_profiles = None
     if desired_policy is not None:
         if not isinstance(desired_policy, dict) or not isinstance(desired_policy.get("vpn_profiles"), dict):
@@ -383,6 +391,21 @@ def plan_cleanup(
         observation = helpers.observe()
         preflight = preflight_ownership(journal, bindings, observation, intents)
         classifications = _classifications(journal, preflight, desired_profiles or {}, desired_policy is None)
+        if selected_profiles is not None:
+            known = {item["profile"] for item in classifications}
+            if desired_profiles is not None:
+                known.update(desired_profiles)
+            unknown = set(selected_profiles) - known
+            if unknown:
+                raise RegistryError(f"unknown selected profiles: {', '.join(sorted(unknown))}")
+            selected = set(selected_profiles)
+            for entry in classifications:
+                if entry["profile"] not in selected:
+                    entry["action"] = _PRESERVED
+                    entry["reason"] = "profile outside the explicitly selected lifecycle scope"
+                elif entry["action"] == _PRESERVED and entry["reason"] == "a retained desired profile stays in place":
+                    entry["action"] = _REMOVABLE
+                    entry["reason"] = "explicitly selected owned profile retirement"
         dependencies = _validate_shared_graph(_read_document(graph_path), journal) if graph_path else None
         candidate_profiles = {entry["profile"] for entry in classifications if entry["action"] == _REMOVABLE}
         _dependency_refusals(classifications, dependencies or {}, candidate_profiles)

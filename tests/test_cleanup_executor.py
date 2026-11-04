@@ -225,6 +225,28 @@ class CleanupTestBase(unittest.TestCase):
         return json.loads(Path(path / name).read_text(encoding="utf-8"))
 
 
+class SelectedProfileLifecycleTests(CleanupTestBase):
+    def test_selection_preserves_other_profiles_and_can_retire_a_desired_profile(self):
+        plan = self.cleanup(selected_profiles=("alpha",))
+        self.assertEqual({item["profile"] for item in plan["plan"]}, {"alpha"})
+        self.assertEqual({item["profile"] for item in plan["preserved"]}, {"legacy"})
+        result = self.cleanup(selected_profiles=("alpha",), execute=True)
+        self.assertEqual({item["profile"] for item in result["deletions"]}, {"alpha"})
+        self.assertIn("nt-legacy0000", self.harness.namespaces)
+        self.assertNotIn("nt-alpha00000", self.harness.namespaces)
+
+    def test_empty_selection_is_non_destructive(self):
+        report = self.cleanup(selected_profiles=(), execute=True)
+        self.assertFalse(report["deletions"])
+        self.assertIn("nt-alpha00000", self.harness.namespaces)
+        self.assertIn("nt-legacy0000", self.harness.namespaces)
+
+    def test_unknown_and_duplicate_selection_refused(self):
+        for names in (("missing",), ("alpha", "alpha"), ("",), ["alpha"]):
+            with self.subTest(names=names), self.assertRaises(RegistryError):
+                self.cleanup(selected_profiles=names)
+
+
 class CleanupPlanTests(CleanupTestBase):
     def test_the_plan_is_exact_for_the_undesired_profile(self):
         report = self.cleanup()

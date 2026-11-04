@@ -41,3 +41,7 @@ The disposable WireGuard peer-field and retirement probe passed privileged accep
 The production restoration executor already processes eligible named profiles under its lifecycle lock and records a separate four-resource allocation batch, ownership bindings and durable creation intent for each profile. Multi-profile regression coverage now exercises two distinct pinned profiles, verifies that namespace and interface identities do not overlap, and confirms that a repeated restoration does not create further resources. A desired profile without a pinned provider plan is reported as not restored while another eligible profile can proceed.
 
 These tests use an injected kernel harness and do not establish real concurrent VPN connectivity, shared-tunnel ownership, application routing or independent profile retirement. Those boundaries remain separate acceptance work.
+
+## Selected-profile retirement
+
+The ownership-aware cleanup executor accepts an explicit tuple of profile names to constrain retirement. An empty tuple makes no changes, while an omitted selection retains the established desired-policy cleanup behaviour. Unknown and duplicate names are refused. Resources belonging to unselected profiles remain outside the deletion plan, even if their ownership evidence would otherwise require review. Explicitly selected profiles can be retired even when present in the desired policy, but only after the existing ownership checks and dependency constraints pass. This does not establish application routing or shared tunnel ownership.
