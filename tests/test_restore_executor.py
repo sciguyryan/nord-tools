@@ -125,7 +125,9 @@ class KernelHarness:
         key = os.read(fd, 46).strip()
         return f"pub-{key.decode('ascii')}"
 
-    def verify_wireguard(self, namespace: str, interface: str, expected_public_key: str, peer_public_key: str) -> bool:
+    def verify_wireguard(
+        self, namespace: str, interface: str, expected_public_key: str, peer_public_key: str, specification=None
+    ) -> bool:
         return (
             any(record[:2] == (namespace, interface) and record[2] == _KEY for record in self.tunnels)
             and expected_public_key == f"pub-{_KEY}"

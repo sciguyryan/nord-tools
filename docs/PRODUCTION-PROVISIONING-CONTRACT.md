@@ -23,3 +23,7 @@ The disposable WireGuard creation path checks the namespace-local interface inde
 The disposable configuration path accepts an optional persistent keepalive interval from 0 to 65535 seconds. Zero leaves the peer setting unset; a positive interval is passed explicitly to `wg set` alongside the validated endpoint and allowed IP networks. Booleans, strings and out-of-range values are refused before kernel mutation. The public plan records the interval but never carries the private key.
 
 The private key is still supplied through an inherited descriptor, not an argument or a persistent configuration file. This phase does not verify live peer state, provide persistent production credentials or establish fail-closed routing. Those require later integration and privileged acceptance.
+
+## WireGuard live peer verification
+
+The production restoration executor checks the derived local public key and the sole expected peer, then reads back the peer endpoint, allowed IPs and persistent keepalive through separate non-secret `wg show` fields. Any mismatch or failed command refuses activation and leaves the existing creation intent and rollback machinery responsible for recovery. The verifier never invokes `wg show ... dump`, whose output can contain private-key material. The checks establish the configured peer values at observation time, not successful connectivity or protection against a separate privileged mutator racing later operations. Controlled retirement and privileged end-to-end acceptance remain open in 8.2.2.

@@ -135,7 +135,13 @@ def _real_kernel() -> RestoreKernel:
             raise ProvisioningUncertainError("the WireGuard public key derivation failed")
         return result.stdout.decode("ascii").strip()
 
-    def verify_wireguard(namespace: str, interface: str, expected_public_key: str, peer_public_key: str) -> bool:
+    def verify_wireguard(
+        namespace: str,
+        interface: str,
+        expected_public_key: str,
+        peer_public_key: str,
+        specification: TunnelSpecification | None = None,
+    ) -> bool:
         try:
             key = subprocess.run(
                 ["ip", "netns", "exec", namespace, "wg", "show", interface, "public-key"],
@@ -153,9 +159,37 @@ def _real_kernel() -> RestoreKernel:
             return False
         if key.returncode or peers.returncode:
             return False
-        return key.stdout == f"{expected_public_key}\n".encode(
+        if key.stdout != f"{expected_public_key}\n".encode("ascii") or peers.stdout != f"{peer_public_key}\n".encode(
             "ascii"
-        ) and peers.stdout == f"{peer_public_key}\n".encode("ascii")
+        ):
+            return False
+        if specification is None:
+            return True
+        # Query only non-secret WireGuard fields. `wg show ... dump` includes
+        # private-key material and must not be used for diagnostic readback.
+        expected_endpoint = (
+            f"[{specification.endpoint_address}]:{specification.endpoint_port}"
+            if ":" in specification.endpoint_address
+            else f"{specification.endpoint_address}:{specification.endpoint_port}"
+        )
+        expected = (
+            ("endpoints", f"{peer_public_key}\t{expected_endpoint}\n"),
+            ("allowed-ips", f"{peer_public_key}\t{','.join(specification.peer_allowed_ips)}\n"),
+            ("persistent-keepalive", f"{peer_public_key}\t{specification.persistent_keepalive_seconds or 'off'}\n"),
+        )
+        for field, value in expected:
+            try:
+                result = subprocess.run(
+                    ["ip", "netns", "exec", namespace, "wg", "show", interface, field],
+                    capture_output=True,
+                    timeout=15,
+                    check=False,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                return False
+            if result.returncode or result.stdout != value.encode("ascii"):
+                return False
+        return True
 
     def remove_host_interface(name: str) -> None:
         subprocess.run(["ip", "link", "del", "dev", name], capture_output=True, timeout=15, check=False)
@@ -503,7 +537,10 @@ def _restore_profile(
                 plan["tunnel_address"],
                 gateway,
             )
-            if helpers.verify_wireguard(namespace, interface, public_key, plan["peer_public_key"]) is not True:
+            if (
+                helpers.verify_wireguard(namespace, interface, public_key, plan["peer_public_key"], specification)
+                is not True
+            ):
                 raise ProvisioningUncertainError("the restored WireGuard peer does not match the pinned provider plan")
             record_binding(
                 bindings_path,
