@@ -20,6 +20,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -42,7 +43,7 @@ def command(*argv: str, input_data: bytes | None = None) -> bytes:
     return result.stdout.strip()
 
 
-def verify_retired_resources(namespace_name: str, host_end: str) -> None:
+def verify_retired_resources(namespace_name: str, host_end: str, host_ifindex: int | None = None) -> None:
     """Verify retirement without deleting a potentially unrelated host interface.
 
     Deleting a namespace destroys its veth endpoint, which normally removes the
@@ -65,8 +66,27 @@ def verify_retired_resources(namespace_name: str, host_end: str) -> None:
         not isinstance(link, dict) or not isinstance(link.get("ifname"), str) for link in observed
     ):
         raise ProbeError("host underlay absence could not be established")
-    if any(link["ifname"] == host_end for link in observed):
-        raise ProbeError("the host underlay remains; refusing unverified deletion")
+    # A removed namespace mount can briefly retain its network namespace while
+    # the kernel releases the final reference and the veth peer. Wait for
+    # observed absence, never deleting the host link by name.
+    deadline = time.monotonic() + 2.0
+    while True:
+        matches = [link for link in observed if link["ifname"] == host_end]
+        if not matches:
+            return
+        if len(matches) != 1 or (host_ifindex is not None and matches[0].get("ifindex") != host_ifindex):
+            raise ProbeError("host underlay identity changed; refusing unverified deletion")
+        if time.monotonic() >= deadline:
+            raise ProbeError("the host underlay remains; refusing unverified deletion")
+        time.sleep(0.1)
+        try:
+            observed = json.loads(command("ip", "-j", "link", "show"))
+        except (ProbeError, ValueError, TypeError) as exc:
+            raise ProbeError("host underlay absence could not be established") from exc
+        if not isinstance(observed, list) or any(
+            not isinstance(link, dict) or not isinstance(link.get("ifname"), str) for link in observed
+        ):
+            raise ProbeError("host underlay absence could not be established")
 
 
 def run_probe() -> str:
@@ -149,9 +169,8 @@ def run_probe() -> str:
         states = {event["allocation_id"]: event["state"] for event in journal["events"]}
         if not states or any(state != "active" for state in states.values()):
             raise ProbeError(f"unexpected lifecycle states: {states}")
-        host_end = next(
-            entry["identifier"] for entry in bindings["bindings"] if entry["binding"].get("scope") == "host"
-        )
+        host_record = next(entry for entry in bindings["bindings"] if entry["binding"].get("scope") == "host")
+        host_end = host_record["identifier"]
         with open(f"/run/netns/{namespace_name}") as descriptor:
             metadata = os.fstat(descriptor.fileno())
             if (metadata.st_dev, metadata.st_ino) != (
@@ -180,7 +199,7 @@ def run_probe() -> str:
                 owned.retire()
             finally:
                 owned.release()
-        verify_retired_resources(namespace_name, host_end)
+        verify_retired_resources(namespace_name, host_end, host_record["binding"]["ifindex"])
         print("PASS: the verified namespace and the host underlay were removed", flush=True)
     except BaseException:
         print(f"Retained restoration evidence for review: {temporary}", file=sys.stderr)

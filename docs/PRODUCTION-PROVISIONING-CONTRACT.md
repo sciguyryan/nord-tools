@@ -45,3 +45,7 @@ These tests use an injected kernel harness and do not establish real concurrent 
 ## Selected-profile retirement
 
 The ownership-aware cleanup executor accepts an explicit tuple of profile names to constrain retirement. An empty tuple makes no changes, while an omitted selection retains the established desired-policy cleanup behaviour. Unknown and duplicate names are refused. Resources belonging to unselected profiles remain outside the deletion plan, even if their ownership evidence would otherwise require review. Explicitly selected profiles can be retired even when present in the desired policy, but only after the existing ownership checks and dependency constraints pass. This does not establish application routing or shared tunnel ownership.
+
+## Selected-profile lifecycle reconciliation
+
+Adversarial cleanup tests verify that a selected prerequisite cannot be retired while an unselected dependent remains, while a selected dependent can be retired without deleting its prerequisite. A selected-profile deletion failure leaves unselected profiles untouched, and repeated successful retirement produces no further deletion. These tests use an injected kernel harness; privileged acceptance of selected-profile lifecycle operations remains outstanding. The existing ownership and dependency checks remain the authority for deletion.

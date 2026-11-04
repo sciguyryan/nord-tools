@@ -241,6 +241,46 @@ class SelectedProfileLifecycleTests(CleanupTestBase):
         self.assertIn("nt-alpha00000", self.harness.namespaces)
         self.assertIn("nt-legacy0000", self.harness.namespaces)
 
+    def test_selected_prerequisite_is_blocked_by_unselected_dependent(self):
+        graph = self.root / "shared-graph.json"
+        graph.write_text(
+            json.dumps({"version": 1, "dependencies": {"alpha": ["legacy"], "legacy": []}}),
+            encoding="utf-8",
+        )
+        report = self.cleanup(selected_profiles=("legacy",), graph_path=graph)
+        self.assertEqual(report["plan"], [])
+        self.assertEqual({entry["profile"] for entry in report["preserved"]}, {"alpha"})
+        self.assertEqual({entry["profile"] for entry in report["review_required"]}, {"legacy"})
+        with self.assertRaises(ProvisioningUncertainError):
+            self.cleanup(selected_profiles=("legacy",), graph_path=graph, execute=True)
+        self.assertEqual(self.harness.deleted, [])
+
+    def test_selected_dependent_can_retire_without_removing_prerequisite(self):
+        graph = self.root / "shared-graph.json"
+        graph.write_text(
+            json.dumps({"version": 1, "dependencies": {"alpha": ["legacy"], "legacy": []}}),
+            encoding="utf-8",
+        )
+        report = self.cleanup(selected_profiles=("alpha",), graph_path=graph, execute=True)
+        self.assertEqual({entry["profile"] for entry in report["deletions"]}, {"alpha"})
+        self.assertIn("nt-legacy0000", self.harness.namespaces)
+        self.assertNotIn("nt-alpha00000", self.harness.namespaces)
+
+    def test_selected_retirement_failure_preserves_unselected_profile(self):
+        self.harness.fail_on.add("nt-alpha00000")
+        with self.assertRaises(ProvisioningUncertainError):
+            self.cleanup(selected_profiles=("alpha",), execute=True)
+        self.assertIn("nt-legacy0000", self.harness.namespaces)
+        self.assertEqual(self.harness.deleted, [])
+
+    def test_selected_retirement_is_idempotent(self):
+        self.cleanup(selected_profiles=("alpha",), execute=True)
+        deleted = list(self.harness.deleted)
+        second = self.cleanup(selected_profiles=("alpha",), execute=True)
+        self.assertEqual(second["deletions"], [])
+        self.assertEqual(self.harness.deleted, deleted)
+        self.assertIn("nt-legacy0000", self.harness.namespaces)
+
     def test_unknown_and_duplicate_selection_refused(self):
         for names in (("missing",), ("alpha", "alpha"), ("",), ["alpha"]):
             with self.subTest(names=names), self.assertRaises(RegistryError):
