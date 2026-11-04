@@ -427,9 +427,9 @@ def _classify(
             item["disposition"] = "complete_retirement_records"
             item["authority"] = BOOT if not uncertain_profiles.intersection({allocation["profile"]}) else OPERATOR
             item["reason"] = "the entire unbound generation is absent and only its namespace creation intent began"
-        if state == "creating" and binding is None and allocation["profile"] in absent_staged_profiles:
+        elif state == "creating" and binding is None and allocation["profile"] in absent_staged_profiles:
             item["disposition"] = "complete_retirement_records"
-            item["authority"] = BOOT
+            item["authority"] = OPERATOR if allocation["profile"] in uncertain_profiles else BOOT
             item["reason"] = "the entire unbound staged generation is absent; retire records only"
         elif binding is None and (
             allocation["kind"] == "namespace" and helpers.netns_identity(allocation["identifier"]) is not None

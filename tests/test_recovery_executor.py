@@ -550,6 +550,19 @@ class UnboundStagedGenerationTests(RecoveryTestBase):
         repeated = self.recover(fixture, boot=True, execute=True)
         self.assertEqual(repeated["actions"], [])
 
+    def test_uncertain_staged_generation_requires_operator_recovery(self):
+        fixture = self.staged()
+        self.mark_uncertain(fixture)
+        plan = self.recover(fixture, boot=True)
+        staged = [item for item in plan["items"] if item["action"] == "bookkeeping"]
+        self.assertTrue(staged)
+        self.assertTrue(all(item["authority"] == "operator" for item in staged))
+        with self.assertRaises(ProvisioningUncertainError):
+            self.recover(fixture, boot=True, execute=True)
+        self.assertIn("creating", self.journal_states(fixture).values())
+        self.assertEqual(self.intent_outcomes(fixture), ["uncertain"])
+        self.assertEqual(self.harness.deleted, [])
+
     def test_retired_history_does_not_block_recreated_generation_recovery(self):
         old_resources = ecosystem(
             "alpha", "nt-oldalpha00", "ntwgoldalpha", "ntluoldalpha", "nthloldalpha", states="retired"
