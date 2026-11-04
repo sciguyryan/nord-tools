@@ -69,26 +69,26 @@ def configure_disposable_wireguard(spec: TunnelSpecification, owned: OwnedNamesp
                 if ":" in spec.endpoint_address
                 else f"{spec.endpoint_address}:{spec.endpoint_port}"
             )
-            _run(
-                [
-                    "ip",
-                    "netns",
-                    "exec",
-                    spec.namespace,
-                    "wg",
-                    "set",
-                    spec.interface,
-                    "private-key",
-                    f"/proc/self/fd/{read_fd}",
-                    "peer",
-                    spec.peer_public_key,
-                    "endpoint",
-                    endpoint,
-                    "allowed-ips",
-                    ",".join(spec.peer_allowed_ips),
-                ],
-                pass_fds=(read_fd,),
-            )
+            configuration = [
+                "ip",
+                "netns",
+                "exec",
+                spec.namespace,
+                "wg",
+                "set",
+                spec.interface,
+                "private-key",
+                f"/proc/self/fd/{read_fd}",
+                "peer",
+                spec.peer_public_key,
+                "endpoint",
+                endpoint,
+                "allowed-ips",
+                ",".join(spec.peer_allowed_ips),
+            ]
+            if spec.persistent_keepalive_seconds:
+                configuration.extend(["persistent-keepalive", str(spec.persistent_keepalive_seconds)])
+            _run(configuration, pass_fds=(read_fd,))
         finally:
             os.close(read_fd)
         owned.verify()

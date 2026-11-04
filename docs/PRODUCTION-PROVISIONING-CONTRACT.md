@@ -17,3 +17,9 @@ The offline two-resource contract remains a diagnostic contract for the tunnel a
 ## WireGuard interface creation identity
 
 The disposable WireGuard creation path checks the namespace-local interface index immediately after creating the device and again after applying peer configuration. A missing, invalid or changed index stops subsequent address assignment and activation. This is a creation-time consistency check, not an ownership claim about an arbitrary pre-existing interface. The caller remains responsible for durable intent, descriptor-bound namespace ownership and rollback. Independent privileged mutation between checks remains outside the cooperating-process authority model.
+
+## WireGuard peer configuration
+
+The disposable configuration path accepts an optional persistent keepalive interval from 0 to 65535 seconds. Zero leaves the peer setting unset; a positive interval is passed explicitly to `wg set` alongside the validated endpoint and allowed IP networks. Booleans, strings and out-of-range values are refused before kernel mutation. The public plan records the interval but never carries the private key.
+
+The private key is still supplied through an inherited descriptor, not an argument or a persistent configuration file. This phase does not verify live peer state, provide persistent production credentials or establish fail-closed routing. Those require later integration and privileged acceptance.

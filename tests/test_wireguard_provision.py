@@ -60,3 +60,10 @@ class TunnelSpecificationTests(unittest.TestCase):
         ):
             with self.subTest(change=change), self.assertRaises(ProvisioningError):
                 self.spec(**change)
+
+    def test_keepalive_interval_is_bounded_and_explicit(self):
+        self.assertEqual(self.spec().public_plan()["persistent_keepalive_seconds"], 0)
+        self.assertEqual(self.spec(persistent_keepalive_seconds=25).public_plan()["persistent_keepalive_seconds"], 25)
+        for invalid in (-1, 65536, True, 1.5, "25", None):
+            with self.subTest(invalid=invalid), self.assertRaises(ProvisioningError):
+                self.spec(persistent_keepalive_seconds=invalid)

@@ -34,6 +34,7 @@ class TunnelSpecification:
     endpoint_port: int
     tunnel_address: str
     peer_allowed_ips: tuple[str, ...]
+    persistent_keepalive_seconds: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.namespace, str) or not _NAMESPACE.fullmatch(self.namespace):
@@ -62,6 +63,8 @@ class TunnelSpecification:
             raise ProvisioningError("invalid peer endpoint port")
         if not isinstance(self.peer_allowed_ips, tuple) or not self.peer_allowed_ips:
             raise ProvisioningError("at least one allowed IP network is required")
+        if type(self.persistent_keepalive_seconds) is not int or not 0 <= self.persistent_keepalive_seconds <= 65535:
+            raise ProvisioningError("invalid WireGuard persistent keepalive interval")
         canonical = set()
         for value in self.peer_allowed_ips:
             if not isinstance(value, str):
@@ -89,6 +92,7 @@ class TunnelSpecification:
             else f"{self.endpoint_address}:{self.endpoint_port}",
             "tunnel_address": self.tunnel_address,
             "peer_allowed_ips": list(self.peer_allowed_ips),
+            "persistent_keepalive_seconds": self.persistent_keepalive_seconds,
             "requires_privileged_executor": True,
             "requires_private_key_out_of_band": True,
         }

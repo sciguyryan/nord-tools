@@ -24,14 +24,14 @@ class SessionTests(TestCase):
         self.owned = OwnedNamespace(self.spec.namespace, 5, 1, 2)
         self.key = base64.b64encode(bytes(range(32)))
 
-    def execute(self, key=None):
+    def execute(self, key=None, spec=None):
         read_fd, write_fd = os.pipe()
         try:
             os.write(write_fd, self.key if key is None else key)
         finally:
             os.close(write_fd)
         try:
-            configure_disposable_wireguard(self.spec, self.owned, read_fd)
+            configure_disposable_wireguard(self.spec if spec is None else spec, self.owned, read_fd)
         finally:
             os.close(read_fd)
 
@@ -118,3 +118,21 @@ class SessionTests(TestCase):
         with self.assertRaisesRegex(SessionError, "invalid kernel index"):
             self.execute()
         run.assert_called_once()
+
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_keepalive_configuration_is_explicit(self, verify, run, index):
+        from dataclasses import replace
+
+        self.execute(spec=replace(self.spec, persistent_keepalive_seconds=25))
+        configuration = run.call_args_list[1].args[0]
+        self.assertEqual(configuration[-2:], ["persistent-keepalive", "25"])
+        self.assertTrue(configuration[configuration.index("private-key") + 1].startswith("/proc/self/fd/"))
+
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_default_keepalive_does_not_modify_peer_setting(self, verify, run, index):
+        self.execute()
+        self.assertNotIn("persistent-keepalive", run.call_args_list[1].args[0])
