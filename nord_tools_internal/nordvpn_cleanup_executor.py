@@ -438,12 +438,48 @@ def _deletable_tokens(plan: list[dict]) -> dict[str, list[str]]:
 
 
 def _observed_links(observation: dict) -> dict[tuple[str, str], int]:
+    """Refuse ambiguous link inventories rather than silently replacing entries.
+
+    Deletion authority must not depend on whichever duplicate happened to be
+    reported last. An incomplete inventory is equally unsuitable for deciding
+    that an owned interface has disappeared.
+    """
+    if not isinstance(observation, dict):
+        raise ProvisioningUncertainError("kernel interface observation is invalid")
     links: dict[tuple[str, str], int] = {}
-    for link in observation.get("host_interfaces", []):
-        links[("host", link["name"])] = link["index"]
-    for details in observation.get("namespace_details", []):
-        for link in details.get("interfaces", []):
-            links[(details["name"], link["name"])] = link["index"]
+
+    def add(scope: str, link: object) -> None:
+        if not isinstance(link, dict):
+            raise ProvisioningUncertainError("kernel interface observation contains an invalid link")
+        name = link.get("name")
+        index = link.get("index")
+        if not isinstance(name, str) or not name or "/" in name or "\x00" in name:
+            raise ProvisioningUncertainError("kernel interface observation contains an invalid name")
+        if type(index) is not int or index <= 0:
+            raise ProvisioningUncertainError("kernel interface observation contains an invalid index")
+        key = (scope, name)
+        if key in links or any(
+            existing_scope == scope and existing_index == index for (existing_scope, _), existing_index in links.items()
+        ):
+            raise ProvisioningUncertainError("kernel interface observation contains conflicting identities")
+        links[key] = index
+
+    hosts = observation.get("host_interfaces")
+    details = observation.get("namespace_details")
+    if not isinstance(hosts, list) or not isinstance(details, list):
+        raise ProvisioningUncertainError("kernel interface observation is incomplete")
+    for link in hosts:
+        add("host", link)
+    seen_scopes: set[str] = set()
+    for detail in details:
+        if not isinstance(detail, dict) or not isinstance(detail.get("name"), str):
+            raise ProvisioningUncertainError("kernel namespace observation is invalid")
+        scope = detail["name"]
+        if not scope or scope in seen_scopes or not isinstance(detail.get("interfaces"), list):
+            raise ProvisioningUncertainError("kernel namespace observation is ambiguous")
+        seen_scopes.add(scope)
+        for link in detail["interfaces"]:
+            add(scope, link)
     return links
 
 
