@@ -133,8 +133,10 @@ class KernelHarness:
             and expected_public_key == f"pub-{_KEY}"
         )
 
-    def remove_host_interface(self, name: str) -> None:
-        self.host_links.pop(name, None)
+    def remove_host_interface(self, name: str, ifindex: int) -> None:
+        if self.host_links.get(name) != ifindex:
+            raise RegistryError("host interface identity changed during rollback")
+        del self.host_links[name]
 
     def delete_namespace(self, name: str, binding: dict) -> None:
         record = self.namespaces.get(name)
@@ -340,6 +342,20 @@ class RebootRestorationTests(RestoreTestBase):
 class FailureInjectionTests(RestoreTestBase):
     def setUp(self):
         super().setUp()
+
+    def test_rollback_refuses_replaced_host_link(self):
+        def replace_link(owned, policy):
+            # A separate actor replaces the name after our underlay creation.
+            self.harness.host_links[next(iter(self.harness.host_links))] += 1000
+            raise UnderlayError("isolation failed after host link replacement")
+
+        self.harness.install_isolation = replace_link
+        with self.assertRaises(UnderlayError):
+            self.restore()
+        # The foreign replacement is not deleted by a name-only rollback.
+        self.assertEqual(len(self.harness.host_links), 1)
+        self.assertEqual(self.harness.namespaces, {})
+        self.assertEqual(self.load("operation-intents.json")["operations"][-1]["outcome"], "uncertain")
 
     def test_failed_isolation_install_rolls_back_and_marks_failure_evidence(self):
         def broken(owned, policy):

@@ -93,7 +93,7 @@ class RestoreKernel:
     interface_index: Callable[[str, str], int]
     public_key_from_fd: Callable[[int], str]
     verify_wireguard: Callable[..., bool]
-    remove_host_interface: Callable[[str], None]
+    remove_host_interface: Callable[[str, int], None]
 
 
 def _real_kernel() -> RestoreKernel:
@@ -192,8 +192,12 @@ def _real_kernel() -> RestoreKernel:
                 return False
         return True
 
-    def remove_host_interface(name: str) -> None:
-        subprocess.run(["ip", "link", "del", "dev", name], capture_output=True, timeout=15, check=False)
+    def remove_host_interface(name: str, ifindex: int) -> None:
+        # Use the same identity-checked, indexed mutation as confirmed cleanup.
+        # Never delete by name alone after a failed provisioning attempt.
+        from nord_tools_internal.nordvpn_cleanup_executor import _real_kernel as cleanup_kernel
+
+        cleanup_kernel().delete_host_interface(name, ifindex)
 
     return RestoreKernel(
         observe=observe,
@@ -500,7 +504,10 @@ def _restore_profile(
                 plan["underlay"]["namespace_address"],
                 plan["underlay"]["host_address"],
             )
-            cleanup.append(lambda: helpers.remove_host_interface(underlay_host))
+            # Capture the creation-time host index. A subsequent name reuse
+            # must not turn rollback into deletion of an unrelated interface.
+            host_ifindex = _host_index(helpers.observe(), underlay_host)
+            cleanup.append(lambda: helpers.remove_host_interface(underlay_host, host_ifindex))
             gateway = str(ipaddress.ip_interface(plan["underlay"]["host_address"]).ip)
             with open(credential_path, "rb") as credential:
                 public_key = helpers.public_key_from_fd(credential.fileno())
@@ -557,14 +564,23 @@ def _restore_profile(
                 _advance(journal_path, token, "active")
             owned.release()
             return {"namespace": namespace, "profile": profile}
-        except BaseException:
+        except BaseException as failure:
             # Roll back only what this attempt created, best effort, and record
             # the failed lifecycle evidence rather than an invented success.
+            rollback_failures = []
             for step in reversed(cleanup):
                 try:
                     step()
-                except Exception:
-                    pass
+                except Exception as exc:
+                    rollback_failures.append(type(exc).__name__)
+            # An incomplete rollback is never silently represented as clean.
+            # The durable creation intent remains uncertain for recovery.
+            if rollback_failures:
+                failure.add_note(
+                    "rollback could not complete safely ("
+                    + ", ".join(rollback_failures)
+                    + "); the creation intent remains uncertain and requires recovery review"
+                )
             try:
                 for token in tokens:
                     try:
