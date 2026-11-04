@@ -66,7 +66,7 @@ def uncertain_stores(root: Path) -> bool:
     return bool(interrupted_evidence(root))
 
 
-def run_probe() -> str:
+def run_probe(*, after_binding: bool = False) -> str:
     if os.geteuid() != 0:
         raise ProbeError("root privileges are required")
     for binary in ("ip", "wg"):
@@ -154,7 +154,14 @@ def run_probe() -> str:
         read_fd, write_fd = os.pipe()
         try:
             child = subprocess.Popen(
-                [sys.executable, str(Path(__file__).resolve()), "--checkpoint-child", str(startup), str(write_fd)],
+                [
+                    sys.executable,
+                    str(Path(__file__).resolve()),
+                    "--checkpoint-child",
+                    str(startup),
+                    str(write_fd),
+                    *(["--after-binding"] if after_binding else []),
+                ],
                 cwd=str(Path(__file__).resolve().parent.parent),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.PIPE,
@@ -169,7 +176,18 @@ def run_probe() -> str:
             findings = interrupted_evidence(temporary)
             if not findings:
                 raise ProbeError("checkpoint fired without a durable pending intent")
-            print("PASS: checkpoint reached after durable intent, before kernel creation", flush=True)
+            if after_binding:
+                binding_file = temporary / "owner-bindings.json"
+                bindings = json.loads(binding_file.read_text(encoding="utf-8"))
+                namespace_bindings = [entry for entry in bindings["bindings"] if entry["kind"] == "namespace"]
+                if len(namespace_bindings) != 1:
+                    raise ProbeError("partial creation checkpoint lacks one durable namespace binding")
+                live = command("ip", "netns", "list")
+                if live.returncode or namespace_bindings[0]["identifier"] not in _namespace_names(live.stdout):
+                    raise ProbeError("partial creation checkpoint lacks its live namespace")
+                print("PASS: checkpoint retained a live, identity-bound namespace", flush=True)
+            else:
+                print("PASS: checkpoint reached after durable intent, before kernel creation", flush=True)
         finally:
             os.close(read_fd)
             if write_fd >= 0:
@@ -252,7 +270,7 @@ def run_probe() -> str:
     return result
 
 
-def checkpoint_child(startup: str, ready_fd: int) -> int:
+def checkpoint_child(startup: str, ready_fd: int, *, after_binding: bool = False) -> int:
     """Probe-only wrapper: stop after intent persistence, before kernel mutation."""
     from nord_tools_internal import nordvpn_restore_executor as restore
 
@@ -267,10 +285,28 @@ def checkpoint_child(startup: str, ready_fd: int) -> int:
 
         return original(store_path, journal, allocation_id, paused_operation, verify)
 
-    restore.execute_recorded_creation = intercepted
+    if after_binding:
+        original_binding = restore.record_binding
+
+        def intercepted_binding(store_path, journal, allocation_id, binding, *, configuration=None):
+            result = original_binding(store_path, journal, allocation_id, binding, configuration=configuration)
+            if "device" in binding and "inode" in binding:
+                os.write(ready_fd, b"R")
+                # The namespace has been created and its identity durably
+                # recorded. A forced kill leaves a real partial transaction.
+                while True:
+                    signal.pause()
+            return result
+
+        restore.record_binding = intercepted_binding
+    else:
+        restore.execute_recorded_creation = intercepted
     try:
         return nordvpn_manage.main(["restore-startup", "--config", startup])
     finally:
+        restore.execute_recorded_creation = original
+        if after_binding:
+            restore.record_binding = original_binding
         os.close(ready_fd)
 
 
@@ -278,18 +314,23 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--checkpoint-child", nargs=2, metavar=("STARTUP", "FD"), help=argparse.SUPPRESS)
     parser.add_argument("--run-privileged", action="store_true", help="authorise a disposable privileged probe")
+    parser.add_argument(
+        "--after-binding", action="store_true", help="interrupt after the namespace owner binding is durable"
+    )
     args = parser.parse_args(argv)
     if args.checkpoint_child is not None:
-        return checkpoint_child(args.checkpoint_child[0], int(args.checkpoint_child[1]))
+        return checkpoint_child(
+            args.checkpoint_child[0], int(args.checkpoint_child[1]), after_binding=args.after_binding
+        )
     if not args.run_privileged:
+        boundary = "after a live namespace is created and bound" if args.after_binding else "before kernel creation"
         print(
-            "DRY RUN: would restore one pinned profile inside child processes, stop them at a durable intent checkpoint until real "
-            "uncertainty is recorded, converge via boot and operator recovery, and then clean everything. "
-            "No changes made."
+            "DRY RUN: would restore a pinned profile, kill the child at a durable checkpoint "
+            f"{boundary}, recover through the production authority paths and clean up. No changes made."
         )
         return 0
     try:
-        run_probe()
+        run_probe(after_binding=args.after_binding)
     except Exception as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

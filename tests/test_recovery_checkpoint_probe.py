@@ -56,3 +56,37 @@ def test_recovery_probe_success_removes_disposable_evidence():
     )
     assert cleanup.lineno > guarded.end_lineno
     assert any(isinstance(node, ast.Return) for node in function.body if node.lineno > cleanup.lineno)
+
+
+def test_checkpoint_after_binding_requires_durable_owner_record(tmp_path):
+    """The partial-kernel checkpoint fires only after the real binding writer."""
+    from nord_tools_internal import nordvpn_restore_executor as restore
+
+    read_fd, write_fd = os.pipe()
+    calls = []
+
+    class CheckpointReached(Exception):
+        pass
+
+    def fake_binding(store_path, journal, allocation_id, binding, *, configuration=None):
+        calls.append((allocation_id, binding))
+        return None
+
+    def fake_main(argv):
+        assert argv == ["restore-startup", "--config", str(tmp_path / "startup.json")]
+        restore.record_binding("store", {}, "interface", {"scope": "host", "ifindex": 4})
+        restore.record_binding("store", {}, "namespace", {"device": 5, "inode": 100})
+        return 0
+
+    with (
+        patch.object(restore, "record_binding", fake_binding),
+        patch("tools.probe_recovery.nordvpn_manage.main", fake_main),
+        patch("tools.probe_recovery.signal.pause", side_effect=CheckpointReached),
+        pytest.raises(CheckpointReached),
+    ):
+        checkpoint_child(str(tmp_path / "startup.json"), write_fd, after_binding=True)
+    assert os.read(read_fd, 1) == b"R"
+    assert len(calls) == 2
+    os.close(read_fd)
+    with pytest.raises(OSError):
+        os.fstat(write_fd)
