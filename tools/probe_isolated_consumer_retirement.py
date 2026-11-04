@@ -24,7 +24,9 @@ from nord_tools_internal.nordvpn_cleanup_executor import plan_cleanup
 from nord_tools_internal.nordvpn_discovery import discover
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
 from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
-from nord_tools_internal.nordvpn_runtime_consumers import initialise_runtime_consumers
+from nord_tools_internal.nordvpn_runtime_consumers import initialise_runtime_consumers, read_runtime_consumers
+from nord_tools_internal.nordvpn_consumer_reference_store import write_private_json
+from nord_tools_internal.nordvpn_registry import RegistryError
 
 
 class ProbeError(RuntimeError):
@@ -131,6 +133,59 @@ def run_probe() -> None:
         before = verify_state()
         if before["operator_review_required"]:
             raise ProbeError("initial ownership preflight requires review")
+        # A syntactically valid but outstanding lease must block kernel deletion,
+        # even when the caller claims that the consumer has been released.
+        empty_evidence = read_runtime_consumers(runtime, policy_doc)
+        occupied = dict(empty_evidence)
+        occupied["leases"] = [
+            {
+                "application": "alpha",
+                "profile": "isolated",
+                "allocation_key": "application:alpha:profile:isolated",
+                "pid": os.getpid(),
+                "boot_id": "probe-boot",
+                "start_time": "probe-start",
+                "executable": "/bin/true",
+            }
+        ]
+        write_private_json(runtime, occupied)
+        try:
+            plan_cleanup(
+                journal,
+                bindings,
+                intent_path=intents,
+                selected_profiles=(identities["alpha"],),
+                consumer_policy=policy_doc,
+                released_consumers=("alpha",),
+                runtime_consumers_path=runtime,
+                execute=True,
+            )
+        except RegistryError as exc:
+            if "runtime consumer leases retain" not in str(exc):
+                raise ProbeError(f"unexpected outstanding-lease refusal: {exc}") from exc
+        else:
+            raise ProbeError("outstanding alpha lease permitted kernel retirement")
+        if verify_state()["operator_review_required"]:
+            raise ProbeError("lease refusal disturbed resource ownership")
+        # The separate beta allocation must not be eligible for alpha's release.
+        try:
+            plan_cleanup(
+                journal,
+                bindings,
+                intent_path=intents,
+                selected_profiles=(identities["beta"],),
+                consumer_policy=policy_doc,
+                released_consumers=("alpha",),
+                runtime_consumers_path=runtime,
+                execute=True,
+            )
+        except RegistryError:
+            pass
+        else:
+            raise ProbeError("alpha release authorised beta retirement")
+        write_private_json(runtime, empty_evidence)
+        print("PASS: outstanding leases and cross-allocation release attempts refused", flush=True)
+
         first = plan_cleanup(
             journal,
             bindings,
