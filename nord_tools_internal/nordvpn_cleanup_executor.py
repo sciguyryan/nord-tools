@@ -44,6 +44,7 @@ from nord_tools_internal.nordvpn_ownership_verify import NETNS_MOUNT_DIR, initia
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_sharing_lifecycle import plan_consumer_release
+from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
 from nord_tools_internal.nordvpn_consumer_reference_store import (
     ConsumerReferenceError,
     read_consumer_references,
@@ -385,6 +386,12 @@ def plan_cleanup(
             or len(set(selected_profiles)) != len(selected_profiles)
         ):
             raise RegistryError("selected profiles must be a tuple of distinct, non-empty names")
+    # A consumer-specific kernel allocation must not be retired using only a
+    # caller's declared release. Require the durable runtime lease store even
+    # for planning, including when no consumers are currently recorded.
+    if selected_profiles is not None and any(name.startswith("ntiso_") for name in selected_profiles):
+        if runtime_consumers_path is None or consumer_policy is None:
+            raise RegistryError("isolated allocation retirement requires runtime consumer evidence and policy")
     # Consumer-aware retirement is opt-in and must never silently fall back to
     # unrestricted profile deletion when its evidence is incomplete.
     if (consumer_policy is None) != (released_consumers is None):
@@ -396,13 +403,21 @@ def plan_cleanup(
             decisions = plan_consumer_release(consumer_policy, released_consumers)
         except (ProfileError, TypeError, ValueError) as exc:
             raise RegistryError(f"invalid consumer release: {exc}") from exc
-        retained_profiles = {item.profile for item in decisions if item.retained_consumers}
+        retained_profiles = {
+            kernel_profile_for_allocation(item.allocation_key, item.profile, item.sharing)
+            for item in decisions
+            if item.retained_consumers
+        }
         blocked = set(selected_profiles) & retained_profiles
         if blocked:
             raise RegistryError("consumer references still retain selected profiles: " + ", ".join(sorted(blocked)))
         # A policy without consumers is not sufficient evidence of release.
         # Refuse profiles not represented by an explicit released group.
-        eligible = {item.profile for item in decisions if item.retirement_eligible and item.released_consumers}
+        eligible = {
+            kernel_profile_for_allocation(item.allocation_key, item.profile, item.sharing)
+            for item in decisions
+            if item.retirement_eligible and item.released_consumers
+        }
         unsupported = set(selected_profiles) - eligible
         if unsupported:
             raise RegistryError("selected profiles lack released consumer evidence: " + ", ".join(sorted(unsupported)))
@@ -431,7 +446,17 @@ def plan_cleanup(
                 references = read_consumer_references(consumer_references_path, consumer_policy)
             except ConsumerReferenceError as exc:
                 raise RegistryError(f"invalid persisted consumer references: {exc}") from exc
-            active_profiles = {item["profile"] for item in references["consumers"] if item["active"]}
+            from nord_tools_internal.nordvpn_application_plan import plan_application
+
+            active_profiles = {
+                kernel_profile_for_allocation(
+                    plan_application(consumer_policy, item["application"]).allocation_key,
+                    plan_application(consumer_policy, item["application"]).profile,
+                    plan_application(consumer_policy, item["application"]).sharing,
+                )
+                for item in references["consumers"]
+                if item["active"]
+            }
             blocked = set(selected_profiles) & active_profiles
             if blocked:
                 raise RegistryError(
@@ -446,7 +471,16 @@ def plan_cleanup(
                 runtime = read_runtime_locked(runtime_consumers_path, consumer_policy)
             except ConsumerReferenceError as exc:
                 raise RegistryError(f"invalid runtime consumer evidence: {exc}") from exc
-            retained = {item["profile"] for item in runtime["leases"]}
+            from nord_tools_internal.nordvpn_application_plan import plan_application
+
+            retained = {
+                kernel_profile_for_allocation(
+                    item["allocation_key"],
+                    item["profile"],
+                    plan_application(consumer_policy, item["application"]).sharing,
+                )
+                for item in runtime["leases"]
+            }
             blocked = set(selected_profiles) & retained
             if blocked:
                 raise RegistryError("runtime consumer leases retain selected profiles: " + ", ".join(sorted(blocked)))

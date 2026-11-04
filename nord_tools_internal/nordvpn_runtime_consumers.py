@@ -17,6 +17,10 @@ from nord_tools_internal.nordvpn_consumer_reference_store import (
     locked_consumer_references,
 )
 from nord_tools_internal.nordvpn_profiles import validate_policy
+from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
+from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock
+from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
 from nord_tools_internal.nordvpn_sharing_contract import resolve_ownership_groups
 
 
@@ -205,3 +209,70 @@ def assert_allocation_unreferenced(path: str | Path, policy: dict, allocation_ke
         document = _read(path, policy)
         if any(item["allocation_key"] == allocation_key for item in document["leases"]):
             raise ConsumerReferenceError("allocation retains a durable runtime consumer lease")
+
+
+def acquire_provisioned_consumer(
+    path: str | Path,
+    policy: dict,
+    application: str,
+    pid: int,
+    *,
+    journal_path: str | Path,
+    bindings_path: str | Path,
+    intent_path: str | Path,
+    observe,
+) -> dict:
+    """Bind a live process to a fully verified, provisioned kernel allocation.
+
+    The journal execution lock precedes the reference lock, matching cleanup.
+    Fresh preflight evidence must cover exactly the allocation's namespace and
+    three interfaces, all active and owner-verified. A missing or uncertain
+    resource refuses acquisition. No network mutation occurs here.
+    """
+    from nord_tools_internal.nordvpn_consumer_reference_store import read_private_json
+    from nord_tools_internal.nordvpn_application_plan import plan_application
+
+    checked = validate_policy(policy)
+    plan = plan_application(checked, application)
+    kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
+    with lifecycle_execution_lock(journal_path), locked_consumer_references(path):
+        journal = validate_journal(read_private_json(journal_path))
+        bindings = read_private_json(bindings_path)
+        intents = read_private_json(intent_path)
+        observation = observe()
+        preflight = preflight_ownership(journal, bindings, observation, intents)
+        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == kernel_profile]
+        if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
+            "interface",
+            "interface",
+            "interface",
+            "namespace",
+        ]:
+            raise ConsumerReferenceError("allocation does not have a complete provisioned resource set")
+        states = {item["allocation_id"]: item["state"] for item in journal["events"]}
+        findings = {item["allocation_id"]: item for item in preflight["resources"]}
+        if any(
+            states.get(item["allocation_id"]) != "active"
+            or findings.get(item["allocation_id"], {}).get("finding") != "verified_current"
+            for item in resources
+        ):
+            raise ConsumerReferenceError("allocation resources are not active and independently verified")
+        document = _read(path, checked)
+        if any(lease["application"] == application for lease in document["leases"]):
+            raise ConsumerReferenceError("consumer already has a lease; release or recover it first")
+        before = _identity(pid)
+        if before[2] != checked["applications"][application]["executable"] or _identity(pid) != before:
+            raise ConsumerReferenceError("consumer executable or process identity changed during acquisition")
+        document["leases"].append(
+            {
+                "application": application,
+                "profile": plan.profile,
+                "allocation_key": plan.allocation_key,
+                "pid": pid,
+                "boot_id": before[0],
+                "start_time": before[1],
+                "executable": before[2],
+            }
+        )
+        _write(path, checked, document)
+        return _validate(checked, document)

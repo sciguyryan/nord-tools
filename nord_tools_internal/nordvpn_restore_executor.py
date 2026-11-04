@@ -33,6 +33,7 @@ import secrets
 import subprocess
 from typing import Callable
 
+from nord_tools_internal.nordvpn_allocation_profiles import expand_allocation_profiles
 from nord_tools_internal.nordvpn_discovery import discover
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
 from nord_tools_internal.nordvpn_identity import allocate_identity
@@ -346,11 +347,14 @@ def _prevalidate_plans(config: dict, desired: dict) -> dict:
     """Fail closed, before any mutation, on unusable plans or credentials."""
     tunnels = config["tunnels"]
     credentials = config["credentials"]
-    unknown = [name for name in tunnels if name not in desired["vpn_profiles"]]
+    effective, providers = expand_allocation_profiles(desired)
+    unknown = [
+        name for name in tunnels if name not in desired["vpn_profiles"] and name not in effective["vpn_profiles"]
+    ]
     if unknown:
         raise RegistryError(f"provider tunnel plans name profiles out of saved policy: {', '.join(unknown)}")
     for name, plan in sorted(tunnels.items()):
-        if credentials.get(name) is None:
+        if credentials.get(name, credentials.get(providers.get(name))) is None:
             raise RegistryError(f"the tunnel plan for {name} has no pinned credential input")
         try:
             _validated_plan(plan, "nt-validation0123", "ntwg0123abcd")
@@ -643,7 +647,34 @@ def restore_boot_state(
         raise RegistryError(f"the saved persistent policy does not exist: {validated['policy']}")
     with _execution_lock(validated["journal"]):
         _ensure_stores(validated)
-        desired = _restore_boot_policy(validated)
+        original_policy = _restore_boot_policy(validated)
+        desired, provider_profiles = expand_allocation_profiles(original_policy)
+        # Each isolated consumer receives a distinct durable profile identity.
+        # The pinned provider specification and credential remain sourced from
+        # the original profile, never inferred from the synthetic name.
+        tunnels = {
+            identity: validated["tunnels"].get(identity, validated["tunnels"].get(source))
+            for identity, source in provider_profiles.items()
+            if identity in validated["tunnels"] or source in validated["tunnels"]
+        }
+        # A profile plan cannot be blindly reused for multiple isolated
+        # allocations: identical host-side underlay networks make routing
+        # ambiguous. Operators must pin separate addressing per allocation.
+        underlay_owners: list[tuple[str, ipaddress.IPv4Network | ipaddress.IPv6Network]] = []
+        for identity, plan in sorted(tunnels.items()):
+            network = ipaddress.ip_interface(plan["underlay"]["host_address"]).network
+            for previous, occupied in underlay_owners:
+                if network.overlaps(occupied):
+                    raise RegistryError(
+                        f"allocation profiles {previous} and {identity} overlap in host underlay networks; "
+                        "pin a distinct tunnel plan for each isolated allocation"
+                    )
+            underlay_owners.append((identity, network))
+        credentials = {
+            identity: validated["credentials"].get(identity, validated["credentials"].get(source))
+            for identity, source in provider_profiles.items()
+            if identity in validated["credentials"] or source in validated["credentials"]
+        }
         # Boot recovery next: it completes only certified bookkeeping and
         # identity-verified rollback of half-built creations, and aborts the
         # entire boot when uncertain evidence needs operator review.
@@ -663,6 +694,21 @@ def restore_boot_state(
         namespace_journal = validate_journal(_read_document(validated["journal"]))
         preflight = preflight_ownership(namespace_journal, bindings, observation, intents)
         actual = derive_actual_state(namespace_journal, bindings, preflight)
+        # Existing profile-scoped isolated resources cannot be silently
+        # reinterpreted as consumer-owned allocations. Preserve them for
+        # explicit retirement before creating replacement allocations.
+        legacy = {
+            name
+            for name, definition in original_policy["vpn_profiles"].items()
+            if definition["sharing"] == "isolated" and name not in desired["vpn_profiles"]
+        }
+        for name in sorted(legacy):
+            state = actual["profiles"].get(name)
+            if state and (state["present_resources"] or state["blockers"]):
+                raise RegistryError(
+                    f"legacy isolated profile {name} retains resources; "
+                    "review and retire the old profile before enabling per-consumer allocations"
+                )
         graph = validated["graph"] and _read_document(validated["graph"])
         reconciliation = reconcile_desired(desired, actual, graph)
         decisions = {item["profile"]: item for item in reconciliation["decisions"]}
@@ -674,12 +720,12 @@ def restore_boot_state(
             for item in preflight["resources"]
             if item["finding"] in _ABSENT_FINDINGS
         }
-        named = validated["credentials"]
+        named = credentials
         eligibility: dict[str, str | None] = {}
         for name, decision in decisions.items():
             record = actual["profiles"].get(name)
             reason = _eligibility(decision, record, name in desired["vpn_profiles"])
-            if reason is not None or name not in validated["tunnels"]:
+            if reason is not None or name not in tunnels:
                 if reason is None:
                     reason = "the desired profile has no provider tunnel plan"
                 eligibility[name] = reason
@@ -703,7 +749,7 @@ def restore_boot_state(
             _restore_profile(
                 name,
                 desired["vpn_profiles"][name],
-                validated["tunnels"][name],
+                tunnels[name],
                 named[name],
                 validated,
                 profile_stale,
