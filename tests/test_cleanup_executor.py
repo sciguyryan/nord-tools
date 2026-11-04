@@ -593,3 +593,56 @@ class CliTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConsumerAwareCleanupTests(CleanupTestBase):
+    """Consumer release evidence must block unsafe selected retirement."""
+
+    def test_shared_reference_blocks_selected_retirement(self):
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {
+                "browser": {"executable": "/usr/bin/browser"},
+                "editor": {"executable": "/usr/bin/editor"},
+            },
+        }
+        with self.assertRaisesRegex(RegistryError, "still retain"):
+            self.cleanup(
+                selected_profiles=("alpha",),
+                consumer_policy=consumer_policy,
+                released_consumers=("browser",),
+                execute=True,
+            )
+        self.assertEqual(self.harness.deleted, [])
+
+    def test_complete_release_allows_existing_verified_plan(self):
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {
+                "browser": {"executable": "/usr/bin/browser"},
+                "editor": {"executable": "/usr/bin/editor"},
+            },
+        }
+        report = self.cleanup(
+            selected_profiles=("alpha",), consumer_policy=consumer_policy, released_consumers=("editor", "browser")
+        )
+        self.assertEqual({entry["profile"] for entry in report["plan"]}, {"alpha"})
+        self.assertEqual(self.harness.deleted, [])
+
+    def test_missing_release_evidence_is_refused(self):
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {},
+        }
+        with self.assertRaisesRegex(RegistryError, "lack released consumer evidence"):
+            self.cleanup(selected_profiles=("alpha",), consumer_policy=consumer_policy, released_consumers=())
+        with self.assertRaisesRegex(RegistryError, "supplied together"):
+            self.cleanup(selected_profiles=("alpha",), consumer_policy=consumer_policy)
+        with self.assertRaisesRegex(RegistryError, "explicit selected"):
+            self.cleanup(consumer_policy=consumer_policy, released_consumers=())

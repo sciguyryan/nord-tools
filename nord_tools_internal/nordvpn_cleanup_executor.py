@@ -42,6 +42,8 @@ from nord_tools_internal.nordvpn_operation_store import initialise_intents, read
 from nord_tools_internal.nordvpn_ownership_verify import NETNS_MOUNT_DIR, initialise_bindings, preflight_ownership
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
+from nord_tools_internal.nordvpn_sharing_lifecycle import plan_consumer_release
+from nord_tools_internal.nordvpn_profiles import ProfileError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 
 
@@ -351,6 +353,8 @@ def plan_cleanup(
     graph_path: str | Path | None = None,
     desired_policy: object | None = None,
     selected_profiles: tuple[str, ...] | None = None,
+    consumer_policy: dict | None = None,
+    released_consumers: tuple[str, ...] | None = None,
     resolvers: bool = False,
     execute: bool = False,
     kernel: CleanupKernel | None = None,
@@ -373,6 +377,27 @@ def plan_cleanup(
             or len(set(selected_profiles)) != len(selected_profiles)
         ):
             raise RegistryError("selected profiles must be a tuple of distinct, non-empty names")
+    # Consumer-aware retirement is opt-in and must never silently fall back to
+    # unrestricted profile deletion when its evidence is incomplete.
+    if (consumer_policy is None) != (released_consumers is None):
+        raise RegistryError("consumer policy and released consumers must be supplied together")
+    if consumer_policy is not None:
+        if selected_profiles is None:
+            raise RegistryError("consumer-aware retirement requires explicit selected profiles")
+        try:
+            decisions = plan_consumer_release(consumer_policy, released_consumers)
+        except (ProfileError, TypeError, ValueError) as exc:
+            raise RegistryError(f"invalid consumer release: {exc}") from exc
+        retained_profiles = {item.profile for item in decisions if item.retained_consumers}
+        blocked = set(selected_profiles) & retained_profiles
+        if blocked:
+            raise RegistryError("consumer references still retain selected profiles: " + ", ".join(sorted(blocked)))
+        # A policy without consumers is not sufficient evidence of release.
+        # Refuse profiles not represented by an explicit released group.
+        eligible = {item.profile for item in decisions if item.retirement_eligible and item.released_consumers}
+        unsupported = set(selected_profiles) - eligible
+        if unsupported:
+            raise RegistryError("selected profiles lack released consumer evidence: " + ", ".join(sorted(unsupported)))
     desired_profiles = None
     if desired_policy is not None:
         if not isinstance(desired_policy, dict) or not isinstance(desired_policy.get("vpn_profiles"), dict):
