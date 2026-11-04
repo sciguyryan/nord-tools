@@ -27,6 +27,51 @@ class SessionProbeTests(unittest.TestCase):
         with patch.object(probe, "run_probe", side_effect=probe.ProbeError("failed")):
             self.assertEqual(probe.main(["--run-privileged"]), 1)
 
+    def test_live_peer_readback_accepts_matching_fields(self):
+        peer = "p" * 43 + "="
+        values = [
+            (peer + "\n").encode(),
+            (peer + "\t198.51.100.2:51820\n").encode(),
+            (peer + "\t10.213.240.1/32, 10.213.240.3/32\n").encode(),
+            (peer + "\t25\n").encode(),
+        ]
+        with patch.object(probe, "command", side_effect=values) as command:
+            probe.verify_live_peer(
+                "nt-12345678",
+                "ntwg1234",
+                peer,
+                "198.51.100.2:51820",
+                ("10.213.240.1/32", "10.213.240.3/32"),
+                25,
+            )
+        self.assertEqual(command.call_count, 4)
+        self.assertTrue(all("dump" not in call.args for call in command.call_args_list))
+
+    def test_live_peer_readback_rejects_mismatches(self):
+        peer = "p" * 43 + "="
+        good = [
+            (peer + "\n").encode(),
+            (peer + "\t198.51.100.2:51820\n").encode(),
+            (peer + "\t10.213.240.1/32\n").encode(),
+            (peer + "\t25\n").encode(),
+        ]
+        for index, replacement in enumerate((b"other\n", b"wrong\n", b"invalid\n", b"off\n")):
+            with self.subTest(field=index):
+                observed = good.copy()
+                observed[index] = replacement
+                with (
+                    patch.object(probe, "command", side_effect=observed),
+                    self.assertRaises(probe.ProbeError),
+                ):
+                    probe.verify_live_peer(
+                        "nt-12345678",
+                        "ntwg1234",
+                        peer,
+                        "198.51.100.2:51820",
+                        ("10.213.240.1/32",),
+                        25,
+                    )
+
     def test_missing_root_refuses_before_mutation(self):
         with (
             patch.object(probe.os, "geteuid", return_value=1000),

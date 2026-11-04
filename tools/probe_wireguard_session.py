@@ -8,6 +8,7 @@ host routes, DNS settings, firewall rules or existing VPNs are changed.
 from __future__ import annotations
 
 import argparse
+import ipaddress
 import os
 from pathlib import Path
 import secrets
@@ -36,6 +37,34 @@ def command(*argv: str, input_data: bytes | None = None) -> bytes:
     return result.stdout.strip()
 
 
+def verify_live_peer(
+    namespace: str, interface: str, peer_public_key: str, endpoint: str, allowed_ips: tuple[str, ...], keepalive: int
+) -> None:
+    """Check non-secret peer fields against the kernel without a full configuration dump."""
+    prefix = ("ip", "netns", "exec", namespace, "wg", "show", interface)
+    peers = command(*prefix, "peers").decode("ascii").splitlines()
+    if peers != [peer_public_key]:
+        raise ProbeError("WireGuard peer identity differs from the requested configuration")
+    endpoints = command(*prefix, "endpoints").decode("ascii").splitlines()
+    if endpoints != [f"{peer_public_key}\t{endpoint}"]:
+        raise ProbeError("WireGuard endpoint differs from the requested configuration")
+    networks = command(*prefix, "allowed-ips").decode("ascii").splitlines()
+    if len(networks) != 1:
+        raise ProbeError("WireGuard allowed IP observation is ambiguous")
+    parts = networks[0].split("\t", 1)
+    if len(parts) != 2 or parts[0] != peer_public_key:
+        raise ProbeError("WireGuard allowed IP peer identity differs")
+    try:
+        actual = {str(ipaddress.ip_network(value.strip(), strict=True)) for value in parts[1].split(",")}
+    except ValueError as exc:
+        raise ProbeError("WireGuard allowed IP observation is invalid") from exc
+    if actual != set(allowed_ips):
+        raise ProbeError("WireGuard allowed IPs differ from the requested configuration")
+    observed_keepalive = command(*prefix, "persistent-keepalive").decode("ascii").splitlines()
+    if observed_keepalive != [f"{peer_public_key}\t{keepalive if keepalive else 'off'}"]:
+        raise ProbeError("WireGuard keepalive differs from the requested configuration")
+
+
 def run_probe() -> str:
     """Configure one disposable interface and verify its kernel peer state."""
     if os.geteuid() != 0:
@@ -51,7 +80,14 @@ def run_probe() -> str:
     public_key = command("wg", "pubkey", input_data=private_key).decode("ascii")
     peer_public_key = command("wg", "pubkey", input_data=peer_private_key).decode("ascii")
     spec = TunnelSpecification(
-        namespace, interface, peer_public_key, "198.51.100.2", 51820, "10.213.240.2/32", ("10.213.240.1/32",)
+        namespace,
+        interface,
+        peer_public_key,
+        "198.51.100.2",
+        51820,
+        "10.213.240.2/32",
+        ("10.213.240.1/32",),
+        25,
     )
     # Avoid persistent key files. The key enters the configurator through a pipe.
     read_fd, write_fd = os.pipe()
@@ -72,9 +108,13 @@ def run_probe() -> str:
             )
             if actual_key != public_key or actual_peers != [peer_public_key]:
                 raise ProbeError("kernel WireGuard configuration differs from requested configuration")
-            print(f"PASS: disposable WireGuard interface configured and verified in {namespace}", flush=True)
+            verify_live_peer(namespace, interface, peer_public_key, "198.51.100.2:51820", spec.peer_allowed_ips, 25)
+            print(f"PASS: disposable WireGuard interface and peer fields verified in {namespace}", flush=True)
     finally:
         os.close(read_fd)
+    remaining = command("ip", "netns", "list").decode("utf-8").splitlines()
+    if namespace in {line.split()[0] for line in remaining if line.strip()} or Path("/run/netns", namespace).exists():
+        raise ProbeError("disposable namespace remains after retirement")
     print(f"PASS: disposable namespace retired: {namespace}", flush=True)
     return namespace
 
