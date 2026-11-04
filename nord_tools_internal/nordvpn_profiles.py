@@ -121,3 +121,32 @@ def resolve_application(policy, name):
     checked = validate_policy(policy)
     app = checked["applications"].get(name)
     return {"application": name, "vpn": app["vpn"] if app else checked["defaults"]["vpn"], "inherited": app is None}
+
+
+def resolve_named_profiles(policy, requested=None):
+    """Resolve distinct named profiles in stable order without provisioning them.
+
+    ``None`` selects all configured profiles. An explicit empty sequence selects
+    none. Unknown, repeated and malformed names are errors, not silent skips.
+    The returned configuration is detached from the caller's policy.
+    """
+    checked = validate_policy(policy)
+    profiles = checked["vpn_profiles"]
+    if requested is None:
+        names = sorted(profiles)
+    else:
+        if isinstance(requested, (str, bytes)) or not isinstance(requested, (list, tuple)):
+            raise ProfileError("requested profiles must be a list or tuple of names")
+        seen = set()
+        names = []
+        for name in requested:
+            if not isinstance(name, str) or name not in profiles:
+                raise ProfileError(f"unknown or invalid VPN profile: {name!r}")
+            if name in seen:
+                raise ProfileError(f"duplicate requested VPN profile: {name}")
+            seen.add(name)
+            names.append(name)
+        names.sort()
+    return tuple(
+        {"name": name, "profile": profiles[name], "default": name == checked["defaults"]["vpn"]} for name in names
+    )

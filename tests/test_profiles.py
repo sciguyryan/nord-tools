@@ -3,7 +3,12 @@
 import copy
 import unittest
 
-from nord_tools_internal.nordvpn_profiles import ProfileError, resolve_application, validate_policy
+from nord_tools_internal.nordvpn_profiles import (
+    ProfileError,
+    resolve_application,
+    resolve_named_profiles,
+    validate_policy,
+)
 
 
 POLICY = {
@@ -59,6 +64,32 @@ class ProfileTests(unittest.TestCase):
                 policy[key] = value
                 with self.assertRaises(ProfileError):
                     validate_policy(policy)
+
+    def test_named_profile_resolution_is_deterministic_and_detached(self):
+        original = copy.deepcopy(POLICY)
+        first = resolve_named_profiles(original, ["fixed", "primary"])
+        second = resolve_named_profiles(original, ["primary", "fixed"])
+        self.assertEqual(first, second)
+        self.assertEqual([entry["name"] for entry in first], ["fixed", "primary"])
+        self.assertEqual([entry["default"] for entry in first], [False, True])
+        first[0]["profile"]["sharing"] = "shared"
+        self.assertEqual(original, POLICY)
+        self.assertEqual([entry["name"] for entry in resolve_named_profiles(original)], ["discord", "fixed", "primary"])
+        self.assertEqual(resolve_named_profiles(original, []), ())
+
+    def test_named_profile_resolution_rejects_ambiguity(self):
+        for requested in (
+            "primary",
+            b"primary",
+            {"primary"},
+            ["primary", "primary"],
+            ["missing"],
+            [None],
+            [1],
+            ["primary", "missing"],
+        ):
+            with self.subTest(requested=requested), self.assertRaises(ProfileError):
+                resolve_named_profiles(POLICY, requested)
 
     def test_unknown_fields_rejected(self):
         policy = copy.deepcopy(POLICY)
