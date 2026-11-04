@@ -35,3 +35,9 @@ The production restoration executor checks the derived local public key and the 
 This is an offline resolution contract only: it does not create resources, authorise privileged mutation or establish shared-tunnel ownership.
 
 The disposable WireGuard peer-field and retirement probe passed privileged acceptance. The accepted scope excludes production DNS confinement, application routing and independent privileged kernel mutators.
+
+## Independent named-profile provisioning
+
+The production restoration executor already processes eligible named profiles under its lifecycle lock and records a separate four-resource allocation batch, ownership bindings and durable creation intent for each profile. Multi-profile regression coverage now exercises two distinct pinned profiles, verifies that namespace and interface identities do not overlap, and confirms that a repeated restoration does not create further resources. A desired profile without a pinned provider plan is reported as not restored while another eligible profile can proceed.
+
+These tests use an injected kernel harness and do not establish real concurrent VPN connectivity, shared-tunnel ownership, application routing or independent profile retirement. Those boundaries remain separate acceptance work.
