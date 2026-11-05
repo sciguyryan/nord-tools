@@ -127,6 +127,7 @@ def main(argv: list[str] | None = None) -> int:
         "provision",
         "retire-consumers",
         "consumer-leases",
+        "acquire-consumer",
         "release-exited-consumer",
         "cleanup",
         "clear-ownership",
@@ -214,10 +215,16 @@ def main(argv: list[str] | None = None) -> int:
                 action="store_true",
                 help="Run production restoration; without this flag no kernel mutation occurs",
             )
-        if name in ("consumer-leases", "release-exited-consumer"):
+        if name in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
             command.add_argument("--config", required=True, help="Startup configuration pinning the registered policy")
             command.add_argument(
                 "--runtime-consumers", required=True, help="Durable process-bound consumer lease store"
+            )
+        if name == "acquire-consumer":
+            command.add_argument("--consumer", required=True, help="Registered application to bind")
+            command.add_argument("--pid", required=True, type=int, help="Existing process ID to verify")
+            command.add_argument(
+                "--execute", action="store_true", help="Verify provisioned resources and acquire the lease"
             )
         if name == "release-exited-consumer":
             command.add_argument("--consumer", required=True, help="Registered consumer whose process has exited")
@@ -339,7 +346,7 @@ def main(argv: list[str] | None = None) -> int:
                 result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
-        if args.action in ("consumer-leases", "release-exited-consumer"):
+        if args.action in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
             if args.transient:
                 raise ManagementError("runtime consumer management is persistent-only")
             config = validate_startup_config(read_json(args.config))
@@ -349,7 +356,45 @@ def main(argv: list[str] | None = None) -> int:
                 release_exited_consumer,
             )
 
-            if args.action == "consumer-leases":
+            if args.action == "acquire-consumer":
+                if args.consumer not in policy["applications"]:
+                    raise ManagementError("consumer is not registered")
+                if args.pid <= 0:
+                    raise ManagementError("process ID must be positive")
+                if not args.execute:
+                    result = {
+                        "scope": "persistent",
+                        "action": "acquire-consumer",
+                        "execute": False,
+                        "consumer": args.consumer,
+                        "pid": args.pid,
+                        "intent_only": True,
+                        "message": "Preview only; process and kernel ownership have not been verified",
+                    }
+                else:
+                    if not config["intent"]:
+                        raise ManagementError("consumer acquisition requires a pinned operation intent store")
+                    from nord_tools_internal.nordvpn_runtime_consumers import acquire_provisioned_consumer
+
+                    updated = acquire_provisioned_consumer(
+                        args.runtime_consumers,
+                        policy,
+                        args.consumer,
+                        args.pid,
+                        journal_path=config["journal"],
+                        bindings_path=config["bindings"],
+                        intent_path=config["intent"],
+                        observe=discover,
+                    )
+                    result = {
+                        "scope": "persistent",
+                        "action": "acquire-consumer",
+                        "execute": True,
+                        "consumer": args.consumer,
+                        "pid": args.pid,
+                        "lease_count": len(updated["leases"]),
+                    }
+            elif args.action == "consumer-leases":
                 result = read_runtime_consumers(args.runtime_consumers, policy)
                 result = {
                     "scope": "persistent",

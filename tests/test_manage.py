@@ -275,3 +275,82 @@ class ConsumerLeaseManagementTests(ProductionManagementTests):
         )
         self.assertEqual(status, 2)
         self.assertIn("persistent-only", error)
+
+
+class ConsumerAcquisitionManagementTests(ProductionManagementTests):
+    def test_acquisition_preview_does_not_inspect_or_mutate(self):
+        with patch.object(nordvpn_manage, "discover", side_effect=AssertionError("unexpected discovery")):
+            status, result, _ = self.invoke(
+                "acquire-consumer",
+                "--config",
+                str(self.config),
+                "--runtime-consumers",
+                str(self.root / "leases.json"),
+                "--consumer",
+                "browser",
+                "--pid",
+                "1234",
+            )
+        self.assertEqual(status, 0)
+        self.assertTrue(result["intent_only"])
+        self.assertFalse((self.root / "leases.json").exists())
+
+    def test_acquisition_delegates_verified_authority(self):
+        from nord_tools_internal import nordvpn_runtime_consumers
+
+        with patch.object(
+            nordvpn_runtime_consumers,
+            "acquire_provisioned_consumer",
+            return_value={"leases": [{"application": "browser"}]},
+        ) as acquire:
+            status, result, _ = self.invoke(
+                "acquire-consumer",
+                "--config",
+                str(self.config),
+                "--runtime-consumers",
+                str(self.root / "leases.json"),
+                "--consumer",
+                "browser",
+                "--pid",
+                "1234",
+                "--execute",
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(result["lease_count"], 1)
+        self.assertEqual(acquire.call_args.kwargs["journal_path"], str(self.root / "journal.json"))
+        self.assertIs(acquire.call_args.kwargs["observe"], nordvpn_manage.discover)
+
+    def test_unknown_consumer_and_invalid_pid_fail_before_discovery(self):
+        with patch.object(nordvpn_manage, "discover", side_effect=AssertionError("unexpected discovery")):
+            for consumer, pid in (("unknown", "123"), ("browser", "0")):
+                with self.subTest(consumer=consumer, pid=pid):
+                    status, _, _ = self.invoke(
+                        "acquire-consumer",
+                        "--config",
+                        str(self.config),
+                        "--runtime-consumers",
+                        str(self.root / "leases.json"),
+                        "--consumer",
+                        consumer,
+                        "--pid",
+                        pid,
+                        "--execute",
+                    )
+                    self.assertEqual(status, 2)
+
+    def test_transient_acquisition_refused(self):
+        status, _, error = self.invoke(
+            "acquire-consumer",
+            "--transient",
+            "--config",
+            str(self.config),
+            "--runtime-consumers",
+            str(self.root / "leases.json"),
+            "--consumer",
+            "browser",
+            "--pid",
+            "1234",
+            "--execute",
+        )
+        self.assertEqual(status, 2)
+        self.assertIn("persistent-only", error)
