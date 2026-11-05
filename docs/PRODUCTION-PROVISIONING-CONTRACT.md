@@ -115,3 +115,9 @@ The privileged recovery probe supports two deliberate process-death boundaries. 
 `python nord_tools.py manage retire-consumers --config /absolute/path/startup.json --consumer application --runtime-consumers /absolute/path/leases.json` scopes cleanup to the allocations of explicitly registered applications. The default invocation plans retirement; `--execute` requests verified deletion. Shared allocations cannot be retired while another registered consumer remains. Isolated allocations require durable runtime evidence, and optional `--consumer-references` can add a separate declared-reference check. The command does not terminate processes or create release evidence. The cleanup executor independently checks the pinned ownership records and refuses uncertain or incomplete evidence.
 
 These commands reuse the production executors and do not bypass their existing authority model. Neither command implements application launching, production DNS confinement or unrestricted live replacement.
+
+## Runtime consumer lease management
+
+The `manage consumer-leases --config STARTUP --runtime-consumers LEASES` command reads and validates the process-bound lease store against the pinned registered policy. It does not infer whether a process is alive, release leases or mutate kernel resources.
+
+The `manage release-exited-consumer --config STARTUP --runtime-consumers LEASES --consumer NAME` command previews a registered consumer lease release without checking process exit or modifying the store. Adding `--execute` delegates to the existing process-identity-verified release operation. A live process, inaccessible process evidence, missing lease or inconsistent policy causes refusal. Releasing a lease does not retire its kernel allocation; resource retirement remains a separate, ownership-verified operation. Both commands reject transient scope.

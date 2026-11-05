@@ -229,3 +229,49 @@ class ProductionManagementTests(unittest.TestCase):
             )
         self.assertEqual(status, 2)
         self.assertIn("not registered", error)
+
+
+class ConsumerLeaseManagementTests(ProductionManagementTests):
+    def test_missing_lease_store_fails_closed(self):
+        for command in ("consumer-leases", "release-exited-consumer"):
+            arguments = [command, "--config", str(self.config), "--runtime-consumers", str(self.root / "missing.json")]
+            if command == "release-exited-consumer":
+                arguments.extend(("--consumer", "browser", "--execute"))
+            with self.subTest(command=command):
+                status, _, _ = self.invoke(*arguments)
+                self.assertEqual(status, 2)
+
+    def test_read_only_lease_inspection_and_release_preview(self):
+        from nord_tools_internal.nordvpn_runtime_consumers import initialise_runtime_consumers
+
+        policy = json.loads(self.policy.read_text())
+        store = self.root / "leases.json"
+        initialise_runtime_consumers(store, policy)
+        status, result, _ = self.invoke(
+            "consumer-leases", "--config", str(self.config), "--runtime-consumers", str(store)
+        )
+        self.assertEqual(status, 0)
+        self.assertEqual(result["leases"], [])
+        self.assertFalse(result["execute"])
+        status, _, _ = self.invoke(
+            "release-exited-consumer",
+            "--config",
+            str(self.config),
+            "--runtime-consumers",
+            str(store),
+            "--consumer",
+            "browser",
+        )
+        self.assertEqual(status, 2)
+
+    def test_transient_lease_management_refused(self):
+        status, _, error = self.invoke(
+            "consumer-leases",
+            "--transient",
+            "--config",
+            str(self.config),
+            "--runtime-consumers",
+            str(self.root / "leases.json"),
+        )
+        self.assertEqual(status, 2)
+        self.assertIn("persistent-only", error)

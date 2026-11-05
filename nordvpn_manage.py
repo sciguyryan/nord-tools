@@ -13,6 +13,7 @@ from pathlib import Path
 import sys
 import tempfile
 
+from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError
 from nord_tools_internal.nordvpn_dependency_plan import plan_dependencies
 from nord_tools_internal.nordvpn_management_views import cleanup_plan, topology_graph
 from nord_tools_internal.nordvpn_discovery import DiscoveryError, discover
@@ -125,6 +126,8 @@ def main(argv: list[str] | None = None) -> int:
         "restore-startup",
         "provision",
         "retire-consumers",
+        "consumer-leases",
+        "release-exited-consumer",
         "cleanup",
         "clear-ownership",
         "recovery",
@@ -210,6 +213,16 @@ def main(argv: list[str] | None = None) -> int:
                 "--execute",
                 action="store_true",
                 help="Run production restoration; without this flag no kernel mutation occurs",
+            )
+        if name in ("consumer-leases", "release-exited-consumer"):
+            command.add_argument("--config", required=True, help="Startup configuration pinning the registered policy")
+            command.add_argument(
+                "--runtime-consumers", required=True, help="Durable process-bound consumer lease store"
+            )
+        if name == "release-exited-consumer":
+            command.add_argument("--consumer", required=True, help="Registered consumer whose process has exited")
+            command.add_argument(
+                "--execute", action="store_true", help="Verify exit and release the lease; default is read-only"
             )
         if name == "retire-consumers":
             command.add_argument(
@@ -324,6 +337,52 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 result = restore_boot_state(config)
                 result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action in ("consumer-leases", "release-exited-consumer"):
+            if args.transient:
+                raise ManagementError("runtime consumer management is persistent-only")
+            config = validate_startup_config(read_json(args.config))
+            policy = validate_policy(read_json(config["policy"]))
+            from nord_tools_internal.nordvpn_runtime_consumers import (
+                read_runtime_consumers,
+                release_exited_consumer,
+            )
+
+            if args.action == "consumer-leases":
+                result = read_runtime_consumers(args.runtime_consumers, policy)
+                result = {
+                    "scope": "persistent",
+                    "action": "consumer-leases",
+                    "execute": False,
+                    "leases": result["leases"],
+                    "policy_sha256": result["policy_sha256"],
+                }
+            else:
+                if args.consumer not in policy["applications"]:
+                    raise ManagementError("consumer is not registered")
+                current = read_runtime_consumers(args.runtime_consumers, policy)
+                matching = [lease for lease in current["leases"] if lease["application"] == args.consumer]
+                if len(matching) != 1:
+                    raise ManagementError("consumer has no recorded runtime lease")
+                if args.execute:
+                    updated = release_exited_consumer(args.runtime_consumers, policy, args.consumer)
+                    result = {
+                        "scope": "persistent",
+                        "action": "release-exited-consumer",
+                        "execute": True,
+                        "consumer": args.consumer,
+                        "remaining_leases": len(updated["leases"]),
+                    }
+                else:
+                    result = {
+                        "scope": "persistent",
+                        "action": "release-exited-consumer",
+                        "execute": False,
+                        "consumer": args.consumer,
+                        "intent_only": True,
+                        "message": "Preview only; process exit has not been verified",
+                    }
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "retire-consumers":
@@ -491,6 +550,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (
         ManagementError,
+        ConsumerReferenceError,
         ProfileError,
         ReconciliationError,
         RegistryError,
