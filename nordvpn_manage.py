@@ -123,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         "startup-plan",
         "startup-install",
         "restore-startup",
+        "provision",
+        "retire-consumers",
         "cleanup",
         "clear-ownership",
         "recovery",
@@ -201,8 +203,28 @@ def main(argv: list[str] | None = None) -> int:
                 action="store_true",
                 help="Full teardown plus store archive and reset; the default only plans",
             )
-        if name in ("startup-plan", "startup-install", "restore-startup"):
+        if name in ("startup-plan", "startup-install", "restore-startup", "provision", "retire-consumers"):
             command.add_argument("--config", required=True, help="Explicit startup configuration JSON")
+        if name == "provision":
+            command.add_argument(
+                "--execute",
+                action="store_true",
+                help="Run production restoration; without this flag no kernel mutation occurs",
+            )
+        if name == "retire-consumers":
+            command.add_argument(
+                "--consumer", action="append", required=True, help="Registered consumer to release (repeatable)"
+            )
+            command.add_argument(
+                "--runtime-consumers", required=True, help="Durable process-bound consumer lease store"
+            )
+            command.add_argument("--consumer-references", help="Optional persisted declared consumer reference store")
+            command.add_argument(
+                "--resolvers", action="store_true", help="Retire verified namespace resolver directories"
+            )
+            command.add_argument(
+                "--execute", action="store_true", help="Retire verified allocations; default is read-only"
+            )
         if name in ("startup-plan", "startup-install"):
             command.add_argument(
                 "--unit-dir", default="/etc/systemd/system", help="Directory receiving nord-tools-restore.service"
@@ -283,6 +305,65 @@ def main(argv: list[str] | None = None) -> int:
                 execute=args.execute,
             )
             result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "provision":
+            if args.transient:
+                raise ManagementError("production provisioning is persistent-only")
+            config = validate_startup_config(read_json(args.config))
+            if not args.execute:
+                result = {
+                    "scope": "persistent",
+                    "action": "provision",
+                    "execute": False,
+                    "intent_only": True,
+                    "configuration": args.config,
+                    "profiles": sorted(config["tunnels"]),
+                    "message": "Preview only; no kernel state or ownership was inspected",
+                }
+            else:
+                result = restore_boot_state(config)
+                result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "retire-consumers":
+            if args.transient:
+                raise ManagementError("consumer retirement is persistent-only")
+            config = validate_startup_config(read_json(args.config))
+            policy = validate_policy(read_json(config["policy"]))
+            from nord_tools_internal.nordvpn_application_plan import plan_application
+            from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
+
+            released = tuple(args.consumer)
+            if len(set(released)) != len(released):
+                raise ManagementError("consumer names must not be repeated")
+            allocations = [plan_application(policy, name) for name in released]
+            selected = tuple(
+                sorted(
+                    {
+                        kernel_profile_for_allocation(item.allocation_key, item.profile, item.sharing)
+                        for item in allocations
+                    }
+                )
+            )
+            if not config["intent"]:
+                raise ManagementError("consumer retirement requires a pinned operation intent store")
+            result = plan_cleanup(
+                config["journal"],
+                config["bindings"],
+                intent_path=config["intent"],
+                graph_path=config["graph"],
+                desired_policy=None,
+                selected_profiles=selected,
+                consumer_policy=policy,
+                released_consumers=released,
+                runtime_consumers_path=args.runtime_consumers,
+                consumer_references_path=args.consumer_references,
+                resolvers=args.resolvers,
+                execute=args.execute,
+            )
+            result["scope"] = "persistent"
+            result["selected_profiles"] = list(selected)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "cleanup":
@@ -410,6 +491,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     except (
         ManagementError,
+        ProfileError,
         ReconciliationError,
         RegistryError,
         DiscoveryError,

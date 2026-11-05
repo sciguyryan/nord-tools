@@ -111,3 +111,121 @@ class ManageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductionManagementTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.policy = self.root / "policy.json"
+        self.policy.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "defaults": {"vpn": "main"},
+                    "vpn_profiles": {"main": {"selection": {"mode": "country", "country": "GB"}}},
+                    "applications": {"browser": {"executable": "/usr/bin/browser", "vpn": "main"}},
+                }
+            )
+        )
+        self.config = self.root / "startup.json"
+        self.config.write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "policy": str(self.policy),
+                    "journal": str(self.root / "journal.json"),
+                    "bindings": str(self.root / "bindings.json"),
+                    "intent": str(self.root / "intents.json"),
+                    "run_record": str(self.root / "runs.json"),
+                    "tunnels": {},
+                }
+            )
+        )
+
+    def invoke(self, *arguments):
+        output = io.StringIO()
+        errors = io.StringIO()
+        with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+            status = nordvpn_manage.main(list(arguments))
+        return status, json.loads(output.getvalue()) if output.getvalue() else None, errors.getvalue()
+
+    def test_provision_preview_does_not_invoke_executor(self):
+        with patch.object(nordvpn_manage, "restore_boot_state", side_effect=AssertionError("unexpected execution")):
+            status, result, _ = self.invoke("provision", "--config", str(self.config))
+        self.assertEqual(status, 0)
+        self.assertFalse(result["execute"])
+        self.assertTrue(result["intent_only"])
+        self.assertFalse((self.root / "journal.json").exists())
+
+    def test_provision_execution_is_explicit(self):
+        with patch.object(nordvpn_manage, "restore_boot_state", return_value={"restored": []}) as execute:
+            status, result, _ = self.invoke("provision", "--config", str(self.config), "--execute")
+        self.assertEqual(status, 0)
+        self.assertEqual(result["scope"], "persistent")
+        execute.assert_called_once()
+
+    def test_transient_execution_refused(self):
+        status, _, error = self.invoke("provision", "--transient", "--config", str(self.config), "--execute")
+        self.assertEqual(status, 2)
+        self.assertIn("persistent-only", error)
+
+    def test_consumer_retirement_requires_real_reference_evidence(self):
+        status, _, error = self.invoke(
+            "retire-consumers",
+            "--config",
+            str(self.config),
+            "--consumer",
+            "browser",
+            "--runtime-consumers",
+            str(self.root / "missing.json"),
+        )
+        self.assertNotEqual(status, 0)
+        self.assertFalse((self.root / "journal.json").exists())
+
+    def test_duplicate_consumers_refused(self):
+        status, _, error = self.invoke(
+            "retire-consumers",
+            "--config",
+            str(self.config),
+            "--consumer",
+            "browser",
+            "--consumer",
+            "browser",
+            "--runtime-consumers",
+            str(self.root / "leases.json"),
+        )
+        self.assertEqual(status, 2)
+        self.assertIn("repeated", error)
+
+    def test_retirement_routes_selected_profile_and_release_evidence(self):
+        with patch.object(nordvpn_manage, "plan_cleanup", return_value={"planned": []}) as cleanup:
+            status, result, _ = self.invoke(
+                "retire-consumers",
+                "--config",
+                str(self.config),
+                "--consumer",
+                "browser",
+                "--runtime-consumers",
+                str(self.root / "leases.json"),
+            )
+        self.assertEqual(status, 0)
+        self.assertEqual(result["selected_profiles"], ["main"])
+        self.assertEqual(cleanup.call_args.kwargs["released_consumers"], ("browser",))
+        self.assertEqual(cleanup.call_args.kwargs["selected_profiles"], ("main",))
+        self.assertFalse(cleanup.call_args.kwargs["execute"])
+
+    def test_unknown_consumer_refused_before_kernel_access(self):
+        with patch.object(nordvpn_manage, "plan_cleanup", side_effect=AssertionError("unexpected cleanup")):
+            status, _, error = self.invoke(
+                "retire-consumers",
+                "--config",
+                str(self.config),
+                "--consumer",
+                "unknown",
+                "--runtime-consumers",
+                str(self.root / "leases.json"),
+            )
+        self.assertEqual(status, 2)
+        self.assertIn("not registered", error)
