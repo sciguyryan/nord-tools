@@ -143,3 +143,7 @@ The `tools/probe_provisioning_final_acceptance.py` runner combines the productio
 Automated tests verify runtime behaviour and structured security contracts rather than matching the wording of Markdown documents or the checked state of roadmap entries. Markdown formatting remains a documentation linting concern, not a runtime correctness invariant.
 
 The consolidated provisioning acceptance increment has been accepted by the operator. This acceptance does not extend the documented authority model to independent privileged kernel mutation or establish production DNS confinement and fail-closed application routing. Documentation prose and roadmap checklist wording are not runtime acceptance criteria.
+
+## Production firewall readback hardening
+
+The production restoration path installs a dedicated namespace-local nftables table before creating or activating the WireGuard device. Installation now verifies both the three default-drop base chains and the exact allow-rule expressions for loopback, established replies, tunnel output and the pinned numeric UDP endpoint. Unexpected or altered rules cause provisioning to fail with uncertain evidence rather than treating chain-only readback as sufficient. This readback is not proof of packet confinement, tunnel-loss behaviour or DNS leak prevention. The JSON expression contract must be verified against the installed nftables version during privileged acceptance.

@@ -6,31 +6,38 @@ import unittest
 from unittest.mock import Mock, patch
 
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
-from nord_tools_internal.nordvpn_isolation_install import IsolationInstallError, install_disposable_isolation
+from nord_tools_internal.nordvpn_isolation_install import (
+    IsolationInstallError,
+    install_disposable_isolation,
+    _expected_rules,
+)
 from nord_tools_internal.nordvpn_namespace_ownership import OwnedNamespace, OwnershipError
 
 
 class IsolationInstallTests(unittest.TestCase):
     @staticmethod
     def readback(*, output_policy="drop"):
-        return json.dumps(
+        policy = NamespaceIsolationPolicy("ntwg0", "veth0", "198.51.100.20", 51820)
+        entries = [
             {
-                "nftables": [
-                    {
-                        "chain": {
-                            "family": "inet",
-                            "table": "nord_tools_isolation",
-                            "name": name,
-                            "hook": name,
-                            "type": "filter",
-                            "policy": output_policy if name == "output" else "drop",
-                            "prio": 0,
-                        }
-                    }
-                    for name in ("input", "output", "forward")
-                ]
+                "chain": {
+                    "family": "inet",
+                    "table": "nord_tools_isolation",
+                    "name": name,
+                    "hook": name,
+                    "type": "filter",
+                    "policy": output_policy if name == "output" else "drop",
+                    "prio": 0,
+                }
             }
-        )
+            for name in ("input", "output", "forward")
+        ]
+        for chain, rules in _expected_rules(policy).items():
+            for expr in rules:
+                entries.append(
+                    {"rule": {"family": "inet", "table": "nord_tools_isolation", "chain": chain, "expr": expr}}
+                )
+        return json.dumps({"nftables": entries})
 
     def setUp(self):
         self.owned = OwnedNamespace("nt-12345678", 3, 1, 2)
@@ -118,6 +125,29 @@ class IsolationInstallTests(unittest.TestCase):
         del document["nftables"][0]["chain"]["prio"]
         run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
         with self.assertRaises(IsolationInstallError):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_unexpected_broad_accept_rule(self, run, verify):
+        document = json.loads(self.readback())
+        document["nftables"].append(
+            {"rule": {"family": "inet", "table": "nord_tools_isolation", "chain": "output", "expr": [{"accept": None}]}}
+        )
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaisesRegex(IsolationInstallError, "allow rules"):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_modified_endpoint(self, run, verify):
+        document = json.loads(self.readback())
+        rule = next(
+            entry["rule"] for entry in document["nftables"] if "rule" in entry and len(entry["rule"]["expr"]) == 4
+        )
+        rule["expr"][1]["match"]["right"] = "203.0.113.10"
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaisesRegex(IsolationInstallError, "allow rules"):
             install_disposable_isolation(self.owned, self.policy)
 
     @patch.object(OwnedNamespace, "verify")

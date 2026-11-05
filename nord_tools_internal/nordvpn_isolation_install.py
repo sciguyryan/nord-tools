@@ -8,6 +8,7 @@ This is not a production transaction or a crash-safe ownership mechanism.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ipaddress
 import json
 import subprocess
 
@@ -45,11 +46,75 @@ def _run_nft(namespace: str, ruleset: str, *, check: bool) -> None:
         raise IsolationInstallError(f"namespace firewall {stage} failed")
 
 
-def _verify_base_chains(namespace: str) -> None:
-    """Require kernel readback of all three default-drop base chains.
+def _expected_rules(policy: NamespaceIsolationPolicy) -> dict[str, list[list[dict]]]:
+    """Expected nftables JSON expressions for the generated policy."""
+    endpoint = ipaddress.ip_address(policy.endpoint_address)
+    family = "ip6" if endpoint.version == 6 else "ip"
 
-    This is structural confirmation only. It does not prove that every rule is
-    installed as intended or that traffic cannot leak through other paths.
+    def interface_match(direction: str, name: str) -> dict:
+        return {"match": {"op": "==", "left": {"meta": {"key": direction}}, "right": name}}
+
+    return {
+        "input": [
+            [interface_match("iifname", "lo"), {"accept": None}],
+            [
+                {"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": ["established", "related"]}},
+                {"accept": None},
+            ],
+        ],
+        "forward": [],
+        "output": [
+            [interface_match("oifname", "lo"), {"accept": None}],
+            [interface_match("oifname", policy.tunnel_interface), {"accept": None}],
+            [
+                interface_match("oifname", policy.underlay_interface),
+                {
+                    "match": {
+                        "op": "==",
+                        "left": {"payload": {"protocol": family, "field": "daddr"}},
+                        "right": str(endpoint),
+                    }
+                },
+                {
+                    "match": {
+                        "op": "==",
+                        "left": {"payload": {"protocol": "udp", "field": "dport"}},
+                        "right": policy.endpoint_port,
+                    }
+                },
+                {"accept": None},
+            ],
+        ],
+    }
+
+
+def _verify_rules(entries: list, policy: NamespaceIsolationPolicy) -> None:
+    """Fail closed on extra, missing or altered rules in the dedicated table."""
+    actual: dict[str, list[list[dict]]] = {"input": [], "output": [], "forward": []}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise IsolationInstallError("invalid namespace firewall readback entry")
+        rule = entry.get("rule")
+        if rule is None:
+            continue
+        if not isinstance(rule, dict):
+            raise IsolationInstallError("invalid namespace firewall rule")
+        if rule.get("family") != "inet" or rule.get("table") != "nord_tools_isolation":
+            continue
+        chain = rule.get("chain")
+        if chain not in actual or not isinstance(rule.get("expr"), list):
+            raise IsolationInstallError("unexpected namespace firewall rule")
+        actual[chain].append(rule["expr"])
+    if actual != _expected_rules(policy):
+        raise IsolationInstallError("namespace firewall allow rules differ from pinned policy")
+
+
+def _verify_base_chains(namespace: str, policy: NamespaceIsolationPolicy) -> None:
+    """Require default-drop chains and precisely scoped allow rules.
+
+    A chain-only check is insufficient: an unexpected broad accept rule could
+    silently defeat the intended fail-closed boundary. This readback validates
+    the recognised nft JSON expression shapes and refuses unknown additions.
     """
     try:
         completed = subprocess.run(
@@ -90,6 +155,7 @@ def _verify_base_chains(namespace: str) -> None:
                 or chain["prio"] != 0
             ):
                 raise IsolationInstallError("namespace firewall base-chain verification failed")
+        _verify_rules(entries, policy)
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError) as exc:
         raise IsolationInstallError("namespace firewall readback could not be verified") from exc
 
@@ -110,7 +176,7 @@ def install_disposable_isolation(owned: OwnedNamespace, policy: NamespaceIsolati
         owned.verify()
         _run_nft(owned.name, policy.render_nft(), check=False)
         owned.verify()
-        _verify_base_chains(owned.name)
+        _verify_base_chains(owned.name, policy)
         owned.verify()
     except OwnershipError as exc:
         raise IsolationInstallError("namespace ownership changed during firewall installation") from exc

@@ -44,7 +44,7 @@ Part 8.1's six authority increments are accepted within the documented cooperati
 
 The disposable namespace firewall, synthetic DNS drop, resolver visibility, simulated DNS route, IPv4/IPv6 endpoint exception and two-pair WireGuard host-integrity probes passed privileged acceptance on Arch Linux. These results do not establish production fail-closed behaviour.
 
-- [ ] Verify real-tunnel IPv4/IPv6 DNS packet confinement and endpoint restrictions in privileged end-to-end tests.
+- [ ] Verify real-tunnel IPv4/IPv6 DNS packet confinement and endpoint restrictions in privileged end-to-end tests. Production firewall readback now rejects unexpected or modified allow-rule expressions; kernel-version compatibility and real traffic confinement still require privileged acceptance.
 - [ ] Demonstrate no unprotected fallback during real tunnel loss, restart or failed establishment.
 - [ ] Complete firewall/DNS failure injection and production rollback verification, including host isolation.
 
