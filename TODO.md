@@ -4,7 +4,7 @@ This document tracks the agreed sequence of work. It distinguishes completed fou
 
 ## Current position
 
-The benchmarking, offline planning, read-only discovery, configured-state graph and Operation Kongroo foundations are complete. The operational VPN manager is in progress. Completed work is summarised below; this TODO retains outstanding requirements rather than repeating every accepted implementation task.
+The benchmarking, offline planning, read-only discovery, configured-state graph and Operation Kongroo foundations are complete. The operational VPN manager is in progress. Production provisioning and its privileged integration programme (8.2.1–8.2.7) have passed operator acceptance within the documented cooperating-process authority model. The next operational priority is production fail-closed routing, firewall and DNS confinement, followed by application execution and live replacement. This TODO retains outstanding requirements rather than repeating every accepted implementation task.
 
 ## Operational VPN manager: nine-part target
 
@@ -18,7 +18,7 @@ Offline lifecycle journalling, advisory locks, read-only identity correlation, o
 
 ### Part 8.2: Production WireGuard provisioning and multiple-profile management
 
-Part 8.1's six authority increments are accepted within the documented cooperating-process authority model. Independent privileged kernel mutators remain outside that model. Part 8.2 is divided into seven increments; none of the production provisioning work is accepted merely because the offline contract validates.
+Part 8.1 and all seven Part 8.2 increments are accepted within the documented cooperating-process authority model. Independent privileged kernel mutators remain outside that model. Production provisioning acceptance does not establish host-domain default-profile protection, DNS confinement, application launching or live replacement.
 
 - [x] 8.2.1 Provisioning contracts and ownership: reconcile policy, public tunnel plans and candidate allocations; require privileged creation-time ownership evidence and lifecycle authority before any mutation. The offline contract, owner-binding correlation and lifecycle inspection are implemented. The restoration executor now validates its complete four-resource creation batch and refreshes candidate-name observations under its existing lifecycle lock before durable intent and privileged creation. Privileged executor integration and local acceptance are complete; offline evidence alone never authorises mutation.
 - [x] 8.2.2 Real WireGuard interface provisioning, configuration and verified retirement. The implementation established creation-time interface identity, descriptor-only key delivery, non-secret live peer readback and conservative ownership-aware retirement. The disposable WireGuard peer-field and namespace-retirement probe passed on the operator's Linux system; Ruff and the automated suite passed locally after the SIM117 and executable-mode packaging corrections. This acceptance does not establish production DNS, fail-closed routing or independent-privileged-mutator safety.
@@ -32,15 +32,15 @@ Part 8.1's six authority increments are accepted within the documented cooperati
 
 - [x] Extend the disposable two-pair experiment with read-only validation of a fresh peer handshake and bidirectional traffic counters. This is experimental connectivity evidence, not production provisioning or ownership verification.
 - [x] Phase 1 foundation: validate disposable WireGuard tunnel specifications and produce credential-free offline plans. This is not privileged provisioning.
-- [ ] Production Phase 1 ownership requirement: establish independently authorised, crash-persistent creation-time ownership. Durable intents and descriptor-based credential input exist, but neither authorises production mutation.
+- [x] Establish privileged, crash-persistent creation-time ownership for cooperating production executors. Accepted Part 7 and Part 8.2 restoration, cleanup and interruption-recovery paths use verified owner bindings and durable intents; independent privileged kernel mutators remain outside the supported authority model.
 - [x] Introduce an internal experimental configuration step for WireGuard interfaces inside caller-owned disposable namespaces, without routes or production authority.
 - [ ] Provision, verify, stop and reuse real WireGuard tunnels with securely handled provider credentials and server selection.
-- [ ] Support shared profiles, explicitly isolated profiles and a default connection.
-- [ ] Integrate platform/dependency preflight and conservative privilege boundaries.
+- [x] Support named shared and isolated profile allocations and default-profile selection in production provisioning. Accepted Part 8.2 coverage does not establish default-profile host routing or application launch.
+- [x] Integrate platform/dependency preflight and conservative privilege boundaries for the accepted production provisioning and management executors. Broader application execution and firewall/DNS privileges remain open.
 - [x] Add experimental Phase 3 failure-injection coverage for process interruption, verifier errors, uncertain namespace retirement and failed uncertainty persistence. These tests do not establish crash-safe recovery or production ownership.
-- [ ] Complete Part 3 privileged failure/recovery acceptance and resolve race-safe ownership before treating the executors as production-authoritative. Operator-confirmed cleanup and recovery exist; adversarial ownership testing under racing privileged actors remains.
+- [x] Complete privileged failure/recovery acceptance within the cooperating-process authority model, including process death after namespace, underlay, WireGuard and routing operations. Independent privileged resource replacement and hostile mount/network actors remain explicitly outside this model, not an accepted race-safety guarantee.
 
-### Part 4: Fail-closed routing, firewall and DNS (experimental programme completed)
+### Part 4: Fail-closed routing, firewall and DNS (next production priority)
 
 The disposable namespace firewall, synthetic DNS drop, resolver visibility, simulated DNS route, IPv4/IPv6 endpoint exception and two-pair WireGuard host-integrity probes passed privileged acceptance on Arch Linux. These results do not establish production fail-closed behaviour.
 
