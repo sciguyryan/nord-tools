@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import replace
 import io
 import json
 import os
@@ -66,7 +67,11 @@ def uncertain_stores(root: Path) -> bool:
     return bool(interrupted_evidence(root))
 
 
-def run_probe(*, after_binding: bool = False) -> str:
+def run_probe(*, after_binding: bool = False, checkpoint: str | None = None) -> str:
+    if checkpoint is not None and after_binding:
+        raise ProbeError("select only one interruption checkpoint")
+    if checkpoint not in (None, "underlay", "wireguard", "routing"):
+        raise ProbeError("unsupported interruption checkpoint")
     if os.geteuid() != 0:
         raise ProbeError("root privileges are required")
     for binary in ("ip", "wg"):
@@ -161,6 +166,7 @@ def run_probe(*, after_binding: bool = False) -> str:
                     str(startup),
                     str(write_fd),
                     *(["--after-binding"] if after_binding else []),
+                    *(["--checkpoint", checkpoint] if checkpoint else []),
                 ],
                 cwd=str(Path(__file__).resolve().parent.parent),
                 stdout=subprocess.DEVNULL,
@@ -176,7 +182,7 @@ def run_probe(*, after_binding: bool = False) -> str:
             findings = interrupted_evidence(temporary)
             if not findings:
                 raise ProbeError("checkpoint fired without a durable pending intent")
-            if after_binding:
+            if after_binding or checkpoint:
                 binding_file = temporary / "owner-bindings.json"
                 bindings = json.loads(binding_file.read_text(encoding="utf-8"))
                 namespace_bindings = [entry for entry in bindings["bindings"] if entry["kind"] == "namespace"]
@@ -185,7 +191,23 @@ def run_probe(*, after_binding: bool = False) -> str:
                 live = command("ip", "netns", "list")
                 if live.returncode or namespace_bindings[0]["identifier"] not in _namespace_names(live.stdout):
                     raise ProbeError("partial creation checkpoint lacks its live namespace")
-                print("PASS: checkpoint retained a live, identity-bound namespace", flush=True)
+                if checkpoint in {"underlay", "wireguard", "routing"}:
+                    underlay_bindings = [
+                        entry
+                        for entry in bindings["bindings"]
+                        if entry["kind"] == "interface" and entry["binding"].get("scope") == "host"
+                    ]
+                    if len(underlay_bindings) != 1:
+                        raise ProbeError("later checkpoint lacks a durable host underlay binding")
+                    host = command("ip", "-j", "link", "show")
+                    if host.returncode:
+                        raise ProbeError("cannot observe host underlay at interruption")
+                    host_links = json.loads(host.stdout)
+                    if not any(
+                        link.get("ifindex") == underlay_bindings[0]["binding"]["ifindex"] for link in host_links
+                    ):
+                        raise ProbeError("later checkpoint lacks its identity-bound host underlay")
+                print(f"PASS: checkpoint retained live bound resources ({checkpoint or 'namespace'})", flush=True)
             else:
                 print("PASS: checkpoint reached after durable intent, before kernel creation", flush=True)
         finally:
@@ -270,11 +292,38 @@ def run_probe(*, after_binding: bool = False) -> str:
     return result
 
 
-def checkpoint_child(startup: str, ready_fd: int, *, after_binding: bool = False) -> int:
-    """Probe-only wrapper: stop after intent persistence, before kernel mutation."""
+def checkpoint_child(startup: str, ready_fd: int, *, after_binding: bool = False, checkpoint: str | None = None) -> int:
+    """Probe-only wrapper: pause after the selected durable or kernel boundary."""
     from nord_tools_internal import nordvpn_restore_executor as restore
 
+    if checkpoint not in (None, "underlay", "wireguard", "routing") or (checkpoint and after_binding):
+        raise ProbeError("invalid checkpoint selection")
     original = restore.execute_recorded_creation
+    original_kernel = restore._real_kernel
+
+    def pause():
+        os.write(ready_fd, b"R")
+        while True:
+            signal.pause()
+
+    if checkpoint:
+
+        def checkpoint_kernel():
+            kernel = original_kernel()
+            if checkpoint == "underlay":
+                # The host underlay binding is written after prepare_underlay.
+                return kernel
+            field = "configure_wireguard" if checkpoint == "wireguard" else "route_tunnel"
+            original_step = getattr(kernel, field)
+
+            def stopped_step(*args, **kwargs):
+                result = original_step(*args, **kwargs)
+                pause()
+                return result
+
+            return replace(kernel, **{field: stopped_step})
+
+        restore._real_kernel = checkpoint_kernel
 
     def intercepted(store_path, journal, allocation_id, operation, verify):
         def paused_operation():
@@ -285,28 +334,28 @@ def checkpoint_child(startup: str, ready_fd: int, *, after_binding: bool = False
 
         return original(store_path, journal, allocation_id, paused_operation, verify)
 
-    if after_binding:
+    if after_binding or checkpoint == "underlay":
         original_binding = restore.record_binding
 
         def intercepted_binding(store_path, journal, allocation_id, binding, *, configuration=None):
             result = original_binding(store_path, journal, allocation_id, binding, configuration=configuration)
-            if "device" in binding and "inode" in binding:
-                os.write(ready_fd, b"R")
-                # The namespace has been created and its identity durably
-                # recorded. A forced kill leaves a real partial transaction.
-                while True:
-                    signal.pause()
+            is_namespace = "device" in binding and "inode" in binding
+            is_underlay = binding.get("scope") == "host" and "ifindex" in binding
+            if (after_binding and is_namespace) or (checkpoint == "underlay" and is_underlay):
+                # Pause only after the selected creation-time identity is durable.
+                pause()
             return result
 
         restore.record_binding = intercepted_binding
-    else:
+    elif checkpoint is None:
         restore.execute_recorded_creation = intercepted
     try:
         return nordvpn_manage.main(["restore-startup", "--config", startup])
     finally:
         restore.execute_recorded_creation = original
-        if after_binding:
+        if after_binding or checkpoint == "underlay":
             restore.record_binding = original_binding
+        restore._real_kernel = original_kernel
         os.close(ready_fd)
 
 
@@ -317,20 +366,36 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--after-binding", action="store_true", help="interrupt after the namespace owner binding is durable"
     )
+    parser.add_argument(
+        "--checkpoint",
+        choices=("underlay", "wireguard", "routing"),
+        help="interrupt after a later kernel provisioning step",
+    )
     args = parser.parse_args(argv)
+    if args.after_binding and args.checkpoint:
+        parser.error("--after-binding and --checkpoint cannot be combined")
     if args.checkpoint_child is not None:
         return checkpoint_child(
-            args.checkpoint_child[0], int(args.checkpoint_child[1]), after_binding=args.after_binding
+            args.checkpoint_child[0],
+            int(args.checkpoint_child[1]),
+            after_binding=args.after_binding,
+            checkpoint=args.checkpoint,
         )
     if not args.run_privileged:
-        boundary = "after a live namespace is created and bound" if args.after_binding else "before kernel creation"
+        boundary = (
+            f"after {args.checkpoint} installation"
+            if args.checkpoint
+            else "after a live namespace is created and bound"
+            if args.after_binding
+            else "before kernel creation"
+        )
         print(
             "DRY RUN: would restore a pinned profile, kill the child at a durable checkpoint "
             f"{boundary}, recover through the production authority paths and clean up. No changes made."
         )
         return 0
     try:
-        run_probe(after_binding=args.after_binding)
+        run_probe(after_binding=args.after_binding, checkpoint=args.checkpoint)
     except Exception as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1
