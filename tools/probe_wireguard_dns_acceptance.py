@@ -22,6 +22,8 @@ from nord_tools_internal.nordvpn_dns_confinement import (
     verify_dns_peer_allowed_ips,
     verify_resolver_file,
 )
+from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
+from nord_tools_internal.nordvpn_isolation_install import _verify_base_chains
 from nord_tools_internal.nordvpn_resolver_install import install_namespace_resolver, remove_namespace_resolver
 from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy
 from tools.probe_two_wireguard import HarnessError, pair, run
@@ -51,23 +53,74 @@ def _require_no_underlay_fallback(namespace: str, underlay: str) -> None:
 
 
 def _install_isolation(namespace: str, underlay: str, endpoint: str, port: int) -> None:
-    """Install an explicit default-drop policy with one pinned endpoint exception."""
-    rules = f'''table inet nt_dns_accept {{
-        chain output {{
-            type filter hook output priority 0; policy drop;
-            oifname "lo" accept
-            oifname "wgtest" accept
-            oifname "{underlay}" ip daddr {endpoint} udp dport {port} accept
-        }}
-        chain input {{
-            type filter hook input priority 0; policy drop;
-            iifname "lo" accept
-            ct state established,related accept
-            iifname "{underlay}" ip saddr {endpoint} udp sport {port} accept
-            iifname "wgtest" accept
-        }}
-    }}'''
-    run("ip", "netns", "exec", namespace, "nft", "-f", "-", input_text=rules)
+    """Apply the production firewall policy and verify its exact live readback.
+
+    The disposable namespace is already isolated from the host. This uses the
+    same rules and verifier as production restoration, not a parallel fixture.
+    """
+    policy = NamespaceIsolationPolicy("wgtest", underlay, endpoint, port)
+    run("ip", "netns", "exec", namespace, "nft", "-c", "-f", "-", input_text=policy.render_nft())
+    run("ip", "netns", "exec", namespace, "nft", "-f", "-", input_text=policy.render_nft())
+    _verify_base_chains(namespace, policy)
+
+
+def _verify_application_underlay_refusal(namespace: str, server: str, underlay: str) -> None:
+    """Prove an application's non-endpoint UDP packet cannot reach the underlay."""
+    listener = """import socket, sys
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(('198.18.1.1', 53535))
+sock.settimeout(3)
+print('READY', flush=True)
+try:
+    sock.recvfrom(1024)
+except socket.timeout:
+    sys.exit(0)
+sys.exit(3)
+"""
+    sender = """import errno, socket, sys
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    sock.sendto(b'nt-bypass', ('198.18.1.1', 53535))
+except OSError as exc:
+    if exc.errno in (errno.EPERM, errno.EACCES, errno.ENETUNREACH, errno.EHOSTUNREACH):
+        print('BLOCKED', flush=True)
+    else:
+        print(f'UNEXPECTED: {exc}', file=sys.stderr, flush=True)
+        sys.exit(2)
+"""
+    process = subprocess.Popen(
+        ["ip", "netns", "exec", server, sys.executable, "-I", "-c", listener],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if process.stdout is None or process.stdout.readline().strip() != "READY":
+            raise DNSAcceptanceError("underlay bypass listener failed to start")
+        result = subprocess.run(
+            ["ip", "netns", "exec", namespace, sys.executable, "-I", "-c", sender],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode:
+            raise DNSAcceptanceError(
+                "underlay bypass application failed to execute: "
+                + (result.stderr.strip() or f"exit {result.returncode}")
+            )
+        if process.wait(timeout=6):
+            raise DNSAcceptanceError("application UDP packet escaped to the underlay")
+        _verify_base_chains(namespace, NamespaceIsolationPolicy("wgtest", underlay, "198.18.1.1", 51001))
+        print("PASS: application UDP bypass to the underlay was blocked by production firewall")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
 
 
 def _exchange_dns_packets(client: str, server: str) -> None:
@@ -179,6 +232,7 @@ def experiment(token: str) -> None:
             raise DNSAcceptanceError("namespace process does not see the pinned resolver")
         print("PASS: namespace process observes the pinned resolver configuration")
         _exchange_dns_packets(client, server)
+        _verify_application_underlay_refusal(client, server, client_link)
         # The underlay must not become an alternative route after the tunnel fails.
         run("ip", "-n", client, "link", "set", "wgtest", "down")
         _require_no_underlay_fallback(client, client_link)
