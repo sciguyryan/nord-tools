@@ -121,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
         "lifecycle",
         "ownership-preflight",
         "reconcile-live",
+        "apply-live",
         "startup-plan",
         "startup-install",
         "restore-startup",
@@ -155,6 +156,11 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
             command.add_argument(
                 "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
+            )
+        if name == "apply-live":
+            command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
+            command.add_argument(
+                "--execute", action="store_true", help="Create verified-absent profiles; default is read-only"
             )
         if name == "reconcile-live":
             command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
@@ -301,6 +307,15 @@ def main(argv: list[str] | None = None) -> int:
             bindings = read_json(args.bindings)
             intents = read_json(args.intents) if args.intents else None
             result = preflight_ownership(journal, bindings, discover(), intents)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "apply-live":
+            if args.transient:
+                raise ManagementError("live apply is persistent-only")
+            from nord_tools_internal.nordvpn_live_apply import apply_live_state
+
+            result = apply_live_state(read_json(args.config), execute=args.execute)
+            result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "reconcile-live":

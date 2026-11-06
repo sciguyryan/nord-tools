@@ -506,6 +506,8 @@ Part 7.3 closes the loop between the reconciliation foundations and the boot sys
 python nord_tools.py manage startup-plan --config path/to/startup.json
 python nord_tools.py manage startup-install --config path/to/startup.json --execute
 python nord_tools.py manage restore-startup --config path/to/startup.json
+python nord_tools.py manage apply-live --config path/to/startup.json
+python nord_tools.py manage apply-live --config path/to/startup.json --execute
 ```
 
 `startup-plan` renders the `nord-tools-restore.service` unit and reports what installation would do without writing anything. `startup-install` writes the unit atomically into the target directory, refuses to replace a foreign pre-existing unit, keeps an already-identical unit untouched, and rewrites a previously generated one as needed; it never enables the service. `restore-startup` is the unit's `ExecStart`: it obtains a fresh read-only ownership preflight, reconciles the persistent desired policy, restores only pinned profiles whose owned resources are entirely absent in this boot session, retires journal records for resources that an earlier boot lost, and appends a bounded startup run record. Transient intent is refused outright.
@@ -782,3 +784,7 @@ On 3 November 2026, the standalone Part 7 matrix and the complete five-stage Par
 The final probes account for fixture effects without weakening the host checks. IPv4 comparison ignores only exact kernel-connected fixture routes on interfaces whose live indices match their creation-time bindings, including their expected removal during cleanup. Nftables comparison ignores packet and byte readings only. Namespace absence checks are scoped to the current fixture, so unrelated host namespaces are preserved. Failed probes retain their raw host snapshots and ownership stores; successful Part 7 runs retire the surviving fixture before deleting those stores.
 
 Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after arbitrary partial kernel provisioning. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model; real-tunnel DNS confinement, fail-closed routing, live update and replacement, and application routing remain open in `TODO.md`.
+
+### Live create-only reconciliation
+
+`manage apply-live --config PATH` reads the pinned persistent policy and current ownership evidence under the cooperating-process lifecycle lock, then classifies every profile. With `--execute`, it permits only entirely absent desired allocations and converged allocations; any disputed, changed, or retired profile prevents the entire create-only pass. The existing restoration executor reacquires its lock and revalidates kernel ownership before provisioning. This command does not replace active tunnels or retire profiles; use the separately confirmed cleanup mechanism for verified retirement and the forthcoming staged-replacement lifecycle for updates. A preview does not mutate the kernel.
