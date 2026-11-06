@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 from pathlib import Path
 import secrets
@@ -28,8 +29,45 @@ class IntegrityError(RuntimeError):
 OBSERVATIONS = (
     ("IPv4 host routes", ("ip", "-4", "route", "show", "table", "all")),
     ("IPv6 host routes", ("ip", "-6", "route", "show", "table", "all")),
-    ("host nftables ruleset", ("nft", "-a", "list", "ruleset")),
+    ("host nftables ruleset", ("nft", "-j", "-a", "list", "ruleset")),
 )
+
+
+def _normalise_nft_counters(value: object) -> object:
+    """Ignore only live counter measurements, retaining counter statements.
+
+    nftables JSON represents counters as ``{"counter": {"packets": ...,
+    "bytes": ...}}``. The counter expression itself, and every other
+    attribute of the ruleset, remain part of the integrity fingerprint.
+    """
+    if isinstance(value, list):
+        return [_normalise_nft_counters(item) for item in value]
+    if isinstance(value, dict):
+        result = {}
+        for key, child in value.items():
+            if key == "counter" and isinstance(child, dict):
+                result[key] = {
+                    field: _normalise_nft_counters(item)
+                    for field, item in child.items()
+                    if field not in ("packets", "bytes")
+                }
+            else:
+                result[key] = _normalise_nft_counters(child)
+        return result
+    return value
+
+
+def _nft_configuration_fingerprint(output: str) -> str:
+    """Hash the complete JSON ruleset, excluding live counter values only."""
+    try:
+        document = json.loads(output)
+    except (ValueError, TypeError) as exc:
+        raise IntegrityError(f"Cannot parse host nftables JSON: {exc}") from exc
+    if not isinstance(document, dict) or not isinstance(document.get("nftables"), list):
+        raise IntegrityError("Unexpected host nftables JSON structure")
+    normalised = _normalise_nft_counters(document)
+    encoded = json.dumps(normalised, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
 def observe() -> dict[str, str]:
@@ -39,7 +77,11 @@ def observe() -> dict[str, str]:
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if result.returncode:
             raise IntegrityError(f"Cannot inspect {label}: {result.stderr.strip()}")
-        evidence[label] = hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+        evidence[label] = (
+            _nft_configuration_fingerprint(result.stdout)
+            if label == "host nftables ruleset"
+            else hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
+        )
     resolver = Path("/etc/resolv.conf")
     try:
         evidence["host resolver contents"] = hashlib.sha256(resolver.read_bytes()).hexdigest()

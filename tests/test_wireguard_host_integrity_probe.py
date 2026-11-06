@@ -9,6 +9,70 @@ from tools import probe_wireguard_host_integrity as integrity
 
 
 class HostIntegrityProbeTests(unittest.TestCase):
+    def test_nft_counter_values_are_volatile_but_counter_statement_remains(self):
+        import json
+
+        original = {
+            "nftables": [
+                {
+                    "rule": {
+                        "family": "ip",
+                        "table": "filter",
+                        "chain": "INPUT",
+                        "handle": 4,
+                        "expr": [{"counter": {"packets": 1, "bytes": 30}}, {"accept": None}],
+                    }
+                }
+            ]
+        }
+        updated = json.loads(json.dumps(original))
+        updated["nftables"][0]["rule"]["expr"][0]["counter"] = {"packets": 999, "bytes": 45000}
+        fingerprint = integrity._nft_configuration_fingerprint
+        self.assertEqual(fingerprint(json.dumps(original)), fingerprint(json.dumps(updated)))
+        updated["nftables"][0]["rule"]["expr"].pop(0)
+        self.assertNotEqual(fingerprint(json.dumps(original)), fingerprint(json.dumps(updated)))
+
+    def test_nft_security_relevant_mutations_fail(self):
+        import copy
+        import json
+
+        original = {
+            "nftables": [
+                {
+                    "chain": {
+                        "family": "ip",
+                        "table": "filter",
+                        "name": "INPUT",
+                        "hook": "input",
+                        "prio": 0,
+                        "policy": "drop",
+                    }
+                },
+                {"rule": {"expr": [{"counter": {"packets": 1, "bytes": 2}}, {"drop": None}], "handle": 7}},
+            ]
+        }
+        fingerprint = integrity._nft_configuration_fingerprint
+        baseline = fingerprint(json.dumps(original))
+        for mutate in ("policy", "verdict", "handle", "extra-rule", "counter-extra"):
+            changed = copy.deepcopy(original)
+            if mutate == "policy":
+                changed["nftables"][0]["chain"]["policy"] = "accept"
+            elif mutate == "verdict":
+                changed["nftables"][1]["rule"]["expr"][1] = {"accept": None}
+            elif mutate == "handle":
+                changed["nftables"][1]["rule"]["handle"] = 8
+            elif mutate == "extra-rule":
+                changed["nftables"].append({"rule": {"expr": [{"accept": None}]}})
+            else:
+                changed["nftables"][1]["rule"]["expr"][0]["counter"]["name"] = "other"
+            with self.subTest(mutate=mutate):
+                self.assertNotEqual(baseline, fingerprint(json.dumps(changed)))
+
+    def test_malformed_nft_readback_fails_closed(self):
+        for output in ("not json", "{}", "[]", '{"nftables": {}}'):
+            with self.subTest(output=output), self.assertRaises(integrity.IntegrityError):
+                integrity._nft_configuration_fingerprint(output)
+
     def test_dry_run_never_executes(self):
         with patch.object(integrity, "experiment") as experiment, redirect_stdout(io.StringIO()) as output:
             self.assertEqual(integrity.main([]), 0)
