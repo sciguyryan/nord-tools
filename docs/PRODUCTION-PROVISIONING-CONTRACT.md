@@ -151,3 +151,9 @@ The production restoration path installs a dedicated namespace-local nftables ta
 ## Firewall readback object restrictions
 
 The production isolation readback rejects unrecognised nftables objects in its dedicated table, including flowtables, in addition to verifying the default-drop chains and exact allow rules. This check does not prove packet-level confinement or compatibility with every nftables JSON version; privileged kernel acceptance remains required.
+
+## Disposable dual-stack packet acceptance
+
+Run `sudo python tools/probe_part4_packet_acceptance.py --run-privileged` to exercise the production isolation policy's narrowly pinned UDP endpoint exception and unrelated underlay drops using kernel counters, followed by IPv4 and IPv6 route selection and tunnel-loss fallback checks in separate disposable namespaces. Run without `--run-privileged` to preview the checks without creating resources. The runner stops on the first failure and leaves each underlying probe responsible for its own cleanup and diagnostic output.
+
+These checks deliberately do not establish real WireGuard packet delivery, application DNS confinement, or production fail-closed behaviour. The routing probe uses a dummy tunnel, and full real-tunnel and resolver acceptance remains outstanding.
