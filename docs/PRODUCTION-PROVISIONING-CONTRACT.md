@@ -157,3 +157,7 @@ The production isolation readback rejects unrecognised nftables objects in its d
 Run `sudo python tools/probe_part4_packet_acceptance.py --run-privileged` to exercise the production isolation policy's narrowly pinned UDP endpoint exception and unrelated underlay drops using kernel counters, followed by IPv4 and IPv6 route selection and tunnel-loss fallback checks in separate disposable namespaces. Run without `--run-privileged` to preview the checks without creating resources. The runner stops on the first failure and leaves each underlying probe responsible for its own cleanup and diagnostic output.
 
 These checks deliberately do not establish real WireGuard packet delivery, application DNS confinement, or production fail-closed behaviour. The routing probe uses a dummy tunnel, and full real-tunnel and resolver acceptance remains outstanding.
+
+## Dual-stack namespace default routes
+
+The production routing installer adds both IPv4 and IPv6 default routes through the WireGuard interface after installing the endpoint-specific underlay route. It refuses a failure in either default-route installation, leaving the surrounding provisioning transaction to handle rollback. A tunnel configured for one address family does not thereby gain working connectivity for the other family; the additional route prevents an implicit underlay fallback rather than guaranteeing service. Namespace firewall enforcement is a separate boundary. Real-tunnel packet and tunnel-loss acceptance remains outstanding.

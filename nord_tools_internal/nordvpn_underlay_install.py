@@ -183,14 +183,18 @@ def install_tunnel_routing(
     """Route the protected default through the tunnel and the endpoint via underlay.
 
     A direct route to the peer endpoint keeps tunnel establishment reachable
-    through the underlay while everything else defaults to the tunnel. A
-    single-family default route is installed for the tunnel address family; the
-    IPv6 confinement programme's real-tunnel acceptance remains outstanding, so
-    no IPv6 route is invented here beyond the family of the tunnel address.
+    through the underlay. Both IPv4 and IPv6 default routes are pinned to the
+    WireGuard device, even when only one family has a configured tunnel address.
+    The other family may not be usable, but it must never gain an underlay
+    default route. The namespace firewall remains the independent enforcement
+    boundary for traffic and endpoint restrictions.
     """
     tunnel_ip = _canonical_address(tunnel_address, "tunnel address")
     endpoint = ipaddress.ip_address(endpoint_address)
     if endpoint.version != ipaddress.ip_interface(tunnel_ip).version:
         raise RegistryError("the tunnel address family must match the peer endpoint family")
     add_tunnel_route(namespace, namespace_interface, str(ipaddress.ip_network(endpoint)), host_gateway, runner=runner)
-    _run(["ip", "-n", namespace, "route", "add", "default", "dev", tunnel_interface], runner)
+    # Do not let an absent tunnel address family acquire a host/underlay
+    # fallback through a later resolver or application configuration change.
+    _run(["ip", "-4", "-n", namespace, "route", "add", "default", "dev", tunnel_interface], runner)
+    _run(["ip", "-6", "-n", namespace, "route", "add", "default", "dev", tunnel_interface], runner)

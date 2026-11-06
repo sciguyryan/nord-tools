@@ -108,8 +108,29 @@ class UnderlayWiringTests(unittest.TestCase):
         )
         joined = [" ".join(call) for call in runner.calls]
         self.assertIn("route add 198.51.100.10/32 via 10.214.0.1 dev ntul0123ab", " ".join(joined))
-        self.assertIn("route add default dev ntwg0123abcd", " ".join(joined))
+        self.assertTrue(
+            any("ip -4 -n" in command and "route add default dev ntwg0123abcd" in command for command in joined)
+        )
+        self.assertTrue(
+            any("ip -6 -n" in command and "route add default dev ntwg0123abcd" in command for command in joined)
+        )
         self.assertFalse(any("flush" in command for command in joined))
+
+    def test_ipv6_default_route_failure_is_not_ignored(self):
+        runner = RecordingRunner(fail_at="ip -6 -n")
+        with self.assertRaises(UnderlayError):
+            install_tunnel_routing(
+                "nt-1a2b3c4d5e6f7a8b",
+                "ntwg0123abcd",
+                "ntul0123ab",
+                "198.51.100.10",
+                "10.213.240.2/32",
+                "10.214.0.1",
+                runner=runner,
+            )
+        self.assertEqual(len(runner.calls), 3)
+        self.assertTrue(all("-n nt-1a2b3c4d5e6f7a8b" in " ".join(call) for call in runner.calls))
+        self.assertFalse(any("flush" in call or "replace" in call for call in runner.calls))
 
     def test_interface_index_requires_membership(self):
         with mock.patch(
