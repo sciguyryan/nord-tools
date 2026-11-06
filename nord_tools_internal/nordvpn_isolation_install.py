@@ -130,9 +130,24 @@ def _verify_base_chains(namespace: str, policy: NamespaceIsolationPolicy) -> Non
         entries = document["nftables"]
         if not isinstance(entries, list):
             raise IsolationInstallError("invalid namespace firewall readback entries")
+        # The table is dedicated to Nord Tools. Unrecognised objects can alter
+        # packet evaluation (for example, additional base chains or flowtables)
+        # without changing the expected allow rules. Refuse them rather than
+        # claiming that a partial readback proves the firewall is pinned.
+        permitted_metadata = {"metainfo", "table", "chain", "rule"}
+        for entry in entries:
+            if not isinstance(entry, dict) or len(entry) != 1 or not set(entry) <= permitted_metadata:
+                raise IsolationInstallError("unexpected namespace firewall readback object")
+            table = entry.get("table")
+            if table is not None and (
+                not isinstance(table, dict)
+                or table.get("family") != "inet"
+                or table.get("name") != "nord_tools_isolation"
+            ):
+                raise IsolationInstallError("unexpected namespace firewall table")
         chains = {}
         for entry in entries:
-            chain = entry.get("chain") if isinstance(entry, dict) else None
+            chain = entry.get("chain")
             if (
                 isinstance(chain, dict)
                 and chain.get("family") == "inet"

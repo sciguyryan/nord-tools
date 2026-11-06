@@ -147,3 +147,7 @@ The consolidated provisioning acceptance increment has been accepted by the oper
 ## Production firewall readback hardening
 
 The production restoration path installs a dedicated namespace-local nftables table before creating or activating the WireGuard device. Installation now verifies both the three default-drop base chains and the exact allow-rule expressions for loopback, established replies, tunnel output and the pinned numeric UDP endpoint. Unexpected or altered rules cause provisioning to fail with uncertain evidence rather than treating chain-only readback as sufficient. This readback is not proof of packet confinement, tunnel-loss behaviour or DNS leak prevention. The JSON expression contract must be verified against the installed nftables version during privileged acceptance.
+
+## Firewall readback object restrictions
+
+The production isolation readback rejects unrecognised nftables objects in its dedicated table, including flowtables, in addition to verifying the default-drop chains and exact allow rules. This check does not prove packet-level confinement or compatibility with every nftables JSON version; privileged kernel acceptance remains required.

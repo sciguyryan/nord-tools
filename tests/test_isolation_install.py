@@ -111,6 +111,26 @@ class IsolationInstallTests(unittest.TestCase):
 
     @patch.object(OwnedNamespace, "verify")
     @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_unexpected_flowtable(self, run, verify):
+        document = json.loads(self.readback())
+        document["nftables"].append(
+            {"flowtable": {"family": "inet", "table": "nord_tools_isolation", "name": "bypass"}}
+        )
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaisesRegex(IsolationInstallError, "unexpected namespace firewall readback object"):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
+    def test_readback_rejects_foreign_table(self, run, verify):
+        document = json.loads(self.readback())
+        document["nftables"].append({"table": {"family": "inet", "name": "foreign"}})
+        run.side_effect = [Mock(returncode=0), Mock(returncode=0), Mock(returncode=0, stdout=json.dumps(document))]
+        with self.assertRaisesRegex(IsolationInstallError, "unexpected namespace firewall table"):
+            install_disposable_isolation(self.owned, self.policy)
+
+    @patch.object(OwnedNamespace, "verify")
+    @patch("nord_tools_internal.nordvpn_isolation_install.subprocess.run")
     def test_readback_rejects_nonzero_priority(self, run, verify):
         document = json.loads(self.readback())
         document["nftables"][1]["chain"]["prio"] = -10
