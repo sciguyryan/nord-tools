@@ -84,6 +84,63 @@ class AllocationProfileTests(RestoreTestBase):
         self.assertEqual(len(result["leases"]), 1)
         self.assertEqual(read_runtime_consumers(store, policy)["leases"][0]["allocation_key"], "profile:primary")
 
+    def test_staged_launch_requires_verified_namespace_and_records_expected_executable(self):
+        import os
+        from unittest.mock import patch
+        from types import SimpleNamespace
+
+        original_stat = os.stat
+
+        def namespace_stat(path, *args, mismatch=False, **kwargs):
+            if str(path).startswith("/run/netns/"):
+                return SimpleNamespace(st_dev=1, st_ino=2)
+            if str(path).startswith("/proc/") and str(path).endswith("/ns/net"):
+                return SimpleNamespace(st_dev=1, st_ino=3 if mismatch else 2)
+            return original_stat(path, *args, **kwargs)
+
+        from nord_tools_internal.nordvpn_runtime_consumers import (
+            reserve_staged_consumer,
+            initialise_runtime_consumers,
+            read_runtime_consumers,
+        )
+        from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError
+
+        policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
+        policy["applications"] = {"alpha": {"executable": "/bin/true", "vpn": "primary"}}
+        self.policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        store = self.root / "runtime.json"
+        initialise_runtime_consumers(store, policy)
+        self.restore()
+        journal = self.load("lifecycle.json")
+        namespace = next(
+            item["identifier"] for item in journal["allocations"]["resources"] if item["kind"] == "namespace"
+        )
+        kwargs = {
+            "journal_path": self.config["journal"],
+            "bindings_path": self.config["bindings"],
+            "intent_path": self.config["intent"],
+            "observe": self.harness.observe,
+            "staging_executable": "/usr/bin/python",
+            "namespace": namespace,
+        }
+        with (
+            patch(
+                "nord_tools_internal.nordvpn_runtime_consumers.os.stat",
+                side_effect=lambda path, *a, **kw: namespace_stat(path, *a, mismatch=True, **kw),
+            ),
+            self.assertRaisesRegex(ConsumerReferenceError, "outside the verified namespace"),
+        ):
+            reserve_staged_consumer(store, policy, "alpha", os.getpid(), **kwargs)
+        with (
+            patch("nord_tools_internal.nordvpn_runtime_consumers.os.stat", side_effect=namespace_stat),
+            patch(
+                "nord_tools_internal.nordvpn_runtime_consumers._identity",
+                return_value=("boot", "123", "/usr/bin/python"),
+            ),
+        ):
+            reserve_staged_consumer(store, policy, "alpha", os.getpid(), **kwargs)
+        self.assertEqual(read_runtime_consumers(store, policy)["leases"][0]["executable"], "/bin/true")
+
     def test_selected_isolated_retirement_preserves_other_consumer(self):
         import os
         from unittest.mock import patch

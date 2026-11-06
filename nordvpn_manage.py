@@ -128,6 +128,7 @@ def main(argv: list[str] | None = None) -> int:
         "retire-consumers",
         "consumer-leases",
         "acquire-consumer",
+        "launch-consumer",
         "release-exited-consumer",
         "cleanup",
         "clear-ownership",
@@ -215,7 +216,7 @@ def main(argv: list[str] | None = None) -> int:
                 action="store_true",
                 help="Run production restoration; without this flag no kernel mutation occurs",
             )
-        if name in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
+        if name in ("consumer-leases", "release-exited-consumer", "acquire-consumer", "launch-consumer"):
             command.add_argument("--config", required=True, help="Startup configuration pinning the registered policy")
             command.add_argument(
                 "--runtime-consumers", required=True, help="Durable process-bound consumer lease store"
@@ -226,6 +227,14 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--execute", action="store_true", help="Verify provisioned resources and acquire the lease"
             )
+        if name == "launch-consumer":
+            command.add_argument("--consumer", required=True, help="Registered application to execute")
+            command.add_argument("--uid", required=True, type=int, help="Non-root application user ID")
+            command.add_argument("--gid", required=True, type=int, help="Non-root application group ID")
+            command.add_argument(
+                "--execute", action="store_true", help="Launch after verified namespace and lease reservation"
+            )
+            command.add_argument("arguments", nargs="*", help="Application arguments (no shell expansion)")
         if name == "release-exited-consumer":
             command.add_argument("--consumer", required=True, help="Registered consumer whose process has exited")
             command.add_argument(
@@ -346,6 +355,47 @@ def main(argv: list[str] | None = None) -> int:
                 result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
+        if args.action == "launch-consumer":
+            if args.transient:
+                raise ManagementError("application launch is persistent-only")
+            config = validate_startup_config(read_json(args.config))
+            policy = validate_policy(read_json(config["policy"]))
+            from nord_tools_internal.nordvpn_application_plan import plan_application
+
+            plan = plan_application(policy, args.consumer, tuple(args.arguments))
+            if not args.execute:
+                print(
+                    json.dumps(
+                        {
+                            "action": "launch-consumer",
+                            "execute": False,
+                            "intent_only": True,
+                            "application": plan.application,
+                            "profile": plan.profile,
+                            "allocation_key": plan.allocation_key,
+                            "argv": [plan.executable, *plan.arguments],
+                        },
+                        indent=2,
+                        sort_keys=True,
+                    )
+                )
+                return 0
+            if not config["intent"]:
+                raise ManagementError("application launch requires a pinned operation intent store")
+            from nord_tools_internal.nordvpn_application_executor import launch_provisioned_application
+
+            return launch_provisioned_application(
+                policy,
+                args.consumer,
+                tuple(args.arguments),
+                runtime_consumers=args.runtime_consumers,
+                journal_path=config["journal"],
+                bindings_path=config["bindings"],
+                intent_path=config["intent"],
+                observe=discover,
+                uid=args.uid,
+                gid=args.gid,
+            )
         if args.action in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
             if args.transient:
                 raise ManagementError("runtime consumer management is persistent-only")

@@ -211,6 +211,83 @@ def assert_allocation_unreferenced(path: str | Path, policy: dict, allocation_ke
             raise ConsumerReferenceError("allocation retains a durable runtime consumer lease")
 
 
+def reserve_staged_consumer(
+    path: str | Path,
+    policy: dict,
+    application: str,
+    pid: int,
+    *,
+    namespace: str,
+    staging_executable: str,
+    journal_path: str | Path,
+    bindings_path: str | Path,
+    intent_path: str | Path,
+    observe,
+) -> dict:
+    """Reserve a stopped launch gate before it can execute the registered program.
+
+    The gate must already be inside the verified namespace and blocked on its
+    private release pipe. The caller owns that pipe and must close it on every
+    failure. This is cooperating-process authority, not hostile-root isolation.
+    """
+    from nord_tools_internal.nordvpn_consumer_reference_store import read_private_json
+    from nord_tools_internal.nordvpn_application_plan import plan_application
+
+    checked = validate_policy(policy)
+    plan = plan_application(checked, application)
+    kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
+    with lifecycle_execution_lock(journal_path), locked_consumer_references(path):
+        journal = validate_journal(read_private_json(journal_path))
+        bindings = read_private_json(bindings_path)
+        intents = read_private_json(intent_path)
+        preflight = preflight_ownership(journal, bindings, observe(), intents)
+        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == kernel_profile]
+        if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
+            "interface",
+            "interface",
+            "interface",
+            "namespace",
+        ]:
+            raise ConsumerReferenceError("allocation does not have a complete provisioned resource set")
+        states = {item["allocation_id"]: item["state"] for item in journal["events"]}
+        findings = {item["allocation_id"]: item for item in preflight["resources"]}
+        if any(
+            states.get(item["allocation_id"]) != "active"
+            or findings.get(item["allocation_id"], {}).get("finding") != "verified_current"
+            for item in resources
+        ):
+            raise ConsumerReferenceError("allocation resources are not active and independently verified")
+        owned_namespace = next(item["identifier"] for item in resources if item["kind"] == "namespace")
+        if namespace != owned_namespace:
+            raise ConsumerReferenceError("launch namespace differs from the verified allocation")
+        try:
+            expected = os.stat(f"/run/netns/{namespace}")
+            actual = os.stat(f"/proc/{pid}/ns/net")
+        except OSError as exc:
+            raise ConsumerReferenceError(f"cannot verify staged process namespace: {exc}") from exc
+        if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
+            raise ConsumerReferenceError("staged process is outside the verified namespace")
+        document = _read(path, checked)
+        if any(lease["application"] == application for lease in document["leases"]):
+            raise ConsumerReferenceError("consumer already has a lease; release or recover it first")
+        before = _identity(pid)
+        if before[2] != staging_executable or _identity(pid) != before:
+            raise ConsumerReferenceError("staged process identity changed before lease reservation")
+        document["leases"].append(
+            {
+                "application": application,
+                "profile": plan.profile,
+                "allocation_key": plan.allocation_key,
+                "pid": pid,
+                "boot_id": before[0],
+                "start_time": before[1],
+                "executable": checked["applications"][application]["executable"],
+            }
+        )
+        _write(path, checked, document)
+        return _validate(checked, document)
+
+
 def acquire_provisioned_consumer(
     path: str | Path,
     policy: dict,
