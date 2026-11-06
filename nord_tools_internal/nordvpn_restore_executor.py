@@ -35,6 +35,13 @@ from typing import Callable
 
 from nord_tools_internal.nordvpn_allocation_profiles import expand_allocation_profiles
 from nord_tools_internal.nordvpn_discovery import discover
+from nord_tools_internal.nordvpn_dns_confinement import (
+    verify_dns_routes,
+    verify_dns_peer_allowed_ips,
+    verify_resolver_file,
+)
+from nord_tools_internal.nordvpn_resolver_install import install_namespace_resolver, remove_namespace_resolver
+from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
 from nord_tools_internal.nordvpn_identity import allocate_identity
 from nord_tools_internal.nordvpn_isolation_install import install_disposable_isolation
@@ -95,6 +102,9 @@ class RestoreKernel:
     public_key_from_fd: Callable[[int], str]
     verify_wireguard: Callable[..., bool]
     remove_host_interface: Callable[[str, int], None]
+    install_resolver: Callable[..., object] | None = None
+    verify_dns: Callable[..., None] | None = None
+    remove_resolver: Callable[[object], None] | None = None
 
 
 def _real_kernel() -> RestoreKernel:
@@ -212,6 +222,13 @@ def _real_kernel() -> RestoreKernel:
         public_key_from_fd=public_key_from_fd,
         verify_wireguard=verify_wireguard,
         remove_host_interface=remove_host_interface,
+        install_resolver=install_namespace_resolver,
+        verify_dns=lambda name, interface, policy: (
+            verify_dns_routes(name, interface, policy),
+            verify_dns_peer_allowed_ips(name, interface, policy),
+            verify_resolver_file(name, policy),
+        ),
+        remove_resolver=remove_namespace_resolver,
     )
 
 
@@ -555,6 +572,19 @@ def _restore_profile(
                 is not True
             ):
                 raise ProvisioningUncertainError("the restored WireGuard peer does not match the pinned provider plan")
+            # Only publish a namespace resolver after the firewall, both default
+            # routes and the pinned WireGuard peer have been verified. An
+            # unverified DNS destination must never become active.
+            if "dns_servers" in plan:
+                if helpers.install_resolver is None or helpers.verify_dns is None or helpers.remove_resolver is None:
+                    raise ProvisioningUncertainError("production DNS kernel helpers are unavailable")
+                dns_policy = NamespaceResolverPolicy(tuple(plan["dns_servers"]))
+                verify_dns_routes_before_install = helpers.verify_dns
+                # Route confinement is verified again after the resolver file
+                # has been installed, before publishing active lifecycle state.
+                installation = helpers.install_resolver(namespace, dns_policy)
+                cleanup.append(lambda: helpers.remove_resolver(installation))
+                verify_dns_routes_before_install(namespace, interface, dns_policy)
             record_binding(
                 bindings_path,
                 validate_journal(_read_document(journal_path)),

@@ -61,10 +61,11 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
         "tunnel_address",
         "peer_allowed_ips",
         "underlay",
+        "dns_servers",
     }
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
         raise RegistryError("invalid profile name in startup configuration")
-    if not isinstance(plan, dict) or not allowed <= set(plan) or set(plan) - allowed:
+    if not isinstance(plan, dict) or not (allowed - {"dns_servers"}) <= set(plan) or set(plan) - allowed:
         raise RegistryError(
             f"tunnel plan for {name} requires peer_public_key, endpoint_address, endpoint_port, "
             "tunnel_address, peer_allowed_ips and underlay"
@@ -86,6 +87,18 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
     for field in ("namespace_address", "host_address"):
         if not isinstance(underlay[field], str) or not underlay[field]:
             raise RegistryError(f"tunnel plan for {name} underlay requires a textual {field}")
+    # DNS is opt-in for legacy configurations. New plans must supply a
+    # validated numeric resolver list, never a host-dependent DNS name.
+    if "dns_servers" in plan:
+        from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy
+
+        servers = plan["dns_servers"]
+        if not isinstance(servers, list):
+            raise RegistryError(f"dns_servers for {name} must be a list of numeric addresses")
+        try:
+            NamespaceResolverPolicy(tuple(servers))
+        except (ValueError, TypeError) as exc:
+            raise RegistryError(f"invalid DNS servers for {name}: {exc}") from exc
     return dict(plan)
 
 
