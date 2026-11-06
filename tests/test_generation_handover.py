@@ -3,11 +3,16 @@
 import pytest
 
 from nord_tools_internal.nordvpn_generation_handover import (
+    AllocationGeneration,
     GenerationHandoverError,
     advance_handover,
     prepare_handover,
+    prepare_generation_handover,
+    policy_digest,
     read_handover,
     selected_generation,
+    selected_allocation,
+    _advance_verified_handover,
 )
 
 
@@ -59,3 +64,26 @@ def test_corrupt_document_fails_closed(tmp_path):
     path.write_text('{"version": 1}', encoding="utf-8")
     with pytest.raises(GenerationHandoverError):
         read_handover(path)
+
+
+def test_allocation_bound_generations_select_exact_kernel_scope(tmp_path):
+    path = tmp_path / "handover.json"
+    digest = policy_digest(POLICY)
+    old = AllocationGeneration("alpha", "profile:alpha", "gen-1", "alpha", digest)
+    replacement = AllocationGeneration("alpha", "profile:alpha", "gen-2", "ntgen_abc", digest)
+    prepared = prepare_generation_handover(path, old=old, replacement=replacement, policy=POLICY)
+    assert selected_allocation(prepared, policy=POLICY) == old
+    with pytest.raises(GenerationHandoverError, match="privileged replacement executor"):
+        advance_handover(path, expected_phase="prepared", next_phase="verified", policy=POLICY, verified=True)
+    _advance_verified_handover(path, expected_phase="prepared", next_phase="verified", policy=POLICY, verified=True)
+    active = _advance_verified_handover(
+        path, expected_phase="verified", next_phase="active", policy=POLICY, verified=True
+    )
+    assert selected_allocation(active, policy=POLICY) == replacement
+
+
+def test_legacy_handover_is_not_reinterpreted_as_allocation_generation(tmp_path):
+    path = tmp_path / "handover.json"
+    prepared = prepare_handover(path, profile="alpha", old="gen-1", replacement="gen-2", policy=POLICY)
+    with pytest.raises(GenerationHandoverError, match="legacy"):
+        selected_allocation(prepared, policy=POLICY)

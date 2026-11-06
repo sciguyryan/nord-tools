@@ -25,11 +25,11 @@ CONFIG = {
     [
         ("converged", [], []),
         ("configuration_changed", [], ["profile_not_converged"]),
-        ("converged", [{"profile": "alpha", "application": "browser"}], ["active_consumer_leases"]),
+        ("converged", [{"profile": "alpha", "application": "browser"}], []),
         (
             "retire_pending",
             [{"profile": "alpha", "application": "browser"}],
-            ["profile_not_converged", "active_consumer_leases"],
+            ["profile_not_converged"],
         ),
     ],
 )
@@ -60,6 +60,8 @@ def test_live_gate_remains_read_only(action, active, expected):
     assert result["safe_to_cut_over"] is False
     assert result["safe_to_retire_old"] is False
     assert result["network_changes_applied"] is False
+    if active:
+        assert "active_consumer_leases" in result["retirement_blockers"]
 
 
 def test_missing_intent_refuses_before_observation():

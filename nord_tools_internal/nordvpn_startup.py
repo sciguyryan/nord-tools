@@ -111,7 +111,18 @@ def validate_startup_config(document: object) -> dict:
     point at files that do not exist yet; the boot command fails closed on any
     missing file at run time.
     """
-    allowed = {"version", "policy", "journal", "bindings", "run_record", "intent", "graph", "tunnels", "credentials"}
+    allowed = {
+        "version",
+        "policy",
+        "journal",
+        "bindings",
+        "run_record",
+        "intent",
+        "graph",
+        "tunnels",
+        "credentials",
+        "handovers",
+    }
     required = {"version", "policy", "journal", "bindings", "run_record", "tunnels"}
     if not isinstance(document, dict) or not required <= set(document) or set(document) - allowed:
         raise RegistryError(
@@ -134,9 +145,15 @@ def validate_startup_config(document: object) -> dict:
     if not isinstance(credentials, dict):
         raise RegistryError("startup configuration credentials must be an object")
     credentials = {name: _validate_path(value, f"credentials for {name}") for name, value in credentials.items()}
+    handovers = document.get("handovers") or {}
+    if not isinstance(handovers, dict):
+        raise RegistryError("startup configuration handovers must be an object")
+    if any(not isinstance(name, str) or not name or len(name) > 256 for name in handovers):
+        raise RegistryError("startup handover keys must be non-empty allocation identities")
+    handovers = {name: _validate_path(value, f"handover for {name}") for name, value in handovers.items()}
     # Credential entries may outnumber plans (for example after retiring one);
     # a plan without its credential is refused when restoration begins.
-    return {
+    result = {
         "version": 1,
         "policy": paths["policy"],
         "journal": paths["journal"],
@@ -147,6 +164,9 @@ def validate_startup_config(document: object) -> dict:
         "tunnels": tunnels,
         "credentials": credentials,
     }
+    if handovers:
+        result["handovers"] = handovers
+    return result
 
 
 def read_boot_id(path: str = _BOOT_ID_PATH) -> str:

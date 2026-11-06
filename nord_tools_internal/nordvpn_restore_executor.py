@@ -33,7 +33,7 @@ import secrets
 import subprocess
 from typing import Callable
 
-from nord_tools_internal.nordvpn_allocation_profiles import expand_allocation_profiles
+from nord_tools_internal.nordvpn_allocation_profiles import expand_allocation_profiles, kernel_profile_for_allocation
 from nord_tools_internal.nordvpn_discovery import discover
 from nord_tools_internal.nordvpn_dns_confinement import (
     verify_dns_routes,
@@ -43,6 +43,7 @@ from nord_tools_internal.nordvpn_dns_confinement import (
 from nord_tools_internal.nordvpn_resolver_install import install_namespace_resolver, remove_namespace_resolver
 from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
+from nord_tools_internal.nordvpn_generation_handover import read_handover, selected_allocation
 from nord_tools_internal.nordvpn_identity import allocate_identity
 from nord_tools_internal.nordvpn_isolation_install import install_disposable_isolation
 from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock as _execution_lock
@@ -65,6 +66,7 @@ from nord_tools_internal.nordvpn_production_contract import validate_executor_cr
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
+from nord_tools_internal.nordvpn_sharing_contract import OwnershipGroup, resolve_ownership_groups
 from nord_tools_internal.nordvpn_recovery_executor import plan_recovery
 from nord_tools_internal.nordvpn_startup import (
     initialise_startup_runs,
@@ -397,6 +399,68 @@ def _restore_boot_policy(config: dict) -> dict:
     return desired
 
 
+def _apply_generation_selections(config: dict, policy: dict) -> tuple[dict, dict[str, str]]:
+    """Project active durable selections into boot restoration desired state."""
+    if not config.get("handovers"):
+        return policy, {}
+    profiles = {name: dict(value) for name, value in policy["vpn_profiles"].items()}
+    applications = {name: dict(value) for name, value in policy["applications"].items()}
+    defaults = dict(policy["defaults"])
+    providers: dict[str, str] = {}
+    groups = {group.allocation_key: group for group in resolve_ownership_groups(policy)}
+    selected_shared: set[str] = set()
+    for configured_key, path in sorted(config["handovers"].items()):
+        allocation = selected_allocation(read_handover(path), policy=policy)
+        if configured_key not in {allocation.allocation_key, allocation.profile}:
+            raise RegistryError("handover store does not match its configured allocation key")
+        group = groups.get(allocation.allocation_key)
+        if (
+            group is None
+            and allocation.allocation_key == f"profile:{allocation.profile}"
+            and allocation.profile in policy["vpn_profiles"]
+            and policy["vpn_profiles"][allocation.profile]["sharing"] == "shared"
+        ):
+            group = OwnershipGroup(
+                allocation.allocation_key,
+                allocation.profile,
+                "shared",
+                tuple(
+                    name
+                    for name, application in policy["applications"].items()
+                    if application["vpn"] == allocation.profile
+                ),
+            )
+        if group is None or group.profile != allocation.profile:
+            raise RegistryError("handover allocation is not present in the boot policy")
+        normal_profile = kernel_profile_for_allocation(group.allocation_key, group.profile, group.sharing)
+        if allocation.kernel_profile == normal_profile:
+            continue
+        if allocation.kernel_profile in profiles:
+            raise RegistryError("generation kernel profile collides with boot policy")
+        definition = dict(profiles[group.profile])
+        if group.sharing == "shared":
+            if group.profile in selected_shared:
+                raise RegistryError("multiple generation selections target one shared profile")
+            selected_shared.add(group.profile)
+            profiles.pop(group.profile)
+            if defaults["vpn"] == group.profile:
+                defaults["vpn"] = allocation.kernel_profile
+        else:
+            definition["sharing"] = "shared"
+        profiles[allocation.kernel_profile] = definition
+        providers[allocation.kernel_profile] = group.profile
+        for application in group.consumers:
+            applications[application]["vpn"] = allocation.kernel_profile
+    return validate_policy(
+        {
+            "version": 1,
+            "defaults": defaults,
+            "vpn_profiles": profiles,
+            "applications": applications,
+        }
+    ), providers
+
+
 def _creation_order(candidates: list[str], dependencies: dict[str, list[str]] | None) -> list[str]:
     """Order candidates so every prerequisite candidate is attempted first."""
     if not dependencies:
@@ -709,8 +773,10 @@ def restore_boot_state(
         raise RegistryError(f"the saved persistent policy does not exist: {validated['policy']}")
     with _execution_lock(validated["journal"]):
         _ensure_stores(validated)
-        original_policy = _restore_boot_policy(validated)
+        logical_policy = _restore_boot_policy(validated)
+        original_policy, generation_providers = _apply_generation_selections(validated, logical_policy)
         desired, provider_profiles = expand_allocation_profiles(original_policy)
+        provider_profiles.update(generation_providers)
         # Each isolated consumer receives a distinct durable profile identity.
         # The pinned provider specification and credential remain sourced from
         # the original profile, never inferred from the synthetic name.

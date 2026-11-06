@@ -17,6 +17,9 @@ import sys
 from nord_tools_internal.nordvpn_application_plan import plan_application
 from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
 from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError, read_private_json
+from nord_tools_internal.nordvpn_consumer_reference_store import locked_consumer_references
+from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock
+from nord_tools_internal.nordvpn_generation_handover import read_handover, selected_allocation
 from nord_tools_internal.nordvpn_lifecycle import validate_journal
 from nord_tools_internal.nordvpn_runtime_consumers import (
     reserve_staged_consumer,
@@ -89,6 +92,7 @@ def launch_provisioned_application(
     uid: int,
     gid: int,
     ready_timeout: float = 10.0,
+    handover_path: str | None = None,
 ) -> int:
     """Block until the registered program exits; refuse unverified execution.
 
@@ -104,7 +108,7 @@ def launch_provisioned_application(
     if plan.profile == "direct":
         raise ConsumerReferenceError("direct applications cannot use VPN namespace leases")
     kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
-    namespace = _namespace_for_profile(journal_path, kernel_profile)
+    generation_id = "unversioned"
     # Resolve the interpreter before creating the child. It is only the trusted
     # gate; the registered executable is never run by a shell.
     interpreter = str(Path(sys.executable).resolve(strict=True))
@@ -114,46 +118,60 @@ def launch_provisioned_application(
     process = None
     reserved = False
     try:
-        # pass_fds clears CLOEXEC only for the gate's descriptors.
-        process = subprocess.Popen(
-            [
-                "ip",
-                "netns",
-                "exec",
-                namespace,
-                interpreter,
-                "-I",
-                gate_script,
-                str(ready_w),
-                str(release_r),
-                str(uid),
-                str(gid),
-                plan.executable,
-                *plan.arguments,
-            ],
-            pass_fds=(ready_w, release_r),
-            close_fds=True,
-        )
-        os.close(ready_w)
-        ready_w = -1
-        os.close(release_r)
-        release_r = -1
-        readable, _, _ = select.select([ready_r], [], [], ready_timeout)
-        if not readable or os.read(ready_r, 1) != b"R" or process.poll() is not None:
-            raise ConsumerReferenceError("application gate did not reach its pre-exec barrier")
-        reserve_staged_consumer(
-            runtime_consumers,
-            policy,
-            application,
-            process.pid,
-            namespace=namespace,
-            staging_executable=interpreter,
-            journal_path=journal_path,
-            bindings_path=bindings_path,
-            intent_path=intent_path,
-            observe=observe,
-        )
-        reserved = True
+        # Selection and reservation share both authority locks. Activation uses
+        # the same order, so a cooperating launcher observes wholly A or wholly
+        # B and cannot reserve the generation being retired between checks.
+        with lifecycle_execution_lock(journal_path), locked_consumer_references(runtime_consumers):
+            if handover_path is not None:
+                allocation = selected_allocation(read_handover(handover_path), policy=policy)
+                if allocation.profile != plan.profile or allocation.allocation_key != plan.allocation_key:
+                    raise ConsumerReferenceError("selected generation does not match the application allocation")
+                kernel_profile = allocation.kernel_profile
+                generation_id = allocation.generation_id
+            namespace = _namespace_for_profile(journal_path, kernel_profile)
+            # pass_fds clears CLOEXEC only for the gate's descriptors.
+            process = subprocess.Popen(
+                [
+                    "ip",
+                    "netns",
+                    "exec",
+                    namespace,
+                    interpreter,
+                    "-I",
+                    gate_script,
+                    str(ready_w),
+                    str(release_r),
+                    str(uid),
+                    str(gid),
+                    plan.executable,
+                    *plan.arguments,
+                ],
+                pass_fds=(ready_w, release_r),
+                close_fds=True,
+            )
+            os.close(ready_w)
+            ready_w = -1
+            os.close(release_r)
+            release_r = -1
+            readable, _, _ = select.select([ready_r], [], [], ready_timeout)
+            if not readable or os.read(ready_r, 1) != b"R" or process.poll() is not None:
+                raise ConsumerReferenceError("application gate did not reach its pre-exec barrier")
+            reserve_staged_consumer(
+                runtime_consumers,
+                policy,
+                application,
+                process.pid,
+                namespace=namespace,
+                staging_executable=interpreter,
+                journal_path=journal_path,
+                bindings_path=bindings_path,
+                intent_path=intent_path,
+                observe=observe,
+                generation_id=generation_id,
+                kernel_profile=kernel_profile,
+                already_locked=True,
+            )
+            reserved = True
         os.write(release_w, b"G")
         os.close(release_w)
         release_w = -1
@@ -167,4 +185,4 @@ def launch_provisioned_application(
                 process.terminate()
             process.wait()
         if reserved:
-            release_exited_consumer(runtime_consumers, policy, application)
+            release_exited_consumer(runtime_consumers, policy, application, expected_generation_id=generation_id)

@@ -54,6 +54,23 @@ class RuntimeConsumerTests(unittest.TestCase):
         with self.assertRaises(ConsumerReferenceError):
             read_runtime_consumers(self.path, altered)
 
+    def test_cross_generation_release_is_refused(self):
+        with patch(
+            "nord_tools_internal.nordvpn_runtime_consumers._identity", return_value=("boot", "123", self.executable)
+        ):
+            acquire_runtime_consumer(
+                self.path,
+                POLICY,
+                self.name,
+                os.getpid(),
+                generation_id="generation-a",
+                kernel_profile="ntgen_a",
+            )
+            with self.assertRaisesRegex(ConsumerReferenceError, "different or ambiguous generation"):
+                release_exited_consumer(self.path, POLICY, self.name, expected_generation_id="generation-b")
+        lease = read_runtime_consumers(self.path, POLICY)["leases"][0]
+        self.assertEqual((lease["generation_id"], lease["kernel_profile"]), ("generation-a", "ntgen_a"))
+
     def test_corrupt_and_symlinked_evidence_refused(self):
         self.path.write_text("{}")
         with self.assertRaises(ConsumerReferenceError):

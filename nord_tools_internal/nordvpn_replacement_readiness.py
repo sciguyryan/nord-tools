@@ -1,7 +1,8 @@
 """Read-only live replacement gate for existing, verified VPN allocations.
 
-This gate deliberately grants no cut-over or retirement authority. It refuses
-unsettled ownership and active consumer leases before replacement preparation.
+This gate deliberately grants no cut-over or retirement authority. Existing
+consumer leases do not prevent an independent replacement from being prepared;
+they prevent retirement of the generation they name.
 """
 
 from __future__ import annotations
@@ -59,8 +60,9 @@ def assess_replacement_readiness(config: object, profile: str, lease_path: str, 
             blockers.append("ownership_review_required")
         if reconciliation.get("unresolved_intents"):
             blockers.append("unresolved_operations")
+        retirement_blockers = list(blockers)
         if active:
-            blockers.append("active_consumer_leases")
+            retirement_blockers.append("active_consumer_leases")
         return {
             "schema_version": 1,
             "mode": "live_replacement_readiness",
@@ -69,6 +71,7 @@ def assess_replacement_readiness(config: object, profile: str, lease_path: str, 
             "leased_consumers": sorted(active),
             "blockers": blockers,
             "eligible_for_non_disruptive_preparation": not blockers,
+            "retirement_blockers": retirement_blockers,
             "safe_to_cut_over": False,
             "safe_to_retire_old": False,
             "network_changes_applied": False,

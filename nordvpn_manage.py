@@ -123,6 +123,9 @@ def main(argv: list[str] | None = None) -> int:
         "reconcile-live",
         "apply-live",
         "replacement-readiness",
+        "replace-profile",
+        "replacement-status",
+        "retire-generation",
         "startup-plan",
         "startup-install",
         "restore-startup",
@@ -167,6 +170,18 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
             command.add_argument("--profile", required=True, help="Effective kernel profile identity")
             command.add_argument("--runtime-consumers", required=True, help="Existing durable consumer lease store")
+        if name in ("replace-profile", "replacement-status", "retire-generation"):
+            command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
+            command.add_argument("--profile", required=True, help="Logical VPN profile")
+            command.add_argument("--runtime-consumers", required=True, help="Durable generation-specific lease store")
+            command.add_argument("--allocation-key", help="Logical allocation key (defaults to shared profile key)")
+        if name == "replace-profile":
+            command.add_argument("--old-generation", required=True, help="Current generation identity")
+            command.add_argument("--replacement-generation", required=True, help="New unique generation identity")
+            command.add_argument("--execute", action="store_true", help="Provision, verify and activate replacement")
+        if name == "retire-generation":
+            command.add_argument("--generation", required=True, help="Exact old generation to retire")
+            command.add_argument("--execute", action="store_true", help="Retire verified unreferenced resources")
         if name == "reconcile-live":
             command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
             command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
@@ -331,6 +346,68 @@ def main(argv: list[str] | None = None) -> int:
             result = assess_replacement_readiness(read_json(args.config), args.profile, args.runtime_consumers)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
+        if args.action in ("replace-profile", "replacement-status", "retire-generation"):
+            if args.transient:
+                raise ManagementError("generation replacement is persistent-only")
+            config = validate_startup_config(read_json(args.config))
+            allocation_key = args.allocation_key or f"profile:{args.profile}"
+            handover = config.get("handovers", {}).get(allocation_key) or config.get("handovers", {}).get(args.profile)
+            if handover is None:
+                raise ManagementError("profile has no pinned generation handover store")
+            if args.action == "replacement-status":
+                from nord_tools_internal.nordvpn_replacement_executor import replacement_status
+
+                result = replacement_status(
+                    config,
+                    handover_path=handover,
+                    runtime_consumers_path=args.runtime_consumers,
+                    observe=discover,
+                )
+            elif args.action == "replace-profile":
+                if not args.execute:
+                    from nord_tools_internal.nordvpn_replacement_readiness import assess_replacement_readiness
+
+                    result = assess_replacement_readiness(config, args.profile, args.runtime_consumers)
+                    result["intent_only"] = True
+                else:
+                    from nord_tools_internal.nordvpn_replacement_executor import (
+                        activate_replacement,
+                        prepare_replacement,
+                    )
+
+                    prepared = prepare_replacement(
+                        config,
+                        profile=args.profile,
+                        allocation_key=allocation_key,
+                        old_generation_id=args.old_generation,
+                        replacement_generation_id=args.replacement_generation,
+                        handover_path=handover,
+                        runtime_consumers_path=args.runtime_consumers,
+                        observe=discover,
+                    )
+                    if prepared["phase"] in {"active", "draining"}:
+                        result = prepared
+                    else:
+                        result = activate_replacement(
+                            config,
+                            handover_path=handover,
+                            runtime_consumers_path=args.runtime_consumers,
+                            observe=discover,
+                        )
+            else:
+                from nord_tools_internal.nordvpn_replacement_executor import retire_old_generation
+
+                result = retire_old_generation(
+                    config,
+                    handover_path=handover,
+                    runtime_consumers_path=args.runtime_consumers,
+                    observe=discover,
+                    execute=args.execute,
+                    expected_generation_id=args.generation,
+                )
+            result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
         if args.action == "reconcile-live":
             if args.transient:
                 raise ManagementError(
@@ -435,6 +512,8 @@ def main(argv: list[str] | None = None) -> int:
                 observe=discover,
                 uid=args.uid,
                 gid=args.gid,
+                handover_path=config.get("handovers", {}).get(plan.allocation_key)
+                or config.get("handovers", {}).get(plan.profile),
             )
         if args.action in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
             if args.transient:
@@ -693,6 +772,7 @@ def main(argv: list[str] | None = None) -> int:
         OwnershipError,
         ProvisioningUncertainError,
         UnderlayError,
+        ValueError,
         OSError,
     ) as exc:
         print(f"manage: {exc}", file=sys.stderr)

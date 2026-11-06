@@ -62,23 +62,26 @@ def _validate(policy: dict, document: object) -> dict:
     if (
         not isinstance(document, dict)
         or set(document) != {"version", "policy_sha256", "leases"}
-        or document["version"] != 1
+        or document["version"] not in (1, 2)
         or document["policy_sha256"] != _fingerprint(checked)
         or not isinstance(document["leases"], list)
     ):
         raise ConsumerReferenceError("invalid runtime consumer lease document or policy fingerprint")
     seen = set()
     leases = []
+    version = document["version"]
+    legacy_fields = {
+        "application",
+        "profile",
+        "allocation_key",
+        "pid",
+        "boot_id",
+        "start_time",
+        "executable",
+    }
+    generation_fields = legacy_fields | {"generation_id", "kernel_profile"}
     for lease in document["leases"]:
-        if not isinstance(lease, dict) or set(lease) != {
-            "application",
-            "profile",
-            "allocation_key",
-            "pid",
-            "boot_id",
-            "start_time",
-            "executable",
-        }:
+        if not isinstance(lease, dict) or set(lease) != (legacy_fields if version == 1 else generation_fields):
             raise ConsumerReferenceError("invalid runtime consumer lease fields")
         name = lease["application"]
         if (
@@ -96,10 +99,14 @@ def _validate(policy: dict, document: object) -> dict:
             raise ConsumerReferenceError("invalid runtime process identity")
         if lease["executable"] != checked["applications"][name]["executable"]:
             raise ConsumerReferenceError("runtime executable does not match registered application")
+        if version == 2 and any(
+            not isinstance(lease[key], str) or not lease[key] for key in ("generation_id", "kernel_profile")
+        ):
+            raise ConsumerReferenceError("invalid runtime allocation generation")
         seen.add(name)
         leases.append(dict(lease))
     return {
-        "version": 1,
+        "version": version,
         "policy_sha256": _fingerprint(checked),
         "leases": sorted(leases, key=lambda item: item["application"]),
     }
@@ -107,7 +114,7 @@ def _validate(policy: dict, document: object) -> dict:
 
 def initialise_runtime_consumers(path: str | Path, policy: dict) -> dict:
     """Create a fresh, empty store; never replace existing or unknown evidence."""
-    document = {"version": 1, "policy_sha256": _fingerprint(policy), "leases": []}
+    document = {"version": 2, "policy_sha256": _fingerprint(policy), "leases": []}
     with locked_consumer_references(path):
         if Path(path).exists() or Path(path).is_symlink():
             raise ConsumerReferenceError("runtime lease store already exists")
@@ -141,7 +148,15 @@ def read_runtime_consumers(path: str | Path, policy: dict) -> dict:
         return _read(path, policy)
 
 
-def acquire_runtime_consumer(path: str | Path, policy: dict, application: str, pid: int) -> dict:
+def acquire_runtime_consumer(
+    path: str | Path,
+    policy: dict,
+    application: str,
+    pid: int,
+    *,
+    generation_id: str = "unversioned",
+    kernel_profile: str | None = None,
+) -> dict:
     """Acquire only for a live, registered executable with stable process identity."""
     checked = validate_policy(policy)
     if application not in checked["applications"]:
@@ -156,6 +171,13 @@ def acquire_runtime_consumer(path: str | Path, policy: dict, application: str, p
         if _identity(pid) != before:
             raise ConsumerReferenceError("consumer process changed during acquisition")
         group = next(group for group in resolve_ownership_groups(checked) if application in group.consumers)
+        effective_kernel_profile = kernel_profile or kernel_profile_for_allocation(
+            group.allocation_key, group.profile, group.sharing
+        )
+        if document["version"] != 2:
+            raise ConsumerReferenceError("legacy lease store must be explicitly reconciled before acquisition")
+        if not generation_id or not effective_kernel_profile:
+            raise ConsumerReferenceError("consumer lease requires an exact allocation generation")
         document["leases"].append(
             {
                 "application": application,
@@ -165,13 +187,17 @@ def acquire_runtime_consumer(path: str | Path, policy: dict, application: str, p
                 "boot_id": before[0],
                 "start_time": before[1],
                 "executable": before[2],
+                "generation_id": generation_id,
+                "kernel_profile": effective_kernel_profile,
             }
         )
         _write(path, checked, document)
         return _validate(checked, document)
 
 
-def release_exited_consumer(path: str | Path, policy: dict, application: str) -> dict:
+def release_exited_consumer(
+    path: str | Path, policy: dict, application: str, *, expected_generation_id: str | None = None
+) -> dict:
     """Release only when the original process has ceased to exist.
 
     An inaccessible /proc entry fails closed. PID reuse is safe because the
@@ -183,6 +209,10 @@ def release_exited_consumer(path: str | Path, policy: dict, application: str) ->
         if len(matches) != 1:
             raise ConsumerReferenceError("consumer has no recorded runtime lease")
         lease = matches[0]
+        if expected_generation_id is not None and (
+            document["version"] != 2 or lease.get("generation_id") != expected_generation_id
+        ):
+            raise ConsumerReferenceError("consumer lease belongs to a different or ambiguous generation")
         try:
             identity = _identity(lease["pid"])
         except ConsumerReferenceError:
@@ -203,11 +233,17 @@ def release_exited_consumer(path: str | Path, policy: dict, application: str) ->
         return _validate(policy, document)
 
 
-def assert_allocation_unreferenced(path: str | Path, policy: dict, allocation_key: str) -> None:
+def assert_allocation_unreferenced(
+    path: str | Path, policy: dict, allocation_key: str, *, generation_id: str | None = None
+) -> None:
     """Fail closed when a durable lease still names the allocation."""
     with locked_consumer_references(path):
         document = _read(path, policy)
-        if any(item["allocation_key"] == allocation_key for item in document["leases"]):
+        if any(
+            item["allocation_key"] == allocation_key
+            and (generation_id is None or document["version"] != 2 or item.get("generation_id") == generation_id)
+            for item in document["leases"]
+        ):
             raise ConsumerReferenceError("allocation retains a durable runtime consumer lease")
 
 
@@ -223,6 +259,9 @@ def reserve_staged_consumer(
     bindings_path: str | Path,
     intent_path: str | Path,
     observe,
+    generation_id: str = "unversioned",
+    kernel_profile: str | None = None,
+    already_locked: bool = False,
 ) -> dict:
     """Reserve a stopped launch gate before it can execute the registered program.
 
@@ -235,13 +274,19 @@ def reserve_staged_consumer(
 
     checked = validate_policy(policy)
     plan = plan_application(checked, application)
-    kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
-    with lifecycle_execution_lock(journal_path), locked_consumer_references(path):
+    selected_kernel_profile = kernel_profile or kernel_profile_for_allocation(
+        plan.allocation_key, plan.profile, plan.sharing
+    )
+    from contextlib import nullcontext
+
+    lifecycle_lock = nullcontext() if already_locked else lifecycle_execution_lock(journal_path)
+    consumer_lock = nullcontext() if already_locked else locked_consumer_references(path)
+    with lifecycle_lock, consumer_lock:
         journal = validate_journal(read_private_json(journal_path))
         bindings = read_private_json(bindings_path)
         intents = read_private_json(intent_path)
         preflight = preflight_ownership(journal, bindings, observe(), intents)
-        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == kernel_profile]
+        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == selected_kernel_profile]
         if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
             "interface",
             "interface",
@@ -268,6 +313,8 @@ def reserve_staged_consumer(
         if (expected.st_dev, expected.st_ino) != (actual.st_dev, actual.st_ino):
             raise ConsumerReferenceError("staged process is outside the verified namespace")
         document = _read(path, checked)
+        if document["version"] != 2:
+            raise ConsumerReferenceError("legacy lease store must be explicitly reconciled before launch")
         if any(lease["application"] == application for lease in document["leases"]):
             raise ConsumerReferenceError("consumer already has a lease; release or recover it first")
         before = _identity(pid)
@@ -282,6 +329,8 @@ def reserve_staged_consumer(
                 "boot_id": before[0],
                 "start_time": before[1],
                 "executable": checked["applications"][application]["executable"],
+                "generation_id": generation_id,
+                "kernel_profile": selected_kernel_profile,
             }
         )
         _write(path, checked, document)
@@ -298,6 +347,8 @@ def acquire_provisioned_consumer(
     bindings_path: str | Path,
     intent_path: str | Path,
     observe,
+    generation_id: str = "unversioned",
+    kernel_profile: str | None = None,
 ) -> dict:
     """Bind a live process to a fully verified, provisioned kernel allocation.
 
@@ -311,14 +362,16 @@ def acquire_provisioned_consumer(
 
     checked = validate_policy(policy)
     plan = plan_application(checked, application)
-    kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
+    selected_kernel_profile = kernel_profile or kernel_profile_for_allocation(
+        plan.allocation_key, plan.profile, plan.sharing
+    )
     with lifecycle_execution_lock(journal_path), locked_consumer_references(path):
         journal = validate_journal(read_private_json(journal_path))
         bindings = read_private_json(bindings_path)
         intents = read_private_json(intent_path)
         observation = observe()
         preflight = preflight_ownership(journal, bindings, observation, intents)
-        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == kernel_profile]
+        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == selected_kernel_profile]
         if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
             "interface",
             "interface",
@@ -335,6 +388,8 @@ def acquire_provisioned_consumer(
         ):
             raise ConsumerReferenceError("allocation resources are not active and independently verified")
         document = _read(path, checked)
+        if document["version"] != 2:
+            raise ConsumerReferenceError("legacy lease store must be explicitly reconciled before acquisition")
         if any(lease["application"] == application for lease in document["leases"]):
             raise ConsumerReferenceError("consumer already has a lease; release or recover it first")
         before = _identity(pid)
@@ -349,6 +404,8 @@ def acquire_provisioned_consumer(
                 "boot_id": before[0],
                 "start_time": before[1],
                 "executable": before[2],
+                "generation_id": generation_id,
+                "kernel_profile": selected_kernel_profile,
             }
         )
         _write(path, checked, document)

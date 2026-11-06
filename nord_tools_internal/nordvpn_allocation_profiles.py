@@ -8,6 +8,7 @@ merely different planning keys. No application is launched by this module.
 from __future__ import annotations
 
 import hashlib
+import re
 
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_sharing_contract import resolve_ownership_groups
@@ -23,6 +24,23 @@ def kernel_profile_for_allocation(allocation_key: str, profile: str, sharing: st
     # The full logical key is bound into the digest; do not embed user-controlled
     # names in privileged kernel resource identifiers.
     return "ntiso_" + hashlib.sha256(allocation_key.encode("utf-8")).hexdigest()[:32]
+
+
+def kernel_profile_for_generation(profile: str, allocation_key: str, generation_id: str) -> str:
+    """Return a collision-resistant ownership scope for one allocation generation.
+
+    Generation resources must never share the journal profile used by the
+    currently active allocation.  The logical identities are all included in
+    the digest, while the returned name remains acceptable to policy and kernel
+    naming validators.
+    """
+    values = (profile, allocation_key, generation_id)
+    if any(not isinstance(value, str) or not value or len(value) > 256 for value in values):
+        raise RegistryError("invalid allocation generation identity")
+    if not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", profile):
+        raise RegistryError("invalid generation profile")
+    material = "\0".join(values).encode("utf-8")
+    return "ntgen_" + hashlib.sha256(material).hexdigest()[:32]
 
 
 def expand_allocation_profiles(policy: dict) -> tuple[dict, dict[str, str]]:

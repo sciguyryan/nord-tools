@@ -368,6 +368,7 @@ def plan_cleanup(
     execute: bool = False,
     kernel: CleanupKernel | None = None,
     recorded_at: str | None = None,
+    already_locked: bool = False,
 ) -> dict:
     """Produce the exact cleanup plan, or execute it under explicit confirmation.
 
@@ -394,9 +395,11 @@ def plan_cleanup(
             raise RegistryError("isolated allocation retirement requires runtime consumer evidence and policy")
     # Consumer-aware retirement is opt-in and must never silently fall back to
     # unrestricted profile deletion when its evidence is incomplete.
-    if (consumer_policy is None) != (released_consumers is None):
+    if released_consumers is not None and consumer_policy is None:
+        raise RegistryError("released consumers require a consumer policy")
+    if consumer_policy is not None and released_consumers is None and runtime_consumers_path is None:
         raise RegistryError("consumer policy and released consumers must be supplied together")
-    if consumer_policy is not None:
+    if consumer_policy is not None and released_consumers is not None:
         if selected_profiles is None:
             raise RegistryError("consumer-aware retirement requires explicit selected profiles")
         try:
@@ -432,13 +435,22 @@ def plan_cleanup(
         )
     helpers = kernel or _real_kernel()
     restart_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    execution_lock = nullcontext() if already_locked else _execution_lock(journal_path)
     reference_lock = (
-        locked_consumer_references(consumer_references_path) if consumer_references_path is not None else nullcontext()
+        nullcontext()
+        if already_locked
+        else locked_consumer_references(consumer_references_path)
+        if consumer_references_path is not None
+        else nullcontext()
     )
     runtime_lock = (
-        locked_consumer_references(runtime_consumers_path) if runtime_consumers_path is not None else nullcontext()
+        nullcontext()
+        if already_locked
+        else locked_consumer_references(runtime_consumers_path)
+        if runtime_consumers_path is not None
+        else nullcontext()
     )
-    with _execution_lock(journal_path), reference_lock, runtime_lock:
+    with execution_lock, reference_lock, runtime_lock:
         if consumer_references_path is not None:
             if consumer_policy is None or selected_profiles is None:
                 raise RegistryError("persisted consumer references require a validated policy and selected profiles")
@@ -474,7 +486,9 @@ def plan_cleanup(
             from nord_tools_internal.nordvpn_application_plan import plan_application
 
             retained = {
-                kernel_profile_for_allocation(
+                item["kernel_profile"]
+                if runtime["version"] == 2
+                else kernel_profile_for_allocation(
                     item["allocation_key"],
                     item["profile"],
                     plan_application(consumer_policy, item["application"]).sharing,
