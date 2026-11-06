@@ -219,3 +219,7 @@ The operator accepted the consolidated privileged application lifecycle matrix. 
 ### Live replacement readiness
 
 `manage replacement-readiness --config PATH --profile NAME --runtime-consumers PATH` provides a read-only, lock-serialised check of an effective kernel profile against current ownership evidence, desired-state convergence, pending operations and the policy-bound runtime lease store. A profile with a current lease or disputed resources is not eligible for non-disruptive replacement preparation. Unrelated non-converged profiles also block preparation. The report never authorises cut-over or retirement, even when no blockers are found. A future privileged replacement executor must independently revalidate ownership, staged tunnel health and consumer assignment before making any change. This command does not provision a replacement, move an application or mutate networking.
+
+### Generation handover coordination
+
+The `nordvpn_generation_handover` module records a policy-pinned, monotonic administrative generation transition using private durable storage. It does not provision a replacement, authorise a launch, move a running process or retire a tunnel. A caller must establish fresh privileged kernel ownership and consumer-lease evidence before advancing a record. The record alone is never authority for routing or cleanup. Operational cut-over remains unimplemented.

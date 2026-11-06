@@ -132,3 +132,4 @@ Accepted DNS confinement component: the authorised restoration path now checks D
 
 - [x] Add a read-only, lock-serialised live replacement readiness check that refuses unsettled ownership, non-converged profiles and active consumer leases without granting cut-over authority.
 - [ ] Implement durable staged replacement, verified consumer assignment handover and interruption-safe old-generation retirement; the readiness check alone does not complete operational replacement.
+- [ ] Complete privileged generation-based live replacement: the durable handover record currently tracks preparation and administrative phase transitions only. Integrate verified independent provisioning, launch assignment, recovery and lease-aware retirement before enabling live cut-over.
