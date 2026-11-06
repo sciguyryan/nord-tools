@@ -374,12 +374,24 @@ def main(argv: list[str] | None = None) -> int:
                             "profile": plan.profile,
                             "allocation_key": plan.allocation_key,
                             "argv": [plan.executable, *plan.arguments],
+                            "routing_mode": "host" if plan.profile == "direct" else "vpn",
+                            "host_vpn_may_apply": plan.profile == "direct",
                         },
                         indent=2,
                         sort_keys=True,
                     )
                 )
                 return 0
+            if plan.profile == "direct":
+                from nord_tools_internal.nordvpn_application_executor import launch_direct_application
+
+                return launch_direct_application(
+                    policy,
+                    args.consumer,
+                    tuple(args.arguments),
+                    uid=args.uid,
+                    gid=args.gid,
+                )
             if not config["intent"]:
                 raise ManagementError("application launch requires a pinned operation intent store")
             from nord_tools_internal.nordvpn_application_executor import launch_provisioned_application

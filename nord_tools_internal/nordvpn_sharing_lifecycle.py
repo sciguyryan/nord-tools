@@ -35,6 +35,8 @@ def plan_consumer_release(policy: dict, released: tuple[str, ...]) -> tuple[Refe
         or len(set(released)) != len(released)
     ):
         raise ProfileError("released consumers must be distinct registered application names")
+    if any(checked["applications"][name]["vpn"] == "direct" for name in released):
+        raise ProfileError("direct applications have no VPN consumer references to release")
     selected = set(released)
     decisions = []
     for group in resolve_ownership_groups(checked):

@@ -32,6 +32,11 @@ def topology_graph(policy: dict, *, ascii_only: bool = False, scope: str = "pers
             lines.append(f"{children_prefix}{last}(no assigned applications)")
         for position, app in enumerate(assigned):
             lines.append(f"{children_prefix}{last if position == len(assigned) - 1 else tee}{app}")
+    direct = sorted(app for app, entry in applications.items() if entry["vpn"] == "direct")
+    if direct:
+        lines.append(f"{last}[direct: host routing] -> host network policy (not VPN-free guaranteed)")
+        for position, app in enumerate(direct):
+            lines.append(f"{blank}{last if position == len(direct) - 1 else tee}{app}")
     return "\n".join(lines)
 
 

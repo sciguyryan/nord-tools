@@ -32,6 +32,8 @@ def resolve_ownership_groups(policy: dict) -> tuple[OwnershipGroup, ...]:
     groups: dict[str, tuple[str, str, list[str]]] = {}
     for application in sorted(checked["applications"]):
         plan = plan_application(policy, application)
+        if plan.profile == "direct":
+            continue  # Host-routed applications do not own VPN resources.
         existing = groups.get(plan.allocation_key)
         if existing is None:
             groups[plan.allocation_key] = (plan.profile, plan.sharing, [application])

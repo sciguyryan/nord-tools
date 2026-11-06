@@ -8,6 +8,7 @@ This is a cooperating-process launch contract, not a hostile-root boundary.
 from __future__ import annotations
 
 import os
+import pwd
 from pathlib import Path
 import select
 import subprocess
@@ -21,6 +22,46 @@ from nord_tools_internal.nordvpn_runtime_consumers import (
     reserve_staged_consumer,
     release_exited_consumer,
 )
+
+
+def launch_direct_application(policy: dict, application: str, arguments: tuple[str, ...], *, uid: int, gid: int) -> int:
+    """Execute an explicitly direct-registered program using the host network.
+
+    Direct is never a fallback. It uses the host's current routing and DNS
+    policy, including any host VPN. No Nord Tools namespace or consumer lease
+    is created. An unprivileged identity is mandatory for the child.
+    """
+    if os.geteuid() != 0 or type(uid) is not int or type(gid) is not int or uid <= 0 or gid <= 0:
+        raise ConsumerReferenceError("direct launcher requires root and an explicit non-root uid and gid")
+    plan = plan_application(policy, application, arguments)
+    if plan.profile != "direct" or plan.sharing != "direct":
+        raise ConsumerReferenceError("direct execution requires an explicitly direct-registered application")
+    try:
+        account = pwd.getpwuid(uid)
+    except KeyError as exc:
+        raise ConsumerReferenceError("direct launch target uid does not exist") from exc
+    environment = {
+        "HOME": account.pw_dir,
+        "USER": account.pw_name,
+        "LOGNAME": account.pw_name,
+        "PATH": "/usr/local/bin:/usr/bin:/bin",
+        "LANG": os.environ.get("LANG", "C.UTF-8"),
+    }
+    # Popen's POSIX credential parameters apply before exec. There is no shell,
+    # privilege-preserving supplementary group, or namespace transition.
+    try:
+        with subprocess.Popen(
+            [plan.executable, *plan.arguments],
+            shell=False,
+            user=uid,
+            group=gid,
+            extra_groups=[],
+            env=environment,
+            close_fds=True,
+        ) as child:
+            return child.wait()
+    except OSError as exc:
+        raise ConsumerReferenceError(f"direct application execution failed: {exc}") from exc
 
 
 def _namespace_for_profile(journal_path: str, profile: str) -> str:
@@ -60,6 +101,8 @@ def launch_provisioned_application(
     if not intent_path:
         raise ConsumerReferenceError("application launch requires a pinned operation intent store")
     plan = plan_application(policy, application, arguments)
+    if plan.profile == "direct":
+        raise ConsumerReferenceError("direct applications cannot use VPN namespace leases")
     kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
     namespace = _namespace_for_profile(journal_path, kernel_profile)
     # Resolve the interpreter before creating the child. It is only the trusted

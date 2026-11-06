@@ -42,8 +42,14 @@ def plan_application(policy: dict, application: str, arguments: tuple[str, ...] 
     if not isinstance(arguments, tuple) or any(not isinstance(arg, str) or "\x00" in arg for arg in arguments):
         raise ProfileError("arguments must be a tuple of strings without NUL bytes")
     profile = app["vpn"]
-    sharing = checked["vpn_profiles"][profile]["sharing"]
-    key = f"profile:{profile}" if sharing == "shared" else f"application:{application}:profile:{profile}"
+    sharing = "direct" if profile == "direct" else checked["vpn_profiles"][profile]["sharing"]
+    key = (
+        f"direct:application:{application}"
+        if sharing == "direct"
+        else f"profile:{profile}"
+        if sharing == "shared"
+        else f"application:{application}:profile:{profile}"
+    )
     return ApplicationRoutingPlan(
         application=application,
         executable=app["executable"],

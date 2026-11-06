@@ -43,8 +43,8 @@ def validate_policy(policy):
     name_pattern = re.compile(r"[a-z][a-z0-9_-]{0,63}\Z")
     output_profiles = {}
     for name, value in profiles.items():
-        if not isinstance(name, str) or not name_pattern.fullmatch(name):
-            raise ProfileError(f"invalid VPN profile name: {name!r}")
+        if not isinstance(name, str) or not name_pattern.fullmatch(name) or name == "direct":
+            raise ProfileError(f"invalid or reserved VPN profile name: {name!r}")
         profile = _mapping(value, f"profile {name}")
         _keys(profile, {"selection", "sharing"}, f"profile {name}")
         sharing = profile.get("sharing", "shared")
@@ -105,7 +105,7 @@ def validate_policy(policy):
         if not isinstance(executable, str) or not executable.startswith("/") or not executable.strip():
             raise ProfileError(f"application {name} executable must be an absolute path")
         vpn = app.get("vpn", default_name)
-        if not isinstance(vpn, str) or vpn not in output_profiles:
+        if not isinstance(vpn, str) or (vpn != "direct" and vpn not in output_profiles):
             raise ProfileError(f"application {name} refers to an unknown VPN profile")
         output_apps[name] = {"executable": executable, "vpn": vpn}
     return {
