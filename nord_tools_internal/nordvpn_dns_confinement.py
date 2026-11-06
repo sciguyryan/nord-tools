@@ -92,17 +92,24 @@ def verify_resolver_file(namespace: str, policy: NamespaceResolverPolicy, *, roo
             or entry.st_mode & 0o022
             or not stat.S_ISREG(file_info.st_mode)
             or file_info.st_mode & 0o022
+            or file_info.st_nlink != 1
             or len(list(directory.iterdir())) != 1
         ):
             raise DNSConfinementError("unsafe namespace resolver filesystem state")
         fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
-        try:
-            with os.fdopen(fd, "r", encoding="ascii") as stream:
-                content = stream.read(4096)
-                if stream.read(1):
-                    raise DNSConfinementError("oversized namespace resolver")
-        except BaseException:
-            raise
+        with os.fdopen(fd, "r", encoding="ascii") as stream:
+            held = os.fstat(stream.fileno())
+            if (
+                not stat.S_ISREG(held.st_mode)
+                or held.st_dev != file_info.st_dev
+                or held.st_ino != file_info.st_ino
+                or held.st_nlink != 1
+                or held.st_mode & 0o022
+            ):
+                raise DNSConfinementError("namespace resolver changed during readback")
+            content = stream.read(4096)
+            if stream.read(1):
+                raise DNSConfinementError("oversized namespace resolver")
     except (OSError, UnicodeError) as exc:
         raise DNSConfinementError("namespace resolver readback failed") from exc
     if content != policy.render_resolv_conf():

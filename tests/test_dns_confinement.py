@@ -107,3 +107,40 @@ def test_dns_acceptance_dry_run_is_non_mutating():
     with patch("subprocess.run", side_effect=AssertionError("dry run must not execute commands")):
         spec.loader.exec_module(module)
         assert module.main([]) == 0
+
+
+def test_resolver_file_rejects_hardlink(tmp_path: Path):
+    root = tmp_path / "netns"
+    root.mkdir(mode=0o700)
+    directory = root / "nt-test"
+    directory.mkdir(mode=0o700)
+    target = tmp_path / "shared-resolver"
+    target.write_text(POLICY.render_resolv_conf(), encoding="ascii")
+    (directory / "resolv.conf").hardlink_to(target)
+    with pytest.raises(DNSConfinementError):
+        verify_resolver_file("nt-test", POLICY, root=root)
+
+
+def test_resolver_file_rejects_replacement_between_stat_and_open(tmp_path: Path):
+    import os
+
+    root = tmp_path / "netns"
+    root.mkdir(mode=0o700)
+    directory = root / "nt-test"
+    directory.mkdir(mode=0o700)
+    resolver = directory / "resolv.conf"
+    resolver.write_text(POLICY.render_resolv_conf(), encoding="ascii")
+    real_open = os.open
+
+    def replace_before_open(path, flags):
+        if Path(path) == resolver:
+            replacement = directory / "replacement"
+            replacement.write_text(POLICY.render_resolv_conf(), encoding="ascii")
+            replacement.replace(resolver)
+        return real_open(path, flags)
+
+    with (
+        patch("os.open", side_effect=replace_before_open),
+        pytest.raises(DNSConfinementError),
+    ):
+        verify_resolver_file("nt-test", POLICY, root=root)
