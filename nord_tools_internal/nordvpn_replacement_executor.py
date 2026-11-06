@@ -7,6 +7,7 @@ provisioning and cleanup can operate on B and A independently.
 
 from __future__ import annotations
 
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -73,8 +74,8 @@ def _namespace(resources: list[dict]) -> str:
     return next(item["identifier"] for item in resources if item["kind"] == "namespace")
 
 
-def _packet_ready(namespace: str, dns_servers: tuple[str, ...]) -> bool:
-    """Require a DNS response through the tunnel and a WireGuard handshake."""
+def _packet_ready(namespace: str, dns_servers: tuple[str, ...], tunnel: dict) -> bool:
+    """Require DNS, a pinned WireGuard peer and a tunnel-routed DNS path."""
     if not dns_servers:
         return False
     query_script = """
@@ -138,9 +139,50 @@ if len(reply) < 12 or reply[:2] != b'NT' or not reply[2] & 0x80:
     )
     if dns.returncode or handshake.returncode or route.returncode or endpoint.returncode or transfer.returncode:
         raise RegistryError(f"replacement packet readiness failed ({diagnostic})")
-    values = [line.rsplit("\t", 1)[-1] for line in handshake.stdout.splitlines() if "\t" in line]
-    if not values or not all(value.isdigit() and int(value) > 0 for value in values):
-        raise RegistryError(f"replacement tunnel has no completed handshake ({diagnostic})")
+    expected_peer = tunnel["peer_public_key"]
+    expected_address = ipaddress.ip_address(tunnel["endpoint_address"])
+    expected_port = tunnel["endpoint_port"]
+
+    def peer_rows(output: str) -> dict[tuple[str, str], str]:
+        rows = {}
+        for line in output.splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) != 3 or not parts[0] or not parts[1] or (parts[0], parts[1]) in rows:
+                raise RegistryError("replacement WireGuard peer observation is malformed or ambiguous")
+            rows[(parts[0], parts[1])] = parts[2]
+        return rows
+
+    handshakes = peer_rows(handshake.stdout)
+    endpoints = peer_rows(endpoint.stdout)
+    transfers = peer_rows(transfer.stdout)
+    if len(handshakes) != 1 or handshakes.keys() != endpoints.keys() or handshakes.keys() != transfers.keys():
+        raise RegistryError("replacement WireGuard observations disagree on the pinned peer")
+    (interface, peer), timestamp = next(iter(handshakes.items()))
+    if peer != expected_peer or not timestamp.isdigit() or int(timestamp) <= 0:
+        raise RegistryError(f"replacement tunnel has no verified pinned-peer handshake ({diagnostic})")
+    endpoint_value = endpoints[(interface, peer)]
+    try:
+        if endpoint_value.startswith("["):
+            address, port = endpoint_value[1:].split("]:", 1)
+        else:
+            address, port = endpoint_value.rsplit(":", 1)
+        if ipaddress.ip_address(address) != expected_address or int(port) != expected_port:
+            raise ValueError("unexpected endpoint")
+        received, sent = transfers[(interface, peer)].split("\t")
+        if not received.isdigit() or not sent.isdigit():
+            raise ValueError("invalid transfer counters")
+        routes = json.loads(route.stdout)
+        if (
+            not isinstance(routes, list)
+            or len(routes) != 1
+            or not isinstance(routes[0], dict)
+            or routes[0].get("dev") != interface
+            or routes[0].get("dst") != dns_servers[0]
+            or routes[0].get("type", "unicast") != "unicast"
+        ):
+            raise ValueError("DNS route does not use the verified WireGuard interface")
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+        raise RegistryError(f"replacement peer, endpoint or DNS route is inconsistent ({diagnostic})") from exc
     return True
 
 
@@ -302,7 +344,9 @@ def prepare_replacement(
         }
     (provision or _production_provision)(validated, policy, replacement)
     dns = tuple(validated["tunnels"][profile].get("dns_servers", ()))
-    verifier = packet_verifier or (lambda namespace: _packet_ready(namespace, dns))
+    verifier = packet_verifier or (
+        lambda namespace: _packet_ready(namespace, dns, validated["tunnels"][replacement.profile])
+    )
     with lifecycle_execution_lock(validated["journal"]), locked_consumer_references(runtime_consumers_path):
         _verify(validated, replacement, observe=observe, packet_verifier=verifier)
         updated = _advance_verified_handover(
@@ -332,7 +376,9 @@ def activate_replacement(
             raise GenerationHandoverError("replacement is not verified for this policy")
         replacement = AllocationGeneration(**handover["generations"][handover["replacement"]])
         dns = tuple(validated["tunnels"][replacement.profile].get("dns_servers", ()))
-        verifier = packet_verifier or (lambda namespace: _packet_ready(namespace, dns))
+        verifier = packet_verifier or (
+            lambda namespace: _packet_ready(namespace, dns, validated["tunnels"][replacement.profile])
+        )
         _verify(validated, replacement, observe=observe, packet_verifier=verifier)
         updated = _advance_verified_handover(
             handover_path,
@@ -410,6 +456,7 @@ def retire_old_generation(
     cleanup=plan_cleanup,
     execute: bool = False,
     expected_generation_id: str | None = None,
+    packet_verifier: Callable[[str], bool] | None = None,
 ) -> dict:
     """Retire only A after exact-generation leases and ownership are clear."""
     validated = validate_startup_config(config)
@@ -418,7 +465,10 @@ def retire_old_generation(
         handover = read_handover(handover_path)
         if handover["phase"] not in {"active", "draining"}:
             raise GenerationHandoverError("old generation cannot retire before activation")
+        if handover["version"] != 2 or handover["policy_sha256"] != policy_digest(policy):
+            raise GenerationHandoverError("handover is not bound to the current policy")
         old = AllocationGeneration(**handover["generations"][handover["old"]])
+        replacement = AllocationGeneration(**handover["generations"][handover["replacement"]])
         if expected_generation_id is not None and old.generation_id != expected_generation_id:
             raise GenerationHandoverError("requested generation is not the draining old generation")
         leases = read_runtime_consumers_locked(runtime_consumers_path, policy)
@@ -429,6 +479,13 @@ def retire_old_generation(
         journal = validate_journal(_read(validated["journal"]))
         preflight = preflight_ownership(journal, _read(validated["bindings"]), observe(), _read(validated["intent"]))
         _generation_resources(old, journal, preflight)
+        # A is irreversibly removed only while B is independently healthy.
+        # Check under the same lifecycle and lease locks as cleanup.
+        dns = tuple(validated["tunnels"][replacement.profile].get("dns_servers", ()))
+        verifier = packet_verifier or (
+            lambda namespace: _packet_ready(namespace, dns, validated["tunnels"][replacement.profile])
+        )
+        _verify(validated, replacement, observe=observe, packet_verifier=verifier)
         if execute and handover["phase"] == "active":
             _advance_verified_handover(
                 handover_path,

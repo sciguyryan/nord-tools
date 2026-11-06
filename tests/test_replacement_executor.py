@@ -195,3 +195,103 @@ def test_boot_projection_restores_active_selected_generation(tmp_path):
     assert "alpha" not in projected["vpn_profiles"]
     assert projected["defaults"]["vpn"] == "ntgen_b"
     assert providers == {"ntgen_b": "alpha"}
+
+
+def test_retirement_refuses_unhealthy_replacement_before_cleanup(tmp_path):
+    handover = tmp_path / "handover.json"
+    digest = policy_digest(POLICY)
+    prepare_generation_handover(
+        handover,
+        old=AllocationGeneration("alpha", "profile:alpha", "generation-a", "alpha", digest),
+        replacement=AllocationGeneration("alpha", "profile:alpha", "generation-b", "ntgen_b", digest),
+        policy=POLICY,
+    )
+    _advance_verified_handover(handover, expected_phase="prepared", next_phase="verified", policy=POLICY, verified=True)
+    _advance_verified_handover(handover, expected_phase="verified", next_phase="active", policy=POLICY, verified=True)
+    cleanup = Mock()
+    patches = authority_patches()
+    with (
+        patches[0],
+        patches[1],
+        patches[2],
+        patches[3],
+        patch("nord_tools_internal.nordvpn_replacement_executor._read", return_value={}),
+        patch("nord_tools_internal.nordvpn_replacement_executor.validate_journal", return_value={}),
+        patch("nord_tools_internal.nordvpn_replacement_executor.preflight_ownership", return_value={}),
+        patch(
+            "nord_tools_internal.nordvpn_replacement_executor._generation_resources",
+            return_value=[{"kind": "namespace", "identifier": "ns-b"}],
+        ),
+        patch(
+            "nord_tools_internal.nordvpn_replacement_executor.read_runtime_consumers_locked",
+            return_value={"version": 2, "leases": []},
+        ),
+        pytest.raises(RegistryError, match="packet-level tunnel readiness"),
+    ):
+        retire_old_generation(
+            CONFIG,
+            handover_path=str(handover),
+            runtime_consumers_path=str(tmp_path / "leases.json"),
+            observe=lambda: {},
+            cleanup=cleanup,
+            execute=True,
+            packet_verifier=lambda _: False,
+        )
+    cleanup.assert_not_called()
+    assert read_handover(handover)["phase"] == "active"
+
+
+@pytest.mark.parametrize("fault", ["wrong_peer", "wrong_endpoint", "wrong_route", "wrong_transfer"])
+def test_packet_readiness_rejects_inconsistent_successful_observations(fault):
+    from subprocess import CompletedProcess
+    from nord_tools_internal.nordvpn_replacement_executor import _packet_ready
+
+    peer = "pinned-peer"
+    outputs = [
+        b"",
+        f"wg0\t{peer}\t123\n",
+        '[{"dev":"wg0","dst":"10.0.0.1"}]',
+        f"wg0\t{peer}\t203.0.113.7:51820\n",
+        f"wg0\t{peer}\t100\t200\n",
+    ]
+    index = {"wrong_peer": 1, "wrong_route": 2, "wrong_endpoint": 3, "wrong_transfer": 4}[fault]
+    outputs[index] = {
+        "wrong_peer": "wg0\tother-peer\t123\n",
+        "wrong_route": '[{"dev":"eth0","dst":"10.0.0.1"}]',
+        "wrong_endpoint": f"wg0\t{peer}\t203.0.113.8:51820\n",
+        "wrong_transfer": f"wg0\t{peer}\tbogus\t200\n",
+    }[fault]
+    results = [CompletedProcess([], 0, stdout=item, stderr=b"") for item in outputs]
+    # DNS is binary; the other four commands return text.
+    with (
+        patch("nord_tools_internal.nordvpn_replacement_executor.subprocess.run", side_effect=results),
+        pytest.raises(RegistryError, match="inconsistent|disagree|pinned-peer"),
+    ):
+        _packet_ready(
+            "namespace-a",
+            ("10.0.0.1",),
+            {"peer_public_key": peer, "endpoint_address": "203.0.113.7", "endpoint_port": 51820},
+        )
+
+
+def test_packet_readiness_accepts_consistent_pinned_observations():
+    from subprocess import CompletedProcess
+    from nord_tools_internal.nordvpn_replacement_executor import _packet_ready
+
+    peer = "pinned-peer"
+    outputs = [
+        b"",
+        f"wg0\t{peer}\t123\n",
+        '[{"dev":"wg0","dst":"10.0.0.1"}]',
+        f"wg0\t{peer}\t203.0.113.7:51820\n",
+        f"wg0\t{peer}\t100\t200\n",
+    ]
+    with patch(
+        "nord_tools_internal.nordvpn_replacement_executor.subprocess.run",
+        side_effect=[CompletedProcess([], 0, stdout=item, stderr=b"") for item in outputs],
+    ):
+        assert _packet_ready(
+            "namespace-a",
+            ("10.0.0.1",),
+            {"peer_public_key": peer, "endpoint_address": "203.0.113.7", "endpoint_port": 51820},
+        )
