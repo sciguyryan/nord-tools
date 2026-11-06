@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         "ownership-preflight",
         "reconcile-live",
         "apply-live",
+        "replacement-readiness",
         "startup-plan",
         "startup-install",
         "restore-startup",
@@ -162,6 +163,10 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--execute", action="store_true", help="Create verified-absent profiles; default is read-only"
             )
+        if name == "replacement-readiness":
+            command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
+            command.add_argument("--profile", required=True, help="Effective kernel profile identity")
+            command.add_argument("--runtime-consumers", required=True, help="Existing durable consumer lease store")
         if name == "reconcile-live":
             command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
             command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
@@ -316,6 +321,14 @@ def main(argv: list[str] | None = None) -> int:
 
             result = apply_live_state(read_json(args.config), execute=args.execute)
             result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "replacement-readiness":
+            if args.transient:
+                raise ManagementError("replacement readiness is persistent-only")
+            from nord_tools_internal.nordvpn_replacement_readiness import assess_replacement_readiness
+
+            result = assess_replacement_readiness(read_json(args.config), args.profile, args.runtime_consumers)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "reconcile-live":
