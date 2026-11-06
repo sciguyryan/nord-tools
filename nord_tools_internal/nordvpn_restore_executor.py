@@ -68,6 +68,7 @@ from nord_tools_internal.nordvpn_startup import (
 from nord_tools_internal.nordvpn_underlay_install import (
     install_namespace_underlay,
     install_tunnel_routing,
+    verify_tunnel_route_readback,
     namespace_interface_index,
 )
 from nord_tools_internal.nordvpn_wireguard_provision import TunnelSpecification
@@ -117,6 +118,7 @@ def _real_kernel() -> RestoreKernel:
         namespace: str, tunnel_interface: str, underlay_interface: str, endpoint: str, tunnel_address: str, gateway: str
     ) -> None:
         install_tunnel_routing(namespace, tunnel_interface, underlay_interface, endpoint, tunnel_address, gateway)
+        verify_tunnel_route_readback(namespace, tunnel_interface, underlay_interface, endpoint)
 
     def configure_wireguard(specification: TunnelSpecification, owned: OwnedNamespace, key_fd: int) -> None:
         configure_disposable_wireguard(specification, owned, key_fd)

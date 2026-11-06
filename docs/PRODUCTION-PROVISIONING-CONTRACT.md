@@ -161,3 +161,11 @@ These checks deliberately do not establish real WireGuard packet delivery, appli
 ## Dual-stack namespace default routes
 
 The production routing installer adds both IPv4 and IPv6 default routes through the WireGuard interface after installing the endpoint-specific underlay route. It refuses a failure in either default-route installation, leaving the surrounding provisioning transaction to handle rollback. A tunnel configured for one address family does not thereby gain working connectivity for the other family; the additional route prevents an implicit underlay fallback rather than guaranteeing service. Namespace firewall enforcement is a separate boundary. Real-tunnel packet and tunnel-loss acceptance remains outstanding.
+
+Production route activation now requires live readback of both namespace default routes and the peer endpoint's longest-prefix route. The readback refuses missing, duplicated, gateway-bearing or underlay-directed defaults and an endpoint route that does not select the pinned namespace underlay. This check is a point-in-time activation condition and does not protect against independent privileged route mutation after verification. Real WireGuard packet confinement, DNS and tunnel-loss acceptance remain outstanding.
+
+### Integrated privileged routing acceptance
+
+Runn `sudo python tools/probe_part4a_integrated_acceptance.py --run-privileged` to execute the production provisioning integration, real WireGuard encrypted exchange and shutdown with host-integrity observations, and disposable dual-stack endpoint/firewall/route policy checks in one fail-fast sequence. Run `ruff check .`, `ruff format --check .` and `python -m pytest -q` separately for the source quality gate. Each stage reports its own evidence and retains its own failure handling.
+
+The real WireGuard experiment is independent of the production provisioning executor and does not install its firewall policy. The dual-stack policy probe uses a simulated tunnel. Consequently, even passing the integrated runner does not prove production real-WireGuard packet confinement, DNS leak prevention or production tunnel restart safety. Those claims remain blocked pending a probe that combines production firewall/routing installation with a real tunnel and observed packets.

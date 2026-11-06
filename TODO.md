@@ -117,3 +117,7 @@ Final lifecycle acceptance note: the probes use validated host inventories rathe
 Part 4 packet acceptance support: a combined opt-in privileged runner now exercises the existing disposable dual-stack endpoint-exception and simulated-tunnel route-loss probes. This is evidence for the underlying kernel policy and route behaviour, not proof of production WireGuard or DNS leak confinement. Real-tunnel packet acceptance remains outstanding.
 
 Production route hardening: the provisioning route installer now pins both IPv4 and IPv6 namespace default routes to WireGuard, regardless of the tunnel address family. Failure to install either route aborts provisioning. This does not certify usable dual-stack service, real-tunnel packet confinement or DNS protection; those remain open acceptance requirements.
+
+Production routing readback: the authorised restoration path now checks both default routes and the peer endpoint route against live namespace routing state before activation. This closes a structural verification gap, but does not close Part 4a: real WireGuard packet-level and tunnel-loss acceptance remain outstanding.
+
+Integrated Part 4a privileged acceptance: `tools/probe_part4a_integrated_acceptance.py` now runs production provisioning integration, real WireGuard exchange/loss with host-integrity checks, and the disposable dual-stack firewall/routing probes together. These are separate evidence scopes; a production-installed firewall with real-tunnel packet and restart verification remains outstanding and must not be inferred from the combined pass.

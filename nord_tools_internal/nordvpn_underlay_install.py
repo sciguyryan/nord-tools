@@ -198,3 +198,65 @@ def install_tunnel_routing(
     # fallback through a later resolver or application configuration change.
     _run(["ip", "-4", "-n", namespace, "route", "add", "default", "dev", tunnel_interface], runner)
     _run(["ip", "-6", "-n", namespace, "route", "add", "default", "dev", tunnel_interface], runner)
+
+
+def verify_tunnel_route_readback(
+    namespace: str,
+    tunnel_interface: str,
+    underlay_interface: str,
+    endpoint_address: str,
+    *,
+    runner=subprocess.run,
+) -> None:
+    """Refuse activation unless both defaults and the endpoint route remain pinned.
+
+    Readback is a provisioning snapshot, not a persistent guard against a
+    separately privileged network administrator changing the routing table.
+    The namespace firewall remains the independent packet confinement layer.
+    """
+    if not isinstance(namespace, str) or not _NAMESPACE.fullmatch(namespace):
+        raise RegistryError("invalid namespace for route verification")
+    tunnel = _canonical_interface(tunnel_interface, "tunnel interface")
+    underlay = _canonical_interface(underlay_interface, "underlay interface")
+    endpoint = ipaddress.ip_address(endpoint_address)
+
+    def read(family: int) -> list[dict]:
+        try:
+            result = runner(
+                ["ip", f"-{family}", "-j", "-n", namespace, "route", "show", "table", "main"],
+                check=False,
+                capture_output=True,
+                timeout=_TIMEOUT,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise UnderlayError("namespace route readback could not complete") from exc
+        if result.returncode:
+            raise UnderlayError("namespace route readback failed")
+        try:
+            routes = json.loads(result.stdout)
+        except (ValueError, TypeError) as exc:
+            raise UnderlayError("namespace route readback was not valid JSON") from exc
+        if not isinstance(routes, list) or any(not isinstance(item, dict) for item in routes):
+            raise UnderlayError("namespace route readback was malformed")
+        return routes
+
+    for family in (4, 6):
+        routes = read(family)
+        defaults = [item for item in routes if item.get("dst") in ("default", "0.0.0.0/0", "::/0")]
+        if len(defaults) != 1 or defaults[0].get("dev") != tunnel or defaults[0].get("gateway"):
+            raise UnderlayError("namespace default route is not exclusively pinned to WireGuard")
+        if family == endpoint.version:
+            matches = []
+            for item in routes:
+                try:
+                    network = ipaddress.ip_network(item.get("dst", ""), strict=False)
+                except (ValueError, TypeError):
+                    continue
+                if network.version == family and endpoint in network:
+                    matches.append((network.prefixlen, item))
+            if not matches:
+                raise UnderlayError("the peer endpoint has no explicit underlay route")
+            longest = max(prefix for prefix, _ in matches)
+            selected = [item for prefix, item in matches if prefix == longest]
+            if len(selected) != 1 or selected[0].get("dev") != underlay:
+                raise UnderlayError("the peer endpoint is not exclusively pinned to the underlay")
