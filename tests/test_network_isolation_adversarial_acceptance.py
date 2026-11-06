@@ -9,7 +9,7 @@ from unittest.mock import call, patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-import probe_part4c_adversarial_acceptance as acceptance  # noqa: E402
+import probe_network_isolation_adversarial_acceptance as acceptance  # noqa: E402
 
 
 def test_dry_run_has_no_observation_or_mutation(capsys):

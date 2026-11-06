@@ -26,7 +26,7 @@ Run `python tools/probe_lifecycle_lock_concurrency.py --run` on Linux to verify 
 
 ## Part 8.1 privileged acceptance
 
-Run `sudo python tools/probe_part8_authority_acceptance.py --run-privileged` only on a disposable-capable Arch Linux test system. The runner executes ownership preflight, restoration, confirmed cleanup, interruption recovery and the integrated Part 7 matrix sequentially; it stops at the first failure and preserves the individual probe’s diagnostic evidence. The default invocation is a dry run. Passing these tests establishes only the stated cooperating-process and disposable-resource guarantees, not atomic protection against independent privileged network or mount administrators. The real-process lifecycle lock substitution probe remains a separate non-privileged check: `python tools/probe_lifecycle_lock_concurrency.py --run`.
+Run `sudo python tools/probe_provisioning_authority_acceptance.py --run-privileged` only on a disposable-capable Arch Linux test system. The runner executes ownership preflight, restoration, confirmed cleanup, interruption recovery and the integrated Part 7 matrix sequentially; it stops at the first failure and preserves the individual probe’s diagnostic evidence. The default invocation is a dry run. Passing these tests establishes only the stated cooperating-process and disposable-resource guarantees, not atomic protection against independent privileged network or mount administrators. The real-process lifecycle lock substitution probe remains a separate non-privileged check: `python tools/probe_lifecycle_lock_concurrency.py --run`.
 
 ### Part 8.1.6 deterministic recovery interruption
 

@@ -604,8 +604,8 @@ On 3 November 2026, the final tree passed 702 automated tests with 298 subtests.
 One privileged matrix binds the previous increments into an operational workflow with host-isolation evidence at every stage boundary:
 
 ```fish
-python tools/probe_part7_acceptance.py
-sudo python tools/probe_part7_acceptance.py --run-privileged
+python tools/probe_startup_restoration_lifecycle.py
+sudo python tools/probe_startup_restoration_lifecycle.py --run-privileged
 ```
 
 Stage by stage it verifies exactly what the acceptance requires. Persistence: two pinned profiles restore together while a deliberately different transient policy sits in the runtime scope, and reconciliation proves the decisions identical with and without it. Recovery: the secondary profile is retired, its recreation is interrupted after durable creation intent and before kernel mutation, and recovery converges both profiles. Authorised cleanup: removing an application reference is pure bookkeeping, the departed profile is cleaned with its exact four deletions, and the shared profile's namespace, bindings and convergence survive untouched. Convergence: repeat runs leave reconciliation decisions, cleanup plans, recovery items and the kernel unchanged. Final teardown retires the surviving fixture before its temporary ownership stores are removed. Isolation: host IPv4/IPv6 routes, nftables configuration and resolver contents are compared across every stage boundary, and any unexplained drift fails the run. The matrix finishes by printing the production work that remains after lifecycle acceptance:

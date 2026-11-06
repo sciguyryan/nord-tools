@@ -21,10 +21,10 @@ from tools.probe_wireguard_host_integrity import observe, verify  # noqa: E402
 STAGES = (
     (
         "production provisioning, real WireGuard and dual-stack routing",
-        "probe_part4a_integrated_acceptance.py",
+        "probe_production_routing_acceptance.py",
         "--run-privileged",
     ),
-    ("real WireGuard DNS and resolver confinement", "probe_part4b_dns_acceptance.py", "--run-privileged"),
+    ("real WireGuard DNS and resolver confinement", "probe_wireguard_dns_acceptance.py", "--run-privileged"),
     ("late-stage interrupted provisioning and rollback", "probe_later_recovery.py", "--run-privileged"),
     ("cooperating-process lock and substitution refusal", "probe_lifecycle_lock_concurrency.py", "--run"),
 )

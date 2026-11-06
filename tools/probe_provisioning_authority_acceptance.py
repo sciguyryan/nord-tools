@@ -21,7 +21,7 @@ STAGES = (
     ("startup restoration", "probe_restore_startup.py"),
     ("confirmed cleanup", "probe_cleanup.py"),
     ("interrupted-operation recovery", "probe_recovery.py"),
-    ("integrated Part 7 matrix", "probe_part7_acceptance.py"),
+    ("integrated Part 7 matrix", "probe_startup_restoration_lifecycle.py"),
 )
 
 

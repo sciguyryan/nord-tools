@@ -46,7 +46,7 @@ def test_restoration_probe_uses_independent_retirement_descriptor():
 
 
 def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
-    from tools.probe_part7_acceptance import ProbeError, _assert_no_host_drift
+    from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     underlay = {
         "dst": "10.214.0.0/30",
@@ -80,7 +80,7 @@ def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
 
 
 def test_part7_nftables_gate_ignores_only_counter_readings():
-    from tools.probe_part7_acceptance import ProbeError, _assert_no_host_drift
+    from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     fixture = {
         "nftables": [
@@ -124,7 +124,7 @@ def test_part7_nftables_gate_ignores_only_counter_readings():
 
 @pytest.mark.parametrize("invalid", [b"{}", b"[]", b"not-json"])
 def test_part7_nftables_gate_rejects_invalid_snapshot(invalid: bytes):
-    from tools.probe_part7_acceptance import _assert_no_host_drift
+    from tools.probe_startup_restoration_lifecycle import _assert_no_host_drift
 
     valid = {"nftables": b'{"nftables":[]}'}
     with pytest.raises((ValueError, RuntimeError)):
@@ -132,7 +132,7 @@ def test_part7_nftables_gate_rejects_invalid_snapshot(invalid: bytes):
 
 
 def test_part7_recovery_creates_missing_generation_before_checkpoint(tmp_path: Path):
-    from tools.probe_part7_acceptance import stage_recovery
+    from tools.probe_startup_restoration_lifecycle import stage_recovery
 
     policy = {
         "version": 1,
@@ -178,7 +178,7 @@ def test_part7_recovery_creates_missing_generation_before_checkpoint(tmp_path: P
 
 
 def test_part7_cleanup_namespace_scope_ignores_retired_history(tmp_path: Path):
-    from tools.probe_part7_acceptance import _active_namespaces_by_profile
+    from tools.probe_startup_restoration_lifecycle import _active_namespaces_by_profile
 
     resources = [
         {"allocation_id": "old", "kind": "namespace", "identifier": "nt-old", "profile": "other"},
@@ -203,7 +203,7 @@ def test_part7_cleanup_namespace_scope_ignores_retired_history(tmp_path: Path):
 
 
 def test_part7_cleanup_reduces_startup_provider_data(tmp_path: Path):
-    from tools.probe_part7_acceptance import _retain_startup_profiles
+    from tools.probe_startup_restoration_lifecycle import _retain_startup_profiles
 
     path = tmp_path / "startup.json"
     path.write_text(
@@ -226,7 +226,7 @@ def test_part7_cleanup_reduces_startup_provider_data(tmp_path: Path):
 
 
 def test_matrix_policy_writer_supports_final_teardown_profile(tmp_path: Path):
-    from tools.probe_part7_acceptance import Matrix
+    from tools.probe_startup_restoration_lifecycle import Matrix
 
     matrix = object.__new__(Matrix)
     matrix.policy = tmp_path / "desired-policy.json"

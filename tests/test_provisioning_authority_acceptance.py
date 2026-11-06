@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-SOURCE = Path(__file__).resolve().parents[1] / "tools" / "probe_part8_authority_acceptance.py"
+SOURCE = Path(__file__).resolve().parents[1] / "tools" / "probe_provisioning_authority_acceptance.py"
 spec = importlib.util.spec_from_file_location("part8_acceptance", SOURCE)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
@@ -34,7 +34,7 @@ def test_stages_are_explicit_and_ordered():
         "probe_restore_startup.py",
         "probe_cleanup.py",
         "probe_recovery.py",
-        "probe_part7_acceptance.py",
+        "probe_startup_restoration_lifecycle.py",
     ]
 
 

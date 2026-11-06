@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
-import probe_part4_packet_acceptance as acceptance  # noqa: E402
+import probe_dual_stack_packet_policy as acceptance  # noqa: E402
 
 
 def test_dry_run_does_not_execute(capsys):

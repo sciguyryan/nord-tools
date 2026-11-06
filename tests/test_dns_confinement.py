@@ -101,7 +101,7 @@ def test_dns_peer_allowed_ips_rejects_ambiguous_or_invalid_readback(output):
 def test_dns_acceptance_dry_run_is_non_mutating():
     import importlib.util
 
-    script = Path(__file__).resolve().parents[1] / "tools" / "probe_part4b_dns_acceptance.py"
+    script = Path(__file__).resolve().parents[1] / "tools" / "probe_wireguard_dns_acceptance.py"
     spec = importlib.util.spec_from_file_location("dns_acceptance_probe", script)
     module = importlib.util.module_from_spec(spec)
     with patch("subprocess.run", side_effect=AssertionError("dry run must not execute commands")):

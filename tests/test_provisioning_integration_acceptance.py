@@ -34,7 +34,7 @@ def test_root_required_before_any_stage():
 
 def test_matrix_contains_distinct_authority_and_isolation_checks():
     assert [filename for _, filename, _ in module.STAGES] == [
-        "probe_part8_authority_acceptance.py",
+        "probe_provisioning_authority_acceptance.py",
         "probe_selected_profile_retirement.py",
         "probe_isolated_consumer_retirement.py",
         "probe_recovery.py",

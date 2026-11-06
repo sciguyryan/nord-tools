@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 STAGES = (
     ("production provisioning and restoration", "probe_provisioning_integration.py", "--run-privileged"),
     ("real WireGuard exchange, loss and host integrity", "probe_wireguard_host_integrity.py", "--execute"),
-    ("dual-stack firewall and no-fallback packet policy", "probe_part4_packet_acceptance.py", "--run-privileged"),
+    ("dual-stack firewall and no-fallback packet policy", "probe_dual_stack_packet_policy.py", "--run-privileged"),
 )
 
 

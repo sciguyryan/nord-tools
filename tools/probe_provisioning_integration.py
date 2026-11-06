@@ -16,7 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = (
-    ("production authority and restoration", "probe_part8_authority_acceptance.py", ("--run-privileged",)),
+    ("production authority and restoration", "probe_provisioning_authority_acceptance.py", ("--run-privileged",)),
     ("independent named-profile retirement", "probe_selected_profile_retirement.py", ("--run-privileged",)),
     ("isolated allocation and lease retirement", "probe_isolated_consumer_retirement.py", ("--run-privileged",)),
     ("interruption after durable namespace binding", "probe_recovery.py", ("--after-binding", "--run-privileged")),
