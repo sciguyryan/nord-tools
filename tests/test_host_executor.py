@@ -321,3 +321,62 @@ def test_recovery_certifies_present_resource_before_retirement_retry(tmp_path):
     assert status["state"] == "absent"
     assert fake.calls.count("remove_resolver") == 1
     assert fake.calls.count("remove_routes") == 2
+
+
+def test_active_status_rechecks_live_tunnel_readiness(tmp_path):
+    from nord_tools_internal.nordvpn_host_executor import host_protection_status
+
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    fake = FakeHost()
+    path = tmp_path / "host.json"
+    activate_host_protection(plan, path, 7, kernel=fake.kernel(), boot_id=BOOT)
+    fake.handshake = False
+    report = host_protection_status(plan, path, kernel=fake.kernel())
+    assert report["state"] == "protected_tunnel_unavailable"
+    assert report["ordinary_host_egress_blocked"] is True
+
+
+def test_retirement_rechecks_previously_absent_resource_before_barrier_removal(tmp_path):
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    fake = FakeHost()
+    path = tmp_path / "host.json"
+    activate_host_protection(plan, path, 7, kernel=fake.kernel(), boot_id=BOOT)
+    fake.fail = "remove_routes"
+    with pytest.raises(HostProtectionError):
+        deactivate_host_protection(plan, path, expose_host_egress=True, kernel=fake.kernel())
+    # Resolver was retired successfully. Another actor has since recreated it.
+    fake.present.add("resolver")
+    fake.fail = None
+    with pytest.raises(HostProtectionError, match="no longer verifiably absent"):
+        deactivate_host_protection(plan, path, expose_host_egress=True, kernel=fake.kernel())
+    assert "barrier" in fake.present
+    assert "remove_barrier" not in fake.calls
+    assert read_host_store(path)["record"]["outcome"] == "uncertain"
+
+
+def test_activation_cannot_resume_a_retirement_transaction(tmp_path):
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    fake = FakeHost()
+    path = tmp_path / "host.json"
+    activate_host_protection(plan, path, 7, kernel=fake.kernel(), boot_id=BOOT)
+    fake.fail = "remove_routes"
+    with pytest.raises(HostProtectionError):
+        deactivate_host_protection(plan, path, expose_host_egress=True, kernel=fake.kernel())
+    calls = list(fake.calls)
+    with pytest.raises(HostProtectionError, match="retirement evidence"):
+        activate_host_protection(plan, path, 7, kernel=fake.kernel(), boot_id=BOOT)
+    assert fake.calls == calls
+    assert "barrier" in fake.present
+
+
+def test_incomplete_activation_cannot_start_retirement(tmp_path):
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    fake = FakeHost(fail="wireguard")
+    path = tmp_path / "host.json"
+    with pytest.raises(HostProtectionError):
+        activate_host_protection(plan, path, 7, kernel=fake.kernel(), boot_id=BOOT)
+    calls = list(fake.calls)
+    with pytest.raises(HostProtectionError, match="incomplete host activation"):
+        deactivate_host_protection(plan, path, expose_host_egress=True, kernel=fake.kernel())
+    assert fake.calls == calls
+    assert "barrier" in fake.present

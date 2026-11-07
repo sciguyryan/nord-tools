@@ -266,8 +266,8 @@ def activate_host_protection(
                 raise HostProtectionError("a different host protection generation retains durable evidence")
             if record["boot_id"] != identity:
                 raise HostProtectionError("host protection evidence crosses a reboot and requires recovery review")
-            if record["outcome"] == "retired":
-                raise HostProtectionError("retired host evidence must be archived before a new activation")
+            if record["operation"] != "activate" or record["outcome"] in {"retiring", "retired"}:
+                raise HostProtectionError("host retirement evidence must be resolved before a new activation")
             inventory = _validate_inventory(helpers.inventory(), plan, allow_owned=True)
             if inventory["boot_id"] != identity:
                 raise HostProtectionError("host inventory boot identity changed during activation preflight")
@@ -352,7 +352,16 @@ def host_protection_status(
         ):
             state = "uncertain"
         elif record["outcome"] == "active" and all(value == "present" for value in observed.values()):
-            state = "active_verified"
+            # Resource identity alone cannot establish current tunnel readiness.
+            # A lost handshake or resolver assignment must not retain an active
+            # verdict merely because the journal still says active.
+            readiness = helpers.verify_ready(plan)
+            if not isinstance(readiness, dict) or readiness.get("barrier") is not True:
+                state = "degraded"
+            elif all(readiness.get(key) is True for key in ("wireguard", "routes", "resolver", "handshake")):
+                state = "active_verified"
+            else:
+                state = "protected_tunnel_unavailable" if barrier else "degraded"
         elif barrier and record["outcome"] in {"preparing", "protected_unavailable"}:
             state = "protected_tunnel_unavailable"
         elif record["outcome"] == "retired" and not barrier:
@@ -404,6 +413,11 @@ def deactivate_host_protection(
             raise HostProtectionError("host protection retirement cannot use evidence from another boot")
         if record["outcome"] == "retired":
             return host_protection_status(plan, target, kernel=helpers, already_locked=True)
+        if record["operation"] == "activate" and (
+            len(record["steps"]) != len(_ACTIVATION_STEPS)
+            or any(_step(document, name)["state"] != "observed" for name in _ACTIVATION_STEPS)
+        ):
+            raise HostProtectionError("incomplete host activation cannot enter ordinary retirement")
         record["operation"] = "deactivate"
         record["outcome"] = "retiring"
         write_host_store(target, document)
@@ -420,6 +434,13 @@ def deactivate_host_protection(
                 raise HostProtectionError(f"cannot retire host {original} without observed creation evidence")
             current = _step(document, retirement)
             if current and current["state"] == "absent":
+                # A completed retirement is not permanent proof of absence.
+                # A reused name or externally re-created resource must block
+                # subsequent teardown, particularly removal of the barrier.
+                if helpers.resource_state(original, creation["evidence"], plan) != "absent":
+                    document["record"]["outcome"] = "uncertain"
+                    write_host_store(target, document)
+                    raise HostProtectionError(f"retired host {original} is no longer verifiably absent")
                 continue
             retry_authorised = False
             if current and current["state"] == "observed":
