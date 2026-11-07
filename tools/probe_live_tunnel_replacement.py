@@ -32,6 +32,7 @@ from nord_tools_internal.nordvpn_discovery import discover  # noqa: E402
 from nord_tools_internal.nordvpn_generation_recovery import recover_generation  # noqa: E402
 from nord_tools_internal.nordvpn_generation_handover import (  # noqa: E402
     AllocationGeneration,
+    GenerationHandoverError,
     policy_digest,
     prepare_generation_handover,
 )
@@ -176,6 +177,54 @@ def tunnel_plan(endpoint: str, tunnel_address: str, underlay_index: int, peer_ke
         },
         "dns_servers": ["10.250.0.1"],
     }
+
+
+def verify_adversarial_recovery(
+    config: dict,
+    handover: Path,
+    leases: Path,
+    *,
+    expected_disposition: str,
+) -> None:
+    """Exercise read-only repeatability and fail-closed recovery refusals.
+
+    The deliberately failed packet verifier never mutates the live tunnel.
+    Profile/allocation mismatch checks must refuse before kernel discovery.
+    """
+    arguments = {
+        "handover_path": str(handover),
+        "runtime_consumers_path": str(leases),
+        "observe": discover,
+    }
+    before = recover_generation(config, **arguments)
+    after = recover_generation(config, **arguments)
+    if before != after or before["disposition"] != expected_disposition:
+        raise ProbeError("read-only recovery is not repeatable at the current generation boundary")
+    if before["network_changes_applied"] or before["automatic_kernel_repair_authorised"]:
+        raise ProbeError("read-only recovery unexpectedly authorised network mutation")
+    for expected in ({"expected_profile": "unrelated"}, {"expected_allocation_key": "profile:unrelated"}):
+        try:
+            recover_generation(config, **arguments, execute=True, allow_reprovision=True, **expected)
+        except GenerationHandoverError:
+            pass
+        else:
+            raise ProbeError("cross-profile or cross-allocation recovery was not refused")
+    if before["selected_generation"] == "generation-b":
+        failed = recover_generation(
+            config,
+            **arguments,
+            execute=True,
+            allow_reprovision=True,
+            packet_verifier=lambda _namespace: False,
+        )
+        if (
+            failed["disposition"] != "selected_generation_drift_fail_closed"
+            or failed["selected_packet_verified"] is not False
+            or failed["network_changes_applied"]
+        ):
+            raise ProbeError("failed packet readiness did not produce non-mutating fail-closed drift")
+        if recover_generation(config, **arguments) != before:
+            raise ProbeError("refused drift assessment changed the selected generation")
 
 
 def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = False) -> None:
@@ -386,6 +435,12 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
         )
         if activated["disposition"] != "draining_active_consumers" or not activated["selected_packet_verified"]:
             raise ProbeError("recovery did not recognise healthy B and A's active lease")
+        verify_adversarial_recovery(
+            config,
+            handover,
+            leases,
+            expected_disposition="draining_active_consumers",
+        )
         second = launch(config_path, leases, "consumer-b", uid, gid)
         launchers.append(second)
         wait_for_lease(leases, policy, "consumer-b", "generation-b")
@@ -446,6 +501,12 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
         )
         if retired["disposition"] != "old_generation_retired":
             raise ProbeError("recovery did not recognise completed exact retirement")
+        verify_adversarial_recovery(
+            config,
+            handover,
+            leases,
+            expected_disposition="old_generation_retired",
+        )
         stop_launch(second)
         launchers.remove(second)
         plan_cleanup(
