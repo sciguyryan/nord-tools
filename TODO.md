@@ -108,6 +108,10 @@ Part 8.1 completed six accepted increments: 8.1.1 authority preflight, 8.1.2 des
 - [ ] Verify that the README, command help and design documentation accurately describe implemented behaviour, supported configurations and security limitations.
 - [ ] Confirm operational claims against evidence; leave unresolved safety issues open rather than declaring completion.
 
+### Disposable privileged acceptance baseline
+
+The self-contained acceptance manager (`scripts/acceptance-manager.py`) provisions a disposable Arch Linux guest using passt userspace networking and runs the guest quality gates and privileged networking matrices. The 7 November 2026 guest run reported 1,135 pytest passes, 354 subtest passes, Ruff lint and formatting success, Markdown lint success and completion of the privileged application, lifecycle, WireGuard and DNS probes. This establishes a repeatable acceptance environment, not blanket certification of production deployment, desktop application DNS behaviour, host-domain default protection or independent privileged-mutator resistance. Historical Part 7 and Part 8 milestones remain recorded above; ongoing regression test identifiers should describe the behaviour they exercise rather than a development phase.
+
 ### Part 9: Final documentation reconciliation, hardening and consistency
 
 - [ ] Audit documentation, command help, security claims, tests and implementation for consistency.

@@ -1,4 +1,4 @@
-"""Regression checks for privileged Part 7 probe preconditions and diagnostics."""
+"""Regression checks for privileged restoration, recovery and host-drift diagnostics."""
 
 import json
 import subprocess
@@ -45,7 +45,7 @@ def test_restoration_probe_uses_independent_retirement_descriptor():
     assert "owned.release()" in source
 
 
-def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
+def test_restoration_host_drift_gate_exempts_only_identity_bound_kernel_underlay_route():
     from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     underlay = {
@@ -79,7 +79,7 @@ def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
         _assert_no_host_drift("before", "after", baseline, {**after, "resolver": "changed"}, allowed)
 
 
-def test_part7_gate_exempts_only_identity_bound_ipv6_link_local_route():
+def test_restoration_host_drift_gate_exempts_only_identity_bound_ipv6_link_local_route():
     from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     link_local = {
@@ -113,7 +113,7 @@ def test_part7_gate_exempts_only_identity_bound_ipv6_link_local_route():
             _assert_no_host_drift("before", "after", baseline, changed, allowed)
 
 
-def test_part7_gate_ignores_only_live_route_lifetime_reading():
+def test_restoration_host_drift_gate_ignores_only_live_route_lifetime_reading():
     from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     route = {
@@ -135,7 +135,7 @@ def test_part7_gate_ignores_only_live_route_lifetime_reading():
             )
 
 
-def test_part7_nftables_gate_ignores_only_counter_readings():
+def test_restoration_nftables_gate_ignores_only_counter_readings():
     from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
 
     fixture = {
@@ -179,7 +179,7 @@ def test_part7_nftables_gate_ignores_only_counter_readings():
 
 
 @pytest.mark.parametrize("invalid", [b"{}", b"[]", b"not-json"])
-def test_part7_nftables_gate_rejects_invalid_snapshot(invalid: bytes):
+def test_restoration_nftables_gate_rejects_invalid_snapshot(invalid: bytes):
     from tools.probe_startup_restoration_lifecycle import _assert_no_host_drift
 
     valid = {"nftables": b'{"nftables":[]}'}
@@ -187,7 +187,7 @@ def test_part7_nftables_gate_rejects_invalid_snapshot(invalid: bytes):
         _assert_no_host_drift("before", "after", valid, {"nftables": invalid}, {})
 
 
-def test_part7_recovery_creates_missing_generation_before_checkpoint(tmp_path: Path):
+def test_restoration_recovery_creates_missing_generation_before_checkpoint(tmp_path: Path):
     from tools.probe_startup_restoration_lifecycle import stage_recovery
 
     policy = {
@@ -233,7 +233,7 @@ def test_part7_recovery_creates_missing_generation_before_checkpoint(tmp_path: P
     assert json.loads(path.read_text()) == policy
 
 
-def test_part7_cleanup_namespace_scope_ignores_retired_history(tmp_path: Path):
+def test_restoration_cleanup_namespace_scope_ignores_retired_history(tmp_path: Path):
     from tools.probe_startup_restoration_lifecycle import _active_namespaces_by_profile
 
     resources = [
@@ -258,7 +258,7 @@ def test_part7_cleanup_namespace_scope_ignores_retired_history(tmp_path: Path):
     assert _active_namespaces_by_profile(path) == {"primary": "nt-primary", "other": "nt-other"}
 
 
-def test_part7_cleanup_reduces_startup_provider_data(tmp_path: Path):
+def test_restoration_cleanup_reduces_startup_provider_data(tmp_path: Path):
     from tools.probe_startup_restoration_lifecycle import _retain_startup_profiles
 
     path = tmp_path / "startup.json"

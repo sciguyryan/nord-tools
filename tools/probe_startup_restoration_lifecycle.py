@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Integrated Part 7 acceptance: persistence, recovery, cleanup, convergence.
+"""Integrated startup restoration acceptance: persistence, recovery, cleanup, convergence.
 
 The dry run describes every stage without touching any store or the kernel. The
 privileged run executes the full operational workflow on a disposable-capable
@@ -480,7 +480,7 @@ def run_matrix() -> dict:
         if shutil.which(binary) is None:
             raise ProbeError(f"missing prerequisite: {binary}")
 
-    temporary = Path(tempfile.mkdtemp(prefix="nt-part7-acceptance-"))
+    temporary = Path(tempfile.mkdtemp(prefix="nt-restoration-acceptance-"))
     print(f"Creating a disposable ecosystem under {temporary}; inspect /run/netns if interrupted", flush=True)
     all_findings = []
     try:
@@ -601,7 +601,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if not args.run_privileged:
         print(
-            "DRY RUN: the Part 7 acceptance matrix would restore two pinned profiles while a transient policy "
+            "DRY RUN: the startup restoration acceptance matrix would restore two pinned profiles while a transient policy "
             "deliberately differs, interrupt a missing generation at a durable creation-intent checkpoint, converge "
             "through boot and operator recovery, clean one profile while the shared one survives to exact "
             "deletions, repeat operations to prove convergence, and compare host routes, nftables rules and "
