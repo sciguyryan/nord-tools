@@ -140,6 +140,7 @@ def _nft_markers(plan: HostProtectionPlan) -> tuple[set[str], bool]:
                 in {
                     f"nt:{plan.generation}:barrier:input-loopback",
                     f"nt:{plan.generation}:barrier:input-established",
+                    f"nt:{plan.generation}:barrier:input-endpoint",
                 }
                 else "output"
             )
@@ -153,6 +154,8 @@ def _nft_markers(plan: HostProtectionPlan) -> tuple[set[str], bool]:
             ):
                 ambiguous = True
             else:
+                if comment in markers:
+                    ambiguous = True
                 markers.add(comment)
     expected_chains = {"input", "output", "forward"}
     ambiguous |= set(chains) != expected_chains
@@ -169,6 +172,7 @@ def _nft_markers(plan: HostProtectionPlan) -> tuple[set[str], bool]:
     recognised = {
         f"nt:{plan.generation}:barrier:input-loopback",
         f"nt:{plan.generation}:barrier:input-established",
+        f"nt:{plan.generation}:barrier:input-endpoint",
         f"nt:{plan.generation}:barrier:output-loopback",
         f"nt:{plan.generation}:barrier:output-tunnel",
         f"nt:{plan.generation}:endpoint",
@@ -196,7 +200,21 @@ def _expected_nft_expressions(plan: HostProtectionPlan) -> dict[str, list[dict]]
     return {
         f"nt:{plan.generation}:barrier:input-loopback": [interface("iifname", "lo"), {"accept": None}],
         f"nt:{plan.generation}:barrier:input-established": [
+            interface("iifname", plan.interface),
             {"match": {"op": "in", "left": {"ct": {"key": "state"}}, "right": ["established", "related"]}},
+            {"accept": None},
+        ],
+        f"nt:{plan.generation}:barrier:input-endpoint": [
+            interface("iifname", plan.egress_interface),
+            address("saddr", plan.endpoint_address),
+            address("daddr", plan.egress_source_address),
+            {
+                "match": {
+                    "op": "==",
+                    "left": {"payload": {"protocol": "udp", "field": "sport"}},
+                    "right": plan.endpoint_port,
+                }
+            },
             {"accept": None},
         ],
         f"nt:{plan.generation}:barrier:output-loopback": [interface("oifname", "lo"), {"accept": None}],
@@ -206,6 +224,7 @@ def _expected_nft_expressions(plan: HostProtectionPlan) -> dict[str, list[dict]]
         ],
         f"nt:{plan.generation}:endpoint": [
             interface("oifname", plan.egress_interface),
+            {"match": {"op": "==", "left": {"meta": {"key": "mark"}}, "right": plan.fwmark}},
             address("saddr", plan.egress_source_address),
             address("daddr", plan.endpoint_address),
             {
@@ -479,7 +498,8 @@ def _install_barrier(plan: HostProtectionPlan) -> dict:
     rules = f"""table inet {plan.firewall_table} {{
  chain input {{ type filter hook input priority {plan.firewall_priority}; policy drop;
   iifname "lo" accept comment "nt:{plan.generation}:barrier:input-loopback"
-  ct state established,related accept comment "nt:{plan.generation}:barrier:input-established"
+  iifname "{plan.interface}" ct state established,related accept comment "nt:{plan.generation}:barrier:input-established"
+  iifname "{plan.egress_interface}" {"ip6" if ":" in plan.endpoint_address else "ip"} saddr {plan.endpoint_address} {"ip6" if ":" in plan.endpoint_address else "ip"} daddr {plan.egress_source_address} udp sport {plan.endpoint_port} accept comment "nt:{plan.generation}:barrier:input-endpoint"
  }}
  chain output {{ type filter hook output priority {plan.firewall_priority}; policy drop;
   oifname "lo" accept comment "nt:{plan.generation}:barrier:output-loopback"
@@ -499,7 +519,7 @@ def _install_barrier(plan: HostProtectionPlan) -> dict:
 def _install_endpoint(plan: HostProtectionPlan) -> dict:
     family = "ip6" if ipaddress.ip_address(plan.endpoint_address).version == 6 else "ip"
     command = (
-        f'add rule inet {plan.firewall_table} output oifname "{plan.egress_interface}" '
+        f'add rule inet {plan.firewall_table} output oifname "{plan.egress_interface}" meta mark {plan.fwmark} '
         f"{family} saddr {plan.egress_source_address} {family} daddr {plan.endpoint_address} "
         f"udp dport {plan.endpoint_port} accept "
         f'comment "nt:{plan.generation}:endpoint"\n'
@@ -651,6 +671,9 @@ def _remove_endpoint(plan: HostProtectionPlan, evidence: dict) -> dict:
     # The rule handle is intentionally discovered only after structural and
     # comment verification.  Deleting the table earlier would also remove the
     # deny barrier, so endpoint retirement remains a distinct mutation.
+    markers, ambiguous = _nft_markers(plan)
+    if ambiguous or f"nt:{plan.generation}:endpoint" not in markers:
+        raise HostProtectionError("endpoint exception structure is absent or ambiguous")
     document = _nft(plan)
     handles = []
     for item in (document or {}).get("nftables", []):

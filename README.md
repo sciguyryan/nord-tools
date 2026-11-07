@@ -640,6 +640,8 @@ Previewing a plan performs no inventory or mutation:
 python nordvpn_manage.py host-plan --host-plan examples/host-protection-plan.json --host-store /var/lib/nord-tools/host-protection.json
 ```
 
+The host firewall confines established inbound traffic to the tunnel interface and permits pinned inbound WireGuard transport packets separately. Its physical-output exception also requires the configured WireGuard socket mark, in addition to the endpoint, port, source and interface restrictions. A sufficiently privileged process could forge that mark; the policy does not claim to authenticate the originating process. Pre-existing non-VPN underlay sessions may be interrupted. Privileged packet and DNS leak acceptance is still required.
+
 Activation requires root, a private store directory and a root-readable WireGuard private-key file. It records intent before every mutation, installs and reads back the deny barrier first, then adds the endpoint-only physical path, WireGuard interface, dual-stack routing and `systemd-resolved` link state. A current handshake is required for `active_verified`; without it the state remains `protected_tunnel_unavailable`, with the deny barrier retained.
 
 ```bash
