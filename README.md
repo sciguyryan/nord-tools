@@ -82,7 +82,7 @@ python nordvpn_policy.py --policy examples/vpn-policy.json --report benchmark.js
 
 ### Saved routing intent and restart behaviour
 
-The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (startup restoration)](#startup-restoration-with-systemd-part-73)); configuring a policy alone still activates nothing.
+The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (startup restoration)](#startup-restoration-with-systemd-startup-restoration)); configuring a policy alone still activates nothing.
 
 ```bash
 python nord_tools.py manage plan --policy examples/vpn-policy.json
@@ -628,7 +628,72 @@ recovery triage establishes offline lifecycle and operation-intent records, read
 
 ## WireGuard provisioning development
 
-provisioning has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The production restoration executor can provision pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall/routing controls. Provider credential acquisition and server selection, host-default-profile protection and end-to-end VPN-bound application confinement remain incomplete. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
+provisioning has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The production restoration executor can provision pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall/routing controls. Provider credential acquisition, server selection and end-to-end VPN-bound application confinement remain incomplete. Host-default protection now has a separate executable lifecycle, described below, but it still needs disposable privileged acceptance before it should be enabled on an ordinary workstation. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
+
+## Host-default protection
+
+The host-default executor supports one deliberately narrow Linux arrangement: a stable, statically addressed IPv4 physical egress, `systemd-resolved`, one pinned numeric IPv4 WireGuard endpoint, dual-stack tunnel addresses and no NetworkManager, firewalld, UFW or second WireGuard tunnel competing for host networking. Other arrangements are refused. Restricting the underlay to IPv4 avoids pretending that an IPv6 endpoint can work while neighbour discovery and router advertisements are deliberately blocked. The executor creates only the dedicated `inet nord_tools_host` nftables table, the plan's WireGuard interface, two dedicated policy rules and route table, and resolver state attached to that interface.
+
+Previewing a plan performs no inventory or mutation:
+
+```bash
+python nordvpn_manage.py host-plan --host-plan examples/host-protection-plan.json --host-store /var/lib/nord-tools/host-protection.json
+```
+
+Activation requires root, a private store directory and a root-readable WireGuard private-key file. It records intent before every mutation, installs and reads back the deny barrier first, then adds the endpoint-only physical path, WireGuard interface, dual-stack routing and `systemd-resolved` link state. A current handshake is required for `active_verified`; without it the state remains `protected_tunnel_unavailable`, with the deny barrier retained.
+
+```bash
+sudo install -d -m 0700 /var/lib/nord-tools
+sudo python nordvpn_manage.py host-activate --execute \
+  --host-plan /etc/nord-tools/host-protection.json \
+  --host-store /var/lib/nord-tools/host-protection.json \
+  --private-key /etc/nord-tools/default.key
+sudo python nordvpn_manage.py host-status \
+  --host-plan /etc/nord-tools/host-protection.json \
+  --host-store /var/lib/nord-tools/host-protection.json
+```
+
+Failure and process death do not trigger automatic fallback to ordinary host egress. `host-recovery` is read-only unless `--execute` is supplied, and even its executing form never removes the barrier. Deactivation re-verifies each recorded object, retires resolver, routes, WireGuard and the endpoint exception in dependency order, then requires both `--execute` and `--expose-host-egress` before removing the final barrier:
+
+```bash
+sudo python nordvpn_manage.py host-deactivate --execute --expose-host-egress \
+  --host-plan /etc/nord-tools/host-protection.json \
+  --host-store /var/lib/nord-tools/host-protection.json
+```
+
+This path coordinates cooperating Nord Tools processes and checks identities immediately before removal. A separate privileged actor can still race a verified kernel object, and the filesystem lock does not exclude such an actor. Use only a disposable VM with out-of-band console access while the privileged host matrix remains outstanding.
+
+Persistent protection uses two generated systemd units. The barrier unit has no ordinary default dependencies, waits for the filesystems containing its inputs, and runs before `network-pre.target`; it installs and verifies only the deny table. Failure isolates `emergency.target` instead of deliberately continuing the boot without a barrier. The activation unit requires that service, waits for `network-online.target`, receives the private key through a systemd credential and continues the same current-boot transaction. Prior-boot evidence is archived only after every recorded kernel object is absent. Preview and installation are separate:
+
+```bash
+sudo python nordvpn_manage.py host-startup-plan \
+  --host-plan /etc/nord-tools/host-protection.json \
+  --host-store /var/lib/nord-tools/host-protection.json \
+  --private-key /etc/nord-tools/default.key
+sudo python nordvpn_manage.py host-startup-install --execute \
+  --host-plan /etc/nord-tools/host-protection.json \
+  --host-store /var/lib/nord-tools/host-protection.json \
+  --private-key /etc/nord-tools/default.key
+sudo systemctl daemon-reload
+sudo systemctl enable nord-tools-host-barrier.service nord-tools-host-activate.service
+```
+
+The store directory and plan must exist before the early unit runs. Neither unit automatically removes the barrier: a failed activation or later tunnel loss remains fail closed, and administrative deactivation still uses the explicit command above. Unit ordering and reboot recovery have offline regression coverage, but the disposable reboot and packet-capture matrix has not yet been run.
+
+`python tools/probe_host_default_lifecycle.py --plan PLAN --store STORE` previews the ordered lifecycle without inspecting the host. On a disposable root-owned VM, the privileged form requires a fresh store, a mode 0700 evidence directory and explicit permission to restore ordinary host egress after successful verified retirement:
+
+The paths below are examples. Nord Tools does not create `/etc/nord-tools/host-protection.json`, obtain a provider peer, or generate `/etc/nord-tools/default.key`; the operator must install a real plan and matching key from the controlled WireGuard fixture first. Do not substitute the state of an already-running NordVPN client, since the supported preflight refuses competing WireGuard links and network managers.
+
+```bash
+sudo python tools/probe_host_default_lifecycle.py \
+  --run-privileged --allow-host-egress-on-success \
+  --plan /etc/nord-tools/host-protection.json \
+  --store /var/lib/nord-tools/host-protection-probe.json \
+  --private-key /etc/nord-tools/default.key \
+  --evidence-dir /var/lib/nord-tools/host-probe-evidence
+```
+
+The probe captures links, routes, rules, nftables and resolver-file evidence before activation and after retirement. If activation cannot reach `active_verified`, it retains the deny barrier and stops; use `host-status` and `host-recovery` from the console rather than performing broad cleanup. Passing this lifecycle probe does not cover process death, a real reboot, packet capture or application-level encrypted DNS, so it is one input to the required host matrix rather than final acceptance.
 
 ## WireGuard credential input boundary
 
@@ -658,7 +723,7 @@ The internal `execute_disposable_session` adapter combines an existing operation
 
 ## Production network-isolation acceptance status
 
-The production provisioning path now verifies the dedicated namespace firewall rules and objects, IPv4 and IPv6 default routes, the pinned WireGuard endpoint route, and optional namespace DNS configuration against live route, peer AllowedIPs and resolver readback. The consolidated privileged network-isolation adversarial probe passed (`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged`), including disposable real WireGuard and DNS-shaped packet exchange, failure recovery and host-integrity checks. These are complementary fixtures rather than one production-installed tunnel carrying the tested traffic. Integrated production firewall, DNS and real-tunnel confinement, host-default-profile protection and privileged acceptance of the registered application launch gate remain outstanding. See `TODO.md` and `docs/PRODUCTION-PROVISIONING-CONTRACT.md` for the exact acceptance boundary.
+The production provisioning path now verifies the dedicated namespace firewall rules and objects, IPv4 and IPv6 default routes, the pinned WireGuard endpoint route, and optional namespace DNS configuration against live route, peer AllowedIPs and resolver readback. The consolidated privileged network-isolation adversarial probe passed (`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged`), including disposable real WireGuard and DNS-shaped packet exchange, failure recovery and host-integrity checks. These are complementary fixtures rather than one production-installed tunnel carrying the tested traffic. Integrated production firewall, DNS and real-tunnel confinement, disposable acceptance of the new host-default executor and privileged acceptance of the registered application launch gate remain outstanding. See `TODO.md` and `docs/PRODUCTION-PROVISIONING-CONTRACT.md` for the exact acceptance boundary.
 
 ## network confinement: Experimental namespace isolation policy
 

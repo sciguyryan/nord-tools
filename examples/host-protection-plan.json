@@ -1,0 +1,31 @@
+{
+  "dns_servers": [
+    "10.7.0.1",
+    "2001:db8:1::1"
+  ],
+  "egress_ifindex": 2,
+  "egress_interface": "eth0",
+  "egress_source_address": "198.51.100.10",
+  "endpoint_address": "198.51.100.2",
+  "endpoint_port": 51820,
+  "endpoint_rule_priority": 100,
+  "firewall_family": "inet",
+  "firewall_priority": -200,
+  "firewall_table": "nord_tools_host",
+  "fwmark": 51820,
+  "generation": "default-1",
+  "interface": "ntwg-host",
+  "peer_allowed_ips": [
+    "0.0.0.0/0",
+    "::/0"
+  ],
+  "peer_public_key": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "resolver_mode": "systemd-resolved",
+  "route_table": 51820,
+  "tunnel_addresses": [
+    "10.7.0.2/32",
+    "2001:db8:1::2/128"
+  ],
+  "tunnel_rule_priority": 110,
+  "version": 1
+}

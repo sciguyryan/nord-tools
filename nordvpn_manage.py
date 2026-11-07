@@ -40,6 +40,7 @@ from nord_tools_internal.nordvpn_startup import (
     validate_startup_config,
 )
 from nord_tools_internal.nordvpn_underlay_install import UnderlayError
+from nord_tools_internal.nordvpn_host_executor import HostProtectionError
 from nord_tools_internal.nordvpn_transaction_plan import plan_transactions
 
 
@@ -139,6 +140,14 @@ def main(argv: list[str] | None = None) -> int:
         "cleanup",
         "clear-ownership",
         "recovery",
+        "host-plan",
+        "host-status",
+        "host-activate",
+        "host-deactivate",
+        "host-recovery",
+        "host-boot-barrier",
+        "host-startup-plan",
+        "host-startup-install",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -317,8 +326,113 @@ def main(argv: list[str] | None = None) -> int:
             )
         if name in ("plan", "configure"):
             command.add_argument("--policy", required=True, help="JSON policy to validate")
+        if name in (
+            "host-plan",
+            "host-status",
+            "host-activate",
+            "host-deactivate",
+            "host-recovery",
+            "host-boot-barrier",
+            "host-startup-plan",
+            "host-startup-install",
+        ):
+            command.add_argument("--host-plan", required=True, help="Version 1 executable host protection plan JSON")
+            command.add_argument("--host-store", required=True, help="Durable host protection transaction store")
+        if name == "host-activate":
+            command.add_argument("--private-key", required=True, help="Root-readable WireGuard private-key file")
+            command.add_argument("--execute", action="store_true", help="Install and verify host protection")
+        if name == "host-deactivate":
+            command.add_argument("--execute", action="store_true", help="Retire verified host protection objects")
+            command.add_argument(
+                "--expose-host-egress",
+                action="store_true",
+                help="Confirm removal of the final deny barrier and restoration of ordinary host egress",
+            )
+        if name == "host-recovery":
+            command.add_argument("--execute", action="store_true", help="Persist only evidence-certified recovery")
+        if name in ("host-startup-plan", "host-startup-install"):
+            command.add_argument("--private-key", required=True, help="Root-readable WireGuard private-key file")
+            command.add_argument("--unit-dir", default="/etc/systemd/system", help="Existing systemd unit directory")
+            command.add_argument("--python", default="/usr/bin/python3", help="Absolute Python interpreter path")
+        if name == "host-startup-install":
+            command.add_argument("--execute", action="store_true", help="Install both generated systemd units")
     args = parser.parse_args(argv)
     try:
+        if args.action in (
+            "host-plan",
+            "host-status",
+            "host-activate",
+            "host-deactivate",
+            "host-recovery",
+            "host-boot-barrier",
+            "host-startup-plan",
+            "host-startup-install",
+        ):
+            if args.transient:
+                raise ManagementError("host protection is persistent-only")
+            from nord_tools_internal.nordvpn_host_executor import (
+                activate_host_protection,
+                deactivate_host_protection,
+                host_protection_status,
+                prepare_host_boot_barrier,
+                preview_host_protection,
+                recover_host_protection,
+            )
+            from nord_tools_internal.nordvpn_host_protection import HostProtectionPlan
+
+            host_plan = HostProtectionPlan.from_mapping(read_json(args.host_plan))
+            if args.action in ("host-startup-plan", "host-startup-install"):
+                from nord_tools_internal.nordvpn_host_startup import install_host_startup
+
+                result = install_host_startup(
+                    host_plan,
+                    plan_path=args.host_plan,
+                    store_path=args.host_store,
+                    private_key_path=args.private_key,
+                    unit_dir=args.unit_dir,
+                    python_executable=args.python,
+                    execute=args.action == "host-startup-install" and args.execute,
+                )
+            elif args.action == "host-boot-barrier":
+                result = prepare_host_boot_barrier(host_plan, args.host_store)
+            elif args.action == "host-plan" or (args.action == "host-activate" and not args.execute):
+                result = preview_host_protection(host_plan)
+                result["host_store"] = args.host_store
+            elif args.action == "host-status":
+                result = host_protection_status(host_plan, args.host_store)
+            elif args.action == "host-recovery":
+                result = recover_host_protection(
+                    host_plan,
+                    args.host_store,
+                    execute=args.execute,
+                )
+            elif args.action == "host-deactivate":
+                if not args.execute:
+                    result = host_protection_status(host_plan, args.host_store)
+                    result["mode"] = "host_default_deactivation_preview"
+                    result["retirement_order"] = [
+                        "resolver",
+                        "routes",
+                        "wireguard",
+                        "endpoint exception",
+                        "deny barrier",
+                    ]
+                    result["requires_expose_host_egress_confirmation"] = True
+                else:
+                    result = deactivate_host_protection(
+                        host_plan,
+                        args.host_store,
+                        expose_host_egress=args.expose_host_egress,
+                    )
+            else:
+                key_fd = os.open(args.private_key, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW)
+                try:
+                    result = activate_host_protection(host_plan, args.host_store, key_fd)
+                finally:
+                    os.close(key_fd)
+            result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
         if args.action == "lifecycle":
             if args.live and args.observed:
                 raise ManagementError("--live and --observed are mutually exclusive")
@@ -796,6 +910,7 @@ def main(argv: list[str] | None = None) -> int:
         OwnershipError,
         ProvisioningUncertainError,
         UnderlayError,
+        HostProtectionError,
         ValueError,
         OSError,
     ) as exc:
