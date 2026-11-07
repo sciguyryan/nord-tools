@@ -60,7 +60,7 @@ def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
         "ipv4_routes": json.dumps([{"dst": "default", "gateway": "192.0.2.1"}, underlay]).encode(),
         "resolver": "unchanged",
     }
-    allowed = {("nthlverified", "10.214.0.0/30", "10.214.0.1"): True}
+    allowed = {("ipv4", "nthlverified", "10.214.0.0/30", "10.214.0.1"): True}
     _assert_no_host_drift("before", "after", baseline, after, allowed)
     _assert_no_host_drift("before", "after", after, baseline, allowed)
     with pytest.raises(ProbeError, match="ipv4_routes"):
@@ -77,6 +77,62 @@ def test_part7_gate_exempts_only_identity_bound_kernel_underlay_route():
             _assert_no_host_drift("before", "after", baseline, changed, allowed)
     with pytest.raises(ProbeError, match="resolver"):
         _assert_no_host_drift("before", "after", baseline, {**after, "resolver": "changed"}, allowed)
+
+
+def test_part7_gate_exempts_only_identity_bound_ipv6_link_local_route():
+    from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
+
+    link_local = {
+        "dst": "fe80::/64",
+        "dev": "nthlverified",
+        "protocol": "kernel",
+        "metric": 256,
+        "flags": [],
+        "pref": "medium",
+    }
+    baseline = {"ipv6_routes": b'[{"dst":"fe80::/64","dev":"eth0","protocol":"kernel","metric":256}]'}
+    after = {
+        "ipv6_routes": json.dumps(
+            [{"dst": "fe80::/64", "dev": "eth0", "protocol": "kernel", "metric": 256}, link_local]
+        ).encode()
+    }
+    allowed = {("ipv6", "nthlverified", "fe80::/64", None): True}
+    _assert_no_host_drift("before", "after", baseline, after, allowed)
+    _assert_no_host_drift("before", "after", after, baseline, allowed)
+    with pytest.raises(ProbeError, match="ipv6_routes"):
+        _assert_no_host_drift("before", "after", baseline, after, {})
+    for field, replacement in (
+        ("protocol", "static"),
+        ("metric", 1024),
+        ("gateway", "fe80::1"),
+        ("dst", "2001:db8::/64"),
+    ):
+        altered = {**link_local, field: replacement}
+        changed = {"ipv6_routes": json.dumps([json.loads(baseline["ipv6_routes"])[0], altered]).encode()}
+        with pytest.raises(ProbeError, match="ipv6_routes"):
+            _assert_no_host_drift("before", "after", baseline, changed, allowed)
+
+
+def test_part7_gate_ignores_only_live_route_lifetime_reading():
+    from tools.probe_startup_restoration_lifecycle import ProbeError, _assert_no_host_drift
+
+    route = {
+        "dst": "default",
+        "gateway": "fe80::1",
+        "dev": "eth0",
+        "protocol": "ra",
+        "metric": 1024,
+        "expires": 65000,
+    }
+    baseline = {"ipv6_routes": json.dumps([route]).encode()}
+    changed_lifetime = {"ipv6_routes": json.dumps([{**route, "expires": 64999}]).encode()}
+    _assert_no_host_drift("before", "after", baseline, changed_lifetime, {})
+
+    for changed_route in ({key: value for key, value in route.items() if key != "expires"}, {**route, "metric": 512}):
+        with pytest.raises(ProbeError, match="ipv6_routes"):
+            _assert_no_host_drift(
+                "before", "after", baseline, {"ipv6_routes": json.dumps([changed_route]).encode()}, {}
+            )
 
 
 def test_part7_nftables_gate_ignores_only_counter_readings():

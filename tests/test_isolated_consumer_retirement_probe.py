@@ -11,3 +11,10 @@ def test_isolated_consumer_probe_defaults_to_dry_run():
     assert result.returncode == 0, result.stderr
     assert "DRY RUN" in result.stdout
     assert "No changes made" in result.stdout
+
+
+def test_isolated_consumer_probe_builds_current_generation_lease_evidence():
+    script = Path(__file__).resolve().parents[1] / "tools" / "probe_isolated_consumer_retirement.py"
+    source = script.read_text(encoding="utf-8")
+    assert '"generation_id": "acceptance-generation-alpha"' in source
+    assert '"kernel_profile": identities["alpha"]' in source

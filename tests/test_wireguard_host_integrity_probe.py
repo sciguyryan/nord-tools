@@ -73,6 +73,27 @@ class HostIntegrityProbeTests(unittest.TestCase):
             with self.subTest(output=output), self.assertRaises(integrity.IntegrityError):
                 integrity._nft_configuration_fingerprint(output)
 
+    def test_route_expiry_value_is_volatile_but_field_and_route_remain(self):
+        import json
+
+        original = [{"dst": "default", "gateway": "fe80::1", "dev": "eth0", "expires": 65000}]
+        fingerprint = integrity._route_configuration_fingerprint
+        self.assertEqual(
+            fingerprint(json.dumps(original)), fingerprint(json.dumps([{**original[0], "expires": 64999}]))
+        )
+        self.assertNotEqual(
+            fingerprint(json.dumps(original)),
+            fingerprint(json.dumps([{key: value for key, value in original[0].items() if key != "expires"}])),
+        )
+        self.assertNotEqual(
+            fingerprint(json.dumps(original)), fingerprint(json.dumps([{**original[0], "gateway": "fe80::2"}]))
+        )
+
+    def test_malformed_route_readback_fails_closed(self):
+        for output in ("not json", "{}", '["not-a-route"]'):
+            with self.subTest(output=output), self.assertRaises(integrity.IntegrityError):
+                integrity._route_configuration_fingerprint(output)
+
     def test_dry_run_never_executes(self):
         with patch.object(integrity, "experiment") as experiment, redirect_stdout(io.StringIO()) as output:
             self.assertEqual(integrity.main([]), 0)

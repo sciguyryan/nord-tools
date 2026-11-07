@@ -27,8 +27,8 @@ class IntegrityError(RuntimeError):
 
 
 OBSERVATIONS = (
-    ("IPv4 host routes", ("ip", "-4", "route", "show", "table", "all")),
-    ("IPv6 host routes", ("ip", "-6", "route", "show", "table", "all")),
+    ("IPv4 host routes", ("ip", "-j", "-4", "route", "show", "table", "all")),
+    ("IPv6 host routes", ("ip", "-j", "-6", "route", "show", "table", "all")),
     ("host nftables ruleset", ("nft", "-j", "-a", "list", "ruleset")),
 )
 
@@ -70,6 +70,19 @@ def _nft_configuration_fingerprint(output: str) -> str:
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
 
+def _route_configuration_fingerprint(output: str) -> str:
+    """Hash route configuration while ignoring live expiry countdown values."""
+    try:
+        routes = json.loads(output)
+    except (ValueError, TypeError) as exc:
+        raise IntegrityError(f"Cannot parse host route JSON: {exc}") from exc
+    if not isinstance(routes, list) or any(not isinstance(route, dict) for route in routes):
+        raise IntegrityError("Unexpected host route JSON structure")
+    normalised = [{**route, "expires": 0} if "expires" in route else route for route in routes]
+    encoded = json.dumps(normalised, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
 def observe() -> dict[str, str]:
     """Read host state without changing any host network configuration."""
     evidence: dict[str, str] = {}
@@ -77,11 +90,10 @@ def observe() -> dict[str, str]:
         result = subprocess.run(command, text=True, capture_output=True, check=False)
         if result.returncode:
             raise IntegrityError(f"Cannot inspect {label}: {result.stderr.strip()}")
-        evidence[label] = (
-            _nft_configuration_fingerprint(result.stdout)
-            if label == "host nftables ruleset"
-            else hashlib.sha256(result.stdout.encode("utf-8")).hexdigest()
-        )
+        if label == "host nftables ruleset":
+            evidence[label] = _nft_configuration_fingerprint(result.stdout)
+        else:
+            evidence[label] = _route_configuration_fingerprint(result.stdout)
     resolver = Path("/etc/resolv.conf")
     try:
         evidence["host resolver contents"] = hashlib.sha256(resolver.read_bytes()).hexdigest()

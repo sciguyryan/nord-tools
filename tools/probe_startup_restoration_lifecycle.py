@@ -55,7 +55,7 @@ def _observe() -> dict:
     return observation
 
 
-def _expected_underlay_routes(matrix: Matrix) -> dict[str, str]:
+def _expected_underlay_routes(matrix: Matrix) -> dict[tuple[str, str, str, str | None], bool]:
     """Map verified host underlay interfaces to their exact fixture routes.
 
     Never exempt a route on the strength of its interface name alone.
@@ -84,25 +84,43 @@ def _expected_underlay_routes(matrix: Matrix) -> dict[str, str]:
         if len(links) != 1 or links[0]["ifindex"] != entry["binding"]["ifindex"]:
             continue
         for prefix, source in expected.items():
-            result[(name, prefix, source)] = True
+            result[("ipv4", name, prefix, source)] = True
+        # Linux automatically installs this route when IPv6 link-local
+        # addressing is enabled on the newly created veth.  It is as much a
+        # fixture route as the configured IPv4 underlay route, but exempt it
+        # only after the live interface has matched its recorded ifindex.
+        result[("ipv6", name, "fe80::/64", None)] = True
     return result
 
 
-def _normalised_routes(raw: bytes, allowed: dict) -> list[dict]:
-    """Exclude only kernel-connected fixture routes on identity-bound links."""
+def _normalised_routes(raw: bytes, allowed: dict, family: str) -> list[dict]:
+    """Exclude fixture routes and normalise only volatile route lifetimes."""
     routes = json.loads(raw)
     result = []
     for route in routes:
-        key = (route.get("dev"), route.get("dst"), route.get("prefsrc"))
-        if (
+        key = (family, route.get("dev"), route.get("dst"), route.get("prefsrc"))
+        common_fixture_route = (
             key in allowed
             and route.get("protocol") == "kernel"
-            and route.get("scope") == "link"
             and route.get("type", "unicast") == "unicast"
             and route.get("gateway") is None
             and route.get("table", "main") == "main"
-        ):
+        )
+        ipv4_underlay = family == "ipv4" and route.get("scope") == "link"
+        ipv6_link_local = (
+            family == "ipv6"
+            and route.get("dst") == "fe80::/64"
+            and route.get("prefsrc") is None
+            and route.get("metric") == 256
+            and route.get("scope") in (None, "link")
+        )
+        if common_fixture_route and (ipv4_underlay or ipv6_link_local):
             continue
+        # Router-advertisement lifetimes count down independently of this
+        # experiment.  Preserve the presence of the lifetime field, while
+        # ignoring only its live numeric reading.
+        if "expires" in route:
+            route = {**route, "expires": 0}
         result.append(route)
     return result
 
@@ -141,9 +159,10 @@ def _assert_no_host_drift(before_name: str, after_name: str, before: dict, after
         if label not in after:
             raise ProbeError(f"the host snapshot is missing {label} at {after_name}")
         old, new = before[label], after[label]
-        if label == "ipv4_routes":
-            old = _normalised_routes(old, allowed)
-            new = _normalised_routes(new, allowed)
+        if label in {"ipv4_routes", "ipv6_routes"}:
+            family = label.removesuffix("_routes")
+            old = _normalised_routes(old, allowed, family)
+            new = _normalised_routes(new, allowed, family)
         elif label == "nftables":
             old = _normalised_nftables(old)
             new = _normalised_nftables(new)

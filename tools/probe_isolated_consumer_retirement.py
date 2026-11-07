@@ -146,6 +146,8 @@ def run_probe() -> None:
                 "boot_id": "probe-boot",
                 "start_time": "probe-start",
                 "executable": "/bin/true",
+                "generation_id": "acceptance-generation-alpha",
+                "kernel_profile": identities["alpha"],
             }
         ]
         write_private_json(runtime, occupied)
