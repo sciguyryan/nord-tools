@@ -20,6 +20,8 @@ from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferen
 from nord_tools_internal.nordvpn_consumer_reference_store import locked_consumer_references
 from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock
 from nord_tools_internal.nordvpn_generation_handover import read_handover, selected_allocation
+from nord_tools_internal.nordvpn_generation_recovery import _verify_live_confinement
+from nord_tools_internal.nordvpn_replacement_executor import _packet_ready
 from nord_tools_internal.nordvpn_lifecycle import validate_journal
 from nord_tools_internal.nordvpn_runtime_consumers import (
     reserve_staged_consumer,
@@ -93,6 +95,7 @@ def launch_provisioned_application(
     gid: int,
     ready_timeout: float = 10.0,
     handover_path: str | None = None,
+    tunnel_plan: dict | None = None,
 ) -> int:
     """Block until the registered program exits; refuse unverified execution.
 
@@ -107,6 +110,8 @@ def launch_provisioned_application(
     plan = plan_application(policy, application, arguments)
     if plan.profile == "direct":
         raise ConsumerReferenceError("direct applications cannot use VPN namespace leases")
+    if handover_path is not None and tunnel_plan is None:
+        raise ConsumerReferenceError("generation launch requires the pinned tunnel plan")
     kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
     generation_id = "unversioned"
     # Resolve the interpreter before creating the child. It is only the trusted
@@ -172,6 +177,13 @@ def launch_provisioned_application(
                 already_locked=True,
             )
             reserved = True
+            if handover_path is not None:
+                journal = validate_journal(read_private_json(journal_path))
+                resources = [item for item in journal["allocations"]["resources"] if item["profile"] == kernel_profile]
+                _verify_live_confinement(namespace, resources, tunnel_plan)
+                dns = tuple(tunnel_plan.get("dns_servers", ()))
+                if _packet_ready(namespace, dns, tunnel_plan) is not True:
+                    raise ConsumerReferenceError("selected generation failed packet-readiness verification")
         os.write(release_w, b"G")
         os.close(release_w)
         release_w = -1

@@ -29,6 +29,7 @@ sys.path.insert(0, str(ROOT))
 from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_generation  # noqa: E402
 from nord_tools_internal.nordvpn_cleanup_executor import plan_cleanup  # noqa: E402
 from nord_tools_internal.nordvpn_discovery import discover  # noqa: E402
+from nord_tools_internal.nordvpn_generation_recovery import recover_generation  # noqa: E402
 from nord_tools_internal.nordvpn_generation_handover import (  # noqa: E402
     AllocationGeneration,
     policy_digest,
@@ -177,7 +178,7 @@ def tunnel_plan(endpoint: str, tunnel_address: str, underlay_index: int, peer_ke
     }
 
 
-def run_probe(uid: int, gid: int) -> None:
+def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = False) -> None:
     token = secrets.token_hex(3)
     peer_interface = f"ntpr{token}"
     server_namespace = f"ntsrv{token}"
@@ -296,23 +297,95 @@ def run_probe(uid: int, gid: int) -> None:
             attach_underlay_to_peer(validated, replacement.kernel_profile, bridge, "10.214.11.1/30")
             return result
 
-        prepare_replacement(
-            config,
-            profile="alpha",
-            allocation_key="profile:alpha",
-            old_generation_id="generation-a",
-            replacement_generation_id="generation-b",
-            handover_path=str(handover),
-            runtime_consumers_path=str(leases),
-            observe=discover,
-            provision=provision_b,
+        before = recover_generation(
+            config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
         )
-        activate_replacement(
-            config,
-            handover_path=str(handover),
-            runtime_consumers_path=str(leases),
-            observe=discover,
+        if before["disposition"] != "eligible_for_explicit_reprovision":
+            raise ProbeError("recovery did not recognise verified-absent unselected replacement")
+        if inject_replacement_interruption:
+            child = os.fork()
+            if child == 0:
+                try:
+
+                    def interrupted_provision(
+                        validated: dict, checked_policy: dict, replacement: AllocationGeneration
+                    ) -> object:
+                        result = provision_b(validated, checked_policy, replacement)
+                        os.kill(os.getpid(), signal.SIGKILL)
+                        return result
+
+                    prepare_replacement(
+                        config,
+                        profile="alpha",
+                        allocation_key="profile:alpha",
+                        old_generation_id="generation-a",
+                        replacement_generation_id="generation-b",
+                        handover_path=str(handover),
+                        runtime_consumers_path=str(leases),
+                        observe=discover,
+                        provision=interrupted_provision,
+                    )
+                except BaseException:
+                    os._exit(3)
+                os._exit(4)
+            _, status = os.waitpid(child, 0)
+            if not os.WIFSIGNALED(status) or os.WTERMSIG(status) != signal.SIGKILL:
+                raise ProbeError("replacement interruption did not reach the post-provision checkpoint")
+            interrupted = recover_generation(
+                config,
+                handover_path=str(handover),
+                runtime_consumers_path=str(leases),
+                observe=discover,
+                execute=True,
+            )
+            if interrupted["phase"] != "verified" or interrupted["network_changes_applied"]:
+                raise ProbeError("post-provision interruption did not recover without kernel changes")
+        else:
+            prepare_replacement(
+                config,
+                profile="alpha",
+                allocation_key="profile:alpha",
+                old_generation_id="generation-a",
+                replacement_generation_id="generation-b",
+                handover_path=str(handover),
+                runtime_consumers_path=str(leases),
+                observe=discover,
+                provision=provision_b,
+            )
+        staged = recover_generation(
+            config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
         )
+        if staged["disposition"] != "verified_awaiting_explicit_activation":
+            raise ProbeError("recovery did not preserve the explicit activation boundary")
+        if inject_replacement_interruption:
+            child = os.fork()
+            if child == 0:
+                try:
+                    activate_replacement(
+                        config,
+                        handover_path=str(handover),
+                        runtime_consumers_path=str(leases),
+                        observe=discover,
+                    )
+                    os.kill(os.getpid(), signal.SIGKILL)
+                except BaseException:
+                    os._exit(3)
+                os._exit(4)
+            _, status = os.waitpid(child, 0)
+            if not os.WIFSIGNALED(status) or os.WTERMSIG(status) != signal.SIGKILL:
+                raise ProbeError("activation interruption did not reach the durable cut-over checkpoint")
+        else:
+            activate_replacement(
+                config,
+                handover_path=str(handover),
+                runtime_consumers_path=str(leases),
+                observe=discover,
+            )
+        activated = recover_generation(
+            config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
+        )
+        if activated["disposition"] != "draining_active_consumers" or not activated["selected_packet_verified"]:
+            raise ProbeError("recovery did not recognise healthy B and A's active lease")
         second = launch(config_path, leases, "consumer-b", uid, gid)
         launchers.append(second)
         wait_for_lease(leases, policy, "consumer-b", "generation-b")
@@ -335,13 +408,32 @@ def run_probe(uid: int, gid: int) -> None:
             raise ProbeError("old generation retirement succeeded while its consumer was active")
         stop_launch(first)
         launchers.remove(first)
-        retire_old_generation(
-            config,
-            handover_path=str(handover),
-            runtime_consumers_path=str(leases),
-            observe=discover,
-            execute=True,
-        )
+        if inject_replacement_interruption:
+            child = os.fork()
+            if child == 0:
+                try:
+                    retire_old_generation(
+                        config,
+                        handover_path=str(handover),
+                        runtime_consumers_path=str(leases),
+                        observe=discover,
+                        execute=True,
+                    )
+                    os.kill(os.getpid(), signal.SIGKILL)
+                except BaseException:
+                    os._exit(3)
+                os._exit(4)
+            _, status = os.waitpid(child, 0)
+            if not os.WIFSIGNALED(status) or os.WTERMSIG(status) != signal.SIGKILL:
+                raise ProbeError("retirement interruption did not reach the verified cleanup checkpoint")
+        else:
+            retire_old_generation(
+                config,
+                handover_path=str(handover),
+                runtime_consumers_path=str(leases),
+                observe=discover,
+                execute=True,
+            )
         if (
             replacement_status(
                 config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
@@ -349,6 +441,11 @@ def run_probe(uid: int, gid: int) -> None:
             is not True
         ):
             raise ProbeError("B stopped being operational after A retirement")
+        retired = recover_generation(
+            config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
+        )
+        if retired["disposition"] != "old_generation_retired":
+            raise ProbeError("recovery did not recognise completed exact retirement")
         stop_launch(second)
         launchers.remove(second)
         plan_cleanup(
@@ -403,6 +500,11 @@ def run_probe(uid: int, gid: int) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-privileged", action="store_true")
+    parser.add_argument(
+        "--inject-replacement-interruption",
+        action="store_true",
+        help="Kill the replacement worker after B provisioning and recover the durable prepared handover",
+    )
     parser.add_argument("--uid", type=int, help="existing non-root test user")
     parser.add_argument("--gid", type=int, help="existing non-root test group")
     args = parser.parse_args(argv)
@@ -415,7 +517,7 @@ def main(argv: list[str] | None = None) -> int:
     if missing or not Path("/usr/bin/sleep").is_file():
         parser.error("missing prerequisites: " + ", ".join(missing or ["/usr/bin/sleep"]))
     try:
-        run_probe(args.uid, args.gid)
+        run_probe(args.uid, args.gid, inject_replacement_interruption=args.inject_replacement_interruption)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
         print(f"FAIL: {exc}", file=sys.stderr)
         return 1

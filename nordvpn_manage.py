@@ -126,6 +126,7 @@ def main(argv: list[str] | None = None) -> int:
         "replace-profile",
         "replacement-status",
         "retire-generation",
+        "recover-generation",
         "startup-plan",
         "startup-install",
         "restore-startup",
@@ -170,7 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
             command.add_argument("--profile", required=True, help="Effective kernel profile identity")
             command.add_argument("--runtime-consumers", required=True, help="Existing durable consumer lease store")
-        if name in ("replace-profile", "replacement-status", "retire-generation"):
+        if name in ("replace-profile", "replacement-status", "retire-generation", "recover-generation"):
             command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
             command.add_argument("--profile", required=True, help="Logical VPN profile")
             command.add_argument("--runtime-consumers", required=True, help="Durable generation-specific lease store")
@@ -182,6 +183,13 @@ def main(argv: list[str] | None = None) -> int:
         if name == "retire-generation":
             command.add_argument("--generation", required=True, help="Exact old generation to retire")
             command.add_argument("--execute", action="store_true", help="Retire verified unreferenced resources")
+        if name == "recover-generation":
+            command.add_argument("--execute", action="store_true", help="Perform only evidence-certified recovery")
+            command.add_argument(
+                "--reprovision-absent",
+                action="store_true",
+                help="With --execute, explicitly permit verified-absent replacement reprovisioning",
+            )
         if name == "reconcile-live":
             command.add_argument("--journal", required=True, help="Explicit lifecycle journal JSON")
             command.add_argument("--bindings", required=True, help="Explicit owner-record store JSON")
@@ -346,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
             result = assess_replacement_readiness(read_json(args.config), args.profile, args.runtime_consumers)
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
-        if args.action in ("replace-profile", "replacement-status", "retire-generation"):
+        if args.action in ("replace-profile", "replacement-status", "retire-generation", "recover-generation"):
             if args.transient:
                 raise ManagementError("generation replacement is persistent-only")
             config = validate_startup_config(read_json(args.config))
@@ -354,7 +362,22 @@ def main(argv: list[str] | None = None) -> int:
             handover = config.get("handovers", {}).get(allocation_key) or config.get("handovers", {}).get(args.profile)
             if handover is None:
                 raise ManagementError("profile has no pinned generation handover store")
-            if args.action == "replacement-status":
+            if args.action == "recover-generation":
+                if args.reprovision_absent and not args.execute:
+                    raise ManagementError("--reprovision-absent requires --execute")
+                from nord_tools_internal.nordvpn_generation_recovery import recover_generation
+
+                result = recover_generation(
+                    config,
+                    handover_path=handover,
+                    runtime_consumers_path=args.runtime_consumers,
+                    observe=discover,
+                    execute=args.execute,
+                    allow_reprovision=args.reprovision_absent,
+                    expected_profile=args.profile,
+                    expected_allocation_key=allocation_key,
+                )
+            elif args.action == "replacement-status":
                 from nord_tools_internal.nordvpn_replacement_executor import replacement_status
 
                 result = replacement_status(
@@ -514,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
                 gid=args.gid,
                 handover_path=config.get("handovers", {}).get(plan.allocation_key)
                 or config.get("handovers", {}).get(plan.profile),
+                tunnel_plan=config["tunnels"].get(plan.profile),
             )
         if args.action in ("consumer-leases", "release-exited-consumer", "acquire-consumer"):
             if args.transient:
