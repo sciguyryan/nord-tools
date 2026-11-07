@@ -261,20 +261,11 @@ def _routes_state(plan: HostProtectionPlan) -> str:
     tunnel_counts = {4: 0, 6: 0}
     unexpected = False
 
-    def table_number(value: object) -> int | None:
-        if value == "main":
-            return 254
-        if type(value) is int:
-            return value
-        if isinstance(value, str) and value.isdecimal():
-            return int(value)
-        return None
-
     for family in (4, 6):
         rows = _rule_rows(family)
         for item in rows:
             priority = item.get("priority")
-            table = table_number(item.get("table"))
+            table = _routing_table_number(item.get("table"))
             if priority in {plan.endpoint_rule_priority, plan.tunnel_rule_priority}:
                 if priority == plan.endpoint_rule_priority:
                     endpoint_count += 1
@@ -618,7 +609,15 @@ def _install_resolver(plan: HostProtectionPlan) -> dict:
     _run(["resolvectl", "dns", plan.interface, *plan.dns_servers])
     _run(["resolvectl", "domain", plan.interface, "~."])
     _run(["resolvectl", "default-route", plan.interface, "yes"])
-    return {"manager": "systemd-resolved", "interface": plan.interface, "servers": list(plan.dns_servers)}
+    links = [item for item in _links() if item["name"] == plan.interface]
+    if len(links) != 1 or links[0]["kind"] != "wireguard" or _resolver_state(plan) != "present":
+        raise HostProtectionError("host resolver configuration could not be verified after installation")
+    return {
+        "manager": "systemd-resolved",
+        "interface": plan.interface,
+        "ifindex": links[0]["index"],
+        "servers": list(plan.dns_servers),
+    }
 
 
 def _verify_ready(plan: HostProtectionPlan) -> dict:
@@ -641,17 +640,134 @@ def _verify_ready(plan: HostProtectionPlan) -> dict:
 
 
 def _remove_resolver(plan: HostProtectionPlan, evidence: dict) -> dict:
+    """Revert only a verified resolver assignment on the original link."""
+    expected = evidence.get("ifindex")
+    if type(expected) is not int or expected <= 0:
+        raise HostProtectionError("resolver retirement lacks an original interface identity")
+    links = [item for item in _links() if item["name"] == plan.interface]
+    if len(links) != 1 or links[0]["kind"] != "wireguard" or links[0]["index"] != expected:
+        raise HostProtectionError("resolver interface identity changed before retirement")
+    if _resolver_state(plan) != "present":
+        raise HostProtectionError("resolver assignment changed before retirement")
     _run(["resolvectl", "revert", plan.interface])
+    if _resolver_state(plan) == "present":
+        raise HostProtectionError("resolver assignment remained present after retirement")
     return {"reverted": plan.interface}
 
 
 def _remove_routes(plan: HostProtectionPlan, evidence: dict) -> dict:
+    """Retire only the exact routing selectors recorded in the host plan.
+
+    The complete resource must match before each mutation.  A failed or
+    ambiguous observation stops retirement, leaving the deny barrier intact.
+    This cannot make independent privileged mutations atomic with deletion.
+    """
     endpoint_family = ipaddress.ip_address(plan.endpoint_address).version
-    _run(["ip", f"-{endpoint_family}", "rule", "del", "priority", str(plan.endpoint_rule_priority)])
-    for family in (4, 6):
-        _run(["ip", f"-{family}", "rule", "del", "priority", str(plan.tunnel_rule_priority)])
-        _run(["ip", f"-{family}", "route", "del", "default", "table", str(plan.route_table)])
+    endpoint_network = f"{plan.endpoint_address}/{32 if endpoint_family == 4 else 128}"
+    commands = [
+        [
+            "ip",
+            f"-{endpoint_family}",
+            "rule",
+            "del",
+            "priority",
+            str(plan.endpoint_rule_priority),
+            "to",
+            endpoint_network,
+            "lookup",
+            "main",
+        ],
+        *[
+            [
+                "ip",
+                f"-{family}",
+                "rule",
+                "del",
+                "priority",
+                str(plan.tunnel_rule_priority),
+                "lookup",
+                str(plan.route_table),
+            ]
+            for family in (4, 6)
+        ],
+        *[
+            [
+                "ip",
+                f"-{family}",
+                "route",
+                "del",
+                "default",
+                "dev",
+                plan.interface,
+                "table",
+                str(plan.route_table),
+                "proto",
+                "static",
+            ]
+            for family in (4, 6)
+        ],
+    ]
+    for index, command in enumerate(commands):
+        _verify_route_retirement_progress(plan, index)
+        _run(command)
+    if _routes_state(plan) != "absent":
+        raise HostProtectionError("host routes were not confirmed absent after retirement")
     return {"removed_table": plan.route_table}
+
+
+def _verify_route_retirement_progress(plan: HostProtectionPlan, completed: int) -> None:
+    """Verify the exact remaining rule and route identities after each delete.
+
+    A partially completed retirement is not reported as a fully present
+    resource, so the ordinary aggregate observer cannot be used here.
+    """
+    endpoint_family = ipaddress.ip_address(plan.endpoint_address).version
+    for family in (4, 6):
+        endpoint_rules = [item for item in _rule_rows(family) if item.get("priority") == plan.endpoint_rule_priority]
+        tunnel_rules = [item for item in _rule_rows(family) if item.get("priority") == plan.tunnel_rule_priority]
+        expected_endpoint = family == endpoint_family and completed == 0
+        expected_tunnel = completed <= (1 if family == 4 else 2)
+        if len(endpoint_rules) != int(expected_endpoint) or len(tunnel_rules) != int(expected_tunnel):
+            raise HostProtectionError("host routing rule identity changed during retirement")
+        if endpoint_rules:
+            rule = endpoint_rules[0]
+            if not (
+                _routing_table_number(rule.get("table")) == 254
+                and rule.get("dst") == plan.endpoint_address
+                and rule.get("src") == "all"
+                and not any(key in rule for key in ("fwmark", "not", "suppress_prefixlen"))
+            ):
+                raise HostProtectionError("host endpoint rule identity changed during retirement")
+        if tunnel_rules:
+            rule = tunnel_rules[0]
+            if not (
+                _routing_table_number(rule.get("table")) == plan.route_table
+                and rule.get("src") == "all"
+                and "dst" not in rule
+                and not any(key in rule for key in ("fwmark", "not", "suppress_prefixlen"))
+            ):
+                raise HostProtectionError("host tunnel rule identity changed during retirement")
+        routes = _route_rows(family, plan.route_table)
+        expected_route = completed <= (3 if family == 4 else 4)
+        if len(routes) != int(expected_route):
+            raise HostProtectionError("host route identity changed during retirement")
+        if routes and not (
+            routes[0].get("dst") in {"default", "0.0.0.0/0", "::/0"}
+            and routes[0].get("dev") == plan.interface
+            and routes[0].get("protocol") == "static"
+        ):
+            raise HostProtectionError("host route identity changed during retirement")
+
+
+def _routing_table_number(value: object) -> int | None:
+    """Decode only unambiguous kernel routing table representations."""
+    if value == "main":
+        return 254
+    if type(value) is int:
+        return value
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    return None
 
 
 def _remove_wireguard(plan: HostProtectionPlan, evidence: dict) -> dict:
