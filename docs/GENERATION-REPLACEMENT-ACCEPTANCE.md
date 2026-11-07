@@ -27,4 +27,4 @@ The interruption option covers three specific process-death checkpoints. It does
 
 ## Acceptance decision
 
-The Part 6d local quality gates and privileged real-peer scenarios, including interruption-enabled replacement, all passed. This closes the generation replacement acceptance scope, not the broader production routing and independent privileged mutator boundaries. Any future unexpected ownership observation, failed health verification, inconsistent lease or host-network change remains a failure requiring investigation. Do not infer broader privileged safety from passing mocked tests or this bounded acceptance.
+The generation replacement acceptance local quality gates and privileged real-peer scenarios, including interruption-enabled replacement, all passed. This closes the generation replacement acceptance scope, not the broader production routing and independent privileged mutator boundaries. Any future unexpected ownership observation, failed health verification, inconsistent lease or host-network change remains a failure requiring investigation. Do not infer broader privileged safety from passing mocked tests or this bounded acceptance.

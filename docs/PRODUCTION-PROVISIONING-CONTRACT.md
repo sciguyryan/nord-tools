@@ -12,7 +12,7 @@ The read-only `validate_provisioning_owner_bindings` check additionally requires
 
 The boot restoration executor validates its actual four-resource creation batch before appending new allocations to the lifecycle journal. The batch consists of the namespace, WireGuard interface, namespace-side underlay and host-side underlay. Profile, kind, name and allocation-token collisions with existing journal entries are refused. A fresh kernel observation also refuses newly occupied candidate names before recording the creation intent. The executor then retains its existing lifecycle lock, durable intent, descriptor-bound namespace creation, progressive creation-time owner binding and verification sequence.
 
-The offline two-resource contract remains a diagnostic contract for the tunnel and namespace pair. It does not require creation-time owner bindings for resources that have not yet been created. Neither the offline contract nor the four-resource validation is independent authority to mutate kernel state. Independent privileged actors can still race the observation and creation boundary; the accepted cooperative authority model and conservative failure behaviour remain in force.
+The offline two-resource contract remains a diagnostic contract for the tunnel and namespace pair. It does not require creation-time owner bindings for resources that have not yet been created. Neither the offline contract nor the four-resource validation is independent authority to mutate kernel state. Independent privileged actors can still race the observation and creation boundary; the documented cooperative authority model and conservative failure behaviour remain in force.
 
 ## WireGuard interface creation identity
 
@@ -34,7 +34,7 @@ The production restoration executor checks the derived local public key and the 
 
 This is an offline resolution contract only: it does not create resources, authorise privileged mutation or establish shared-tunnel ownership.
 
-The disposable WireGuard peer-field and retirement probe passed privileged acceptance. The accepted scope excludes production DNS confinement, application routing and independent privileged kernel mutators.
+The disposable WireGuard peer-field and retirement probe passed privileged acceptance. the tested scope excludes production DNS confinement, application routing and independent privileged kernel mutators.
 
 ## Independent named-profile provisioning
 
@@ -180,17 +180,17 @@ A pinned `dns_servers` list causes authorised provisioning to install an exclusi
 
 ### Consolidated adversarial routing and DNS acceptance
 
-`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged` runs the accepted production provisioning and dual-stack routing probes, disposable real-WireGuard DNS confinement, late-stage interrupted provisioning recovery and cooperating-process lock substitution refusal. It takes an additional counter-aware snapshot of host IPv4/IPv6 routes, nftables configuration and resolver contents before and after the entire matrix, including when a child fails. A failed child stops later stages; the runner never assumes authority to clean up another probe's resources.
+`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged` runs the production provisioning and dual-stack routing probes, disposable real-WireGuard DNS confinement, late-stage interrupted provisioning recovery and cooperating-process lock substitution refusal. It takes an additional counter-aware snapshot of host IPv4/IPv6 routes, nftables configuration and resolver contents before and after the entire matrix, including when a child fails. A failed child stops later stages; the runner never assumes authority to clean up another probe's resources.
 
 Resolver readback also rejects multiply linked files and verifies the opened descriptor against the originally inspected inode, so replacement between pathname inspection and opening is refused. These are bounded readback checks, not protection against independent privileged mount or kernel mutators.
 
 The acceptance matrix does not send DNS packets through the firewall installed by the production provisioning executor on the same live tunnel, does not test application-level DNS bypass and does not prove automatic fail-closed protection of the host's default profile. The privileged evidence must be reported with these limits. Do not describe the production system as universally leak-proof or production-ready on the basis of this matrix alone.
 
-## Accepted network-isolation component tests and outstanding integration
+## Network-isolation component test results and outstanding integration
 
-The consolidated adversarial routing and DNS probe passed; descriptive probe and test filenames were also reconciled. The accepted evidence covers production provisioning and restoration, dual-stack route and firewall policy checks, disposable real WireGuard packet and DNS-shaped UDP exchange, shutdown behaviour, interruption recovery, cooperating-process lock substitution refusal and counter-aware host-integrity comparisons. Each probe retains its own scope; passing the combined runner does not merge the fixtures into one production-installed tunnel.
+The consolidated adversarial routing and DNS probe passed; descriptive probe and test filenames were also reconciled. the recorded evidence covers production provisioning and restoration, dual-stack route and firewall policy checks, disposable real WireGuard packet and DNS-shaped UDP exchange, shutdown behaviour, interruption recovery, cooperating-process lock substitution refusal and counter-aware host-integrity comparisons. Each probe retains its own scope; passing the combined runner does not merge the fixtures into one production-installed tunnel.
 
-Before enabling operational per-application routing, the remaining network confinement acceptance must exercise the production-installed firewall, both default routes, pinned endpoint exception, namespace resolver and actual WireGuard traffic together. It must cover failed establishment, loss/restart and both IP families, including application DNS bypass where supported. Host-default-profile protective routing and resistance to independent privileged kernel mutators remain separate outstanding requirements. The currently accepted tests must not be described as a universal leak-prevention guarantee.
+Before enabling operational per-application routing, the remaining network confinement acceptance must exercise the production-installed firewall, both default routes, pinned endpoint exception, namespace resolver and actual WireGuard traffic together. It must cover failed establishment, loss/restart and both IP families, including application DNS bypass where supported. Host-default-profile protective routing and resistance to independent privileged kernel mutators remain separate outstanding requirements. These tests must not be described as a universal leak-prevention guarantee.
 
 ## Registered application launch gate
 

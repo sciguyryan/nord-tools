@@ -18,7 +18,7 @@ python nord_tools.py manage plan --policy examples/vpn-policy.json
 python nord_tools.py namespace-probe
 ```
 
-The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The entry point includes explicitly authorised provisioning, generation replacement, recovery and registered-application launch commands. General in-place live updates, host-domain default protection and automatic default-server switching remain outside the accepted implementation.
+The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The entry point includes explicitly authorised provisioning, generation replacement, recovery and registered-application launch commands. General in-place live updates, host-domain default protection and automatic default-server switching remain not implemented.
 
 ## What works today
 
@@ -28,7 +28,7 @@ The existing `--auto-connect` option can request a connection through the instal
 
 ### Experimental resource lifecycle journal
 
-Part 2 introduces a strict offline lifecycle journal for future Nord Tools-owned resources. It validates allocation-bound event histories, rejects illegal state transitions and detects mismatched simulated identities. A matching identifier is **not** independent kernel ownership evidence. No lifecycle command creates, modifies or removes networking resources.
+recovery triage introduces a strict offline lifecycle journal for future Nord Tools-owned resources. It validates allocation-bound event histories, rejects illegal state transitions and detects mismatched simulated identities. A matching identifier is **not** independent kernel ownership evidence. No lifecycle command creates, modifies or removes networking resources.
 
 ```bash
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json
@@ -50,7 +50,7 @@ The ownership, restoration, cleanup and recovery executors for pinned provider p
 | Replacement and recovery | Generation-scoped provisioning, verified durable cut-over, launch selection, leases and old-generation retirement; conservative operation-intent recovery remains the kernel mutation foundation | Final privileged generation-replacement and failure-injection acceptance against the current source |
 | Startup and persistence | `manage startup-install` renders the systemd unit, and `restore-startup` runs the boot executor with recovery; privileged restoration acceptance passed | The host-domain default profile's protective routing |
 | Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives; privileged cleanup acceptance passed | Production integration with live update and replacement authorities |
-| Integration and acceptance | Automated tests, the privileged Part 7 matrix and the five-stage Part 8.1.6 lifecycle matrix pass on the Arch Linux test host | Official NordVPN client coexistence checks, real-tunnel leak prevention and adversarial ownership testing |
+| Integration and acceptance | Automated tests, the privileged startup restoration and cleanup matrix and the five-stage privileged lifecycle acceptance lifecycle matrix pass on the Arch Linux test host | Official NordVPN client coexistence checks, real-tunnel leak prevention and adversarial ownership testing |
 
 `manage graph` depicts **configured intent**, not live connectivity. Likewise, `manage cleanup-plan` and `manage transaction-plan` are advisory; they do not execute network changes. These boundaries apply even if a saved policy is persistent.
 
@@ -82,7 +82,7 @@ python nordvpn_policy.py --policy examples/vpn-policy.json --report benchmark.js
 
 ### Saved routing intent and restart behaviour
 
-The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (Part 7.3)](#startup-restoration-with-systemd-part-73)); configuring a policy alone still activates nothing.
+The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (startup restoration)](#startup-restoration-with-systemd-part-73)); configuring a policy alone still activates nothing.
 
 ```bash
 python nord_tools.py manage plan --policy examples/vpn-policy.json
@@ -415,7 +415,7 @@ Routes, nftables rules, DNS and services still require stronger evidence models 
 
 ### Resource allocation identities
 
-`python nord_tools.py manage identities --registry examples/managed-allocations.json` validates a version 2 allocation ledger containing a random, per-resource `allocation_id`. Allocation identities are distinct from interface and namespace names, which can be reused. This command is read-only and does not establish that a kernel resource belongs to Nord Tools. The Part 7.1 owner-record store and the Part 7 executors now provide that binding for namespaces and interfaces; route, firewall, DNS and service kinds still have no binding model and wait for their consumers.
+`python nord_tools.py manage identities --registry examples/managed-allocations.json` validates a version 2 allocation ledger containing a random, per-resource `allocation_id`. Allocation identities are distinct from interface and namespace names, which can be reused. This command is read-only and does not establish that a kernel resource belongs to Nord Tools. The creation-time ownership verification owner-record store and the startup restoration and cleanup executors now provide that binding for namespaces and interfaces; route, firewall, DNS and service kinds still have no binding model and wait for their consumers.
 
 ### Allocation evidence and stale-state diagnostics
 
@@ -464,13 +464,13 @@ An experimental lifecycle journal can be compared with a complete live Linux dis
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json --live
 ```
 
-The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion; the sanctioned resolution of interrupted evidence is the Part 7.5 recovery executor through the same immutable stores. Cooperating journal writers already use advisory locking. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
+The output identifies missing names, ambiguous interface scopes and possible lifecycle drift. A name match, allocation token or journal entry does **not** establish kernel resource ownership. The command cannot authorise modification or deletion; the sanctioned resolution of interrupted evidence is the interrupted-operation recovery recovery executor through the same immutable stores. Cooperating journal writers already use advisory locking. Use `--observed` instead for an explicitly simulated fixture; the two options cannot be combined.
 
 ### Ownership and recovery diagnostics
 
 Internal fingerprint, lifecycle, recovery and operation-intent modules support read-only assessment of resource drift and interrupted work. They do not prove kernel ownership or execute recovery. The experimental disposable namespace primitive retains a process-bound descriptor for identity checks, but is not a production cleanup mechanism. The privileged smoke probe (`sudo python tools/probe_namespace_ownership.py --run-privileged`) passed on Arch Linux with no named namespaces left behind. See the [routing design](docs/VPN-ROUTING-DESIGN.md#process-bound-disposable-namespace-ownership-experiment) for limitations and safe test instructions.
 
-### Ownership verification preflight (Part 7.1)
+### Ownership verification preflight (creation-time ownership verification)
 
 `python nord_tools.py manage ownership-preflight --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json` performs the first privileged ownership-verification step. The owner-record store records, at creation time and while the creator still held descriptor-bound authority, the kernel identity of each created resource: the `/run/netns` mount device and inode pair for a namespace, or the creation-time interface scope and index for an interface. Records are validated against the lifecycle journal, are immutable once written, and are written through the same locked, atomic, symlink-refusing pattern as the other stores.
 
@@ -486,7 +486,7 @@ sudo python tools/probe_ownership_preflight.py --run-privileged
 
 The privileged acceptance probe creates one disposable namespace, records its binding while the creating process still holds the namespace descriptor, requires the preflight to accept the verified binding and reject a deliberately mistaken interface claim, then retires the namespace and requires the recorded retirement to classify consistently. A passing result establishes creation-time binding continuity **within one boot session only**: `/run/netns` is tmpfs, mount identities after a reboot cannot be rebound automatically, and a hostile process with access to the store directory is outside this evidence model. Even a verified batch never authorises mutation or deletion in this layer; later execution paths must re-verify ownership at the moment of action. The command and probe are read-only apart from the probe's explicitly authorised disposable namespace.
 
-### Persistent desired-state reconciliation (Part 7.2)
+### Persistent desired-state reconciliation (persistent-state reconciliation)
 
 `python nord_tools.py manage reconcile-live --journal path/to/lifecycle.json --bindings path/to/owner-bindings.json` compares the saved **persistent** desired policy against observed, ownership-verified resources and prints a deterministic reconciliation report. The command accepts an optional operation-intent store (`--intents`) and an optional profile dependency graph (`--graph`); with a graph, a blocked prerequisite blocks every desired dependent, matching the offline dependency planner.
 
@@ -498,9 +498,9 @@ python nord_tools.py manage reconcile-live --journal journal.json --bindings own
 
 Transient intent is structurally excluded: `--transient` is rejected, because session intent must never be restored at boot or reconciled later. `create_pending` never allocates anything automatically; retired verified resources re-enter creation only through a future authorised provisioner, and retirement of undesired verified resources is reserved for the separately confirmed cleanup command. Running the command twice on unchanged inputs produces an identical report.
 
-### Startup restoration with systemd (Part 7.3)
+### Startup restoration with systemd (startup restoration)
 
-Part 7.3 closes the loop between the reconciliation foundations and the boot system. `nord_tools_internal/nordvpn_restore_executor.py` binds durable creation intents, 7.1 owner records and the existing privileged namespace, isolation, routing and WireGuard primitives into one transactional boot path, and two `manage` commands expose it:
+startup restoration closes the loop between the reconciliation foundations and the boot system. `nord_tools_internal/nordvpn_restore_executor.py` binds durable creation intents, 7.1 owner records and the existing privileged namespace, isolation, routing and WireGuard primitives into one transactional boot path, and two `manage` commands expose it:
 
 ```bash
 python nord_tools.py manage startup-plan --config path/to/startup.json
@@ -545,7 +545,7 @@ sudo systemctl enable --now nord-tools-restore.service
 
 Idempotency is structural: a converged profile is left untouched, so a repeat run (manual or after a service restart) reports `network_changes_applied: false` and appends exactly one run record. Ordering follows an optional dependency graph, prerequisites are restored first, and a dependent is refused when a prerequisite cannot be restored or is merely blocked. Failure handling is fail-closed: the first uncertain step stops the whole run, the attempt's own namespace is rolled back, its allocations are recorded as failed and its creation intent stays uncertain for review, and running profiles that never began remain exactly as observed.
 
-Two boundaries must be stated plainly. First, provider tunnel plans pin a single numeric endpoint, peer key and addresses per profile: NordVPN's fastest-server selection and country pools are not resolvable at boot without provider data, so unpinned profiles are reported as not restored rather than guessed. Second, the restoration scope is the namespace domain: the default profile's host-domain routing (the host kill switch) modifies host firewall and routing state and is deliberately outside this increment, and the executor reports any such profile rather than partially configuring it. Real-tunnel DNS confinement, IPv6 conformance and leak-prevention acceptance remain the outstanding Part 4 programme; run the acceptance probe only on a disposable-capable Linux test system:
+Two boundaries must be stated plainly. First, provider tunnel plans pin a single numeric endpoint, peer key and addresses per profile: NordVPN's fastest-server selection and country pools are not resolvable at boot without provider data, so unpinned profiles are reported as not restored rather than guessed. Second, the restoration scope is the namespace domain: the default profile's host-domain routing (the host kill switch) modifies host firewall and routing state and is deliberately outside this increment, and the executor reports any such profile rather than partially configuring it. Real-tunnel DNS confinement, IPv6 conformance and leak-prevention acceptance remain the outstanding network confinement programme; run the acceptance probe only on a disposable-capable Linux test system:
 
 ```bash
 python tools/probe_restore_startup.py
@@ -554,7 +554,7 @@ sudo python tools/probe_restore_startup.py --run-privileged
 
 Inspect `sudo ip netns list` and the created host interfaces afterwards; the probe retires only the one disposable namespace whose recorded binding it re-verified, and removes only its own underlay pair.
 
-### Ownership-aware cleanup and reset (Part 7.4)
+### Ownership-aware cleanup and reset (ownership-aware cleanup)
 
 The cleanup executor is the project's only destructive path, and its classification is entirely ownership-evidence based. The dry run is the default invocation and prints the exact classification and the exact deletion sequence that `--execute` would run; nothing changes without it:
 
@@ -577,7 +577,7 @@ python tools/probe_cleanup.py
 sudo python tools/probe_cleanup.py --run-privileged
 ```
 
-### Crash, restart and interrupted-cleanup recovery (Part 7.5)
+### Crash, restart and interrupted-cleanup recovery (interrupted-operation recovery)
 
 `nord_tools_internal/nordvpn_recovery_executor.py` is the only sanctioned path for resolving the uncertainty the provisioning and cleanup executors can leave behind. The `recovery` command plans from the evidence on disk and never from assumption: every unresolved operation intent and every interrupted lifecycle state is paired with a fresh read-only observation and classified with its exact obligations:
 
@@ -597,11 +597,11 @@ sudo python tools/probe_recovery.py --run-privileged
 
 The retirement history the journal deliberately keeps means that even a fully resolved recovery retains past generations, so name reuse detection never loses its evidence; archived history is replaced only through `clear-ownership`.
 
-### Part 7 privileged acceptance status
+### startup restoration and cleanup privileged acceptance status
 
-On 3 November 2026, the final tree passed 702 automated tests with 298 subtests. The standalone integrated Part 7 matrix then passed persistence, deterministic interruption recovery, selective cleanup, repeat convergence, final verified teardown and host-state comparison. A fresh Part 7 matrix also passed as the fifth stage of the complete Part 8.1.6 runner. These results establish the documented cooperating-process lifecycle acceptance; they do not establish production fail-closed behaviour, recovery after arbitrary partial kernel provisioning or safety against independent privileged mutators.
+On 3 November 2026, the final tree passed 702 automated tests with 298 subtests. The standalone integrated startup restoration and cleanup matrix then passed persistence, deterministic interruption recovery, selective cleanup, repeat convergence, final verified teardown and host-state comparison. A fresh startup restoration and cleanup matrix also passed as the fifth stage of the complete privileged lifecycle acceptance runner. These results establish the documented cooperating-process lifecycle acceptance; they do not establish production fail-closed behaviour, recovery after arbitrary partial kernel provisioning or safety against independent privileged mutators.
 
-### Integrated Part 7 acceptance (Part 7.6)
+### Integrated startup restoration and cleanup acceptance (integrated lifecycle acceptance)
 
 One privileged matrix binds the previous increments into an operational workflow with host-isolation evidence at every stage boundary:
 
@@ -624,11 +624,11 @@ Only pinned tunnel plans are provisioned, credentials travel through `LoadCreden
 
 The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.
 
-Part 2 establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. Later Part 7 and Part 8.1.6 acceptance covers deterministic interruption before the first kernel creation callback, but does not prove safe deletion under concurrent privileged name replacement or recovery after arbitrary partial kernel provisioning.
+recovery triage establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. Later startup restoration and cleanup and privileged lifecycle acceptance acceptance covers deterministic interruption before the first kernel creation callback, but does not prove safe deletion under concurrent privileged name replacement or recovery after arbitrary partial kernel provisioning.
 
 ## WireGuard provisioning development
 
-Part 3 has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The production restoration executor can provision pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall/routing controls. Provider credential acquisition and server selection, host-default-profile protection and end-to-end VPN-bound application confinement remain incomplete. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
+provisioning has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The production restoration executor can provision pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall/routing controls. Provider credential acquisition and server selection, host-default-profile protection and end-to-end VPN-bound application confinement remain incomplete. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
 
 ## WireGuard credential input boundary
 
@@ -660,11 +660,11 @@ The internal `execute_disposable_session` adapter combines an existing operation
 
 The production provisioning path now verifies the dedicated namespace firewall rules and objects, IPv4 and IPv6 default routes, the pinned WireGuard endpoint route, and optional namespace DNS configuration against live route, peer AllowedIPs and resolver readback. The consolidated privileged network-isolation adversarial probe passed (`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged`), including disposable real WireGuard and DNS-shaped packet exchange, failure recovery and host-integrity checks. These are complementary fixtures rather than one production-installed tunnel carrying the tested traffic. Integrated production firewall, DNS and real-tunnel confinement, host-default-profile protection and privileged acceptance of the registered application launch gate remain outstanding. See `TODO.md` and `docs/PRODUCTION-PROVISIONING-CONTRACT.md` for the exact acceptance boundary.
 
-## Part 4: Experimental namespace isolation policy
+## network confinement: Experimental namespace isolation policy
 
 The internal `NamespaceIsolationPolicy` renders a proposed namespace-local nftables `inet` table with default-drop input, output and forwarding, loopback allowance, established inbound replies, tunnel-bound output and one narrowly scoped UDP underlay endpoint exception. It does not install the rules, modify host firewall state or configure DNS. Production leak protection requires atomic installation before traffic is possible, routing and resolver confinement, verified ownership, and privileged failure-injection acceptance.
 
-## Experimental namespace firewall installation (Part 4)
+## Experimental namespace firewall installation (network confinement)
 
 `nord_tools_internal.nordvpn_isolation_install.install_disposable_isolation` provides an internal, explicitly experimental check-and-apply boundary for a freshly created, otherwise empty disposable namespace. It verifies process-bound namespace evidence around an `nft -c -f -` preflight, an `nft -f -` apply and an `nft -j list table` readback. Readback requires exactly the three expected `inet` base chains, with the expected filter hooks, zero hook priorities and default-drop policies; missing or malformed evidence blocks success. This is a structural confirmation, not verification of every rule or proof of leak prevention. The ruleset is passed on standard input, not interpolated into a shell command. The caller must install it before bringing up any interfaces or starting network traffic. The new `execute_isolated_disposable_session` entry point wires this boundary into the journal-gated disposable WireGuard path, requiring the firewall check and installation before WireGuard configuration. The existing unisolated experimental entry point remains available for compatibility and must not be mistaken for fail-closed execution. This ordering does not prove that firewall installation is atomic with namespace creation. No DNS confinement, route isolation, tunnel-loss verification, restart protection or production ownership is provided. An error must block further network configuration and be investigated, not treated as a successful installation. No host firewall modifications are intended.
 
@@ -711,77 +711,77 @@ Run `python tools/probe_endpoint_exception.py` to inspect the dry-run descriptio
 
 The optional `python tools/probe_wireguard_host_integrity.py` dry run describes a privileged disposable two-pair WireGuard regression. Run `sudo python tools/probe_wireguard_host_integrity.py --execute` only on a suitable Linux test system with `ip`, `wg`, `nft` and `ping`. It compares read-only host IPv4/IPv6 routing, nftables rules and resolver contents before and after the experiment. Concurrent host-network changes can cause a conservative failure. This does not test real WireGuard DNS delivery or prove production fail-closed operation.
 
-### Part 4 experimental acceptance status
+### network confinement experimental acceptance status
 
-All four disposable Part 4 development increments have passed privileged acceptance on Arch Linux. Namespace resolver visibility, synthetic dual-stack DNS route confinement, and counter-verified IPv4/IPv6 UDP endpoint exceptions passed their separate probes. The final disposable two-pair WireGuard host-integrity regression passed ten checks: both pairs exchanged packets, shutdown isolation worked independently, and read-only observations of host IPv4/IPv6 routes, nftables rules and resolver contents were unchanged. The final `ip netns list` output was empty. These tests do not establish actual DNS packet confinement through WireGuard, production fail-closed routing, crash-safe resource ownership, or safe recovery after interruption. Consult `TODO.md` for the remaining production blockers before treating this as an operational VPN manager.
+All four disposable network confinement development increments have passed privileged acceptance on Arch Linux. Namespace resolver visibility, synthetic dual-stack DNS route confinement, and counter-verified IPv4/IPv6 UDP endpoint exceptions passed their separate probes. The final disposable two-pair WireGuard host-integrity regression passed ten checks: both pairs exchanged packets, shutdown isolation worked independently, and read-only observations of host IPv4/IPv6 routes, nftables rules and resolver contents were unchanged. The final `ip netns list` output was empty. These tests do not establish actual DNS packet confinement through WireGuard, production fail-closed routing, crash-safe resource ownership, or safe recovery after interruption. Consult `TODO.md` for the remaining production blockers before treating this as an operational VPN manager.
 
 Registered applications may explicitly select `"vpn": "direct"` in the policy. This launches the registered executable as the specified non-root identity using the **host** network namespace, routing table and resolver policy, without allocating a Nord Tools tunnel or consumer lease. It does not guarantee a physical-interface path or bypass an independently configured host VPN. An omitted `vpn` assignment still inherits the shared default VPN; failed VPN provisioning never changes a VPN-bound application into direct mode. `manage launch-consumer` shows `routing_mode` and `host_vpn_may_apply` in its preview. The direct launch deliberately uses a minimal child environment and does not promise desktop-session integration. The non-mutating preview and privileged host-namespace probe are `python tools/probe_application_routing_modes.py` and `sudo python tools/probe_application_routing_modes.py --run-privileged --uid UID --gid GID` respectively, using an existing non-root user and group. A privileged disposable real-WireGuard dual-stack DNS and concurrent direct-application confinement probe has passed; successful VPN-bound registered-application launch-to-packet and desktop DNS bypass acceptance remain outstanding.
 
 Per-application routing has an offline planning foundation in `nord_tools_internal/nordvpn_application_plan.py`. It resolves registered executables, default-profile inheritance and logical shared or isolated allocation keys without launching processes or authorising namespace operations. A gated registered-application launch path is available through `manage launch-consumer`, but requires an already provisioned, independently verified allocation and a durable lease store. It is not a default-routing manager, and successful privileged VPN-bound launch-to-packet acceptance remains outstanding.
 
-The internal application-binding planner models registered applications as logical references to shared or isolated allocations. Binding and unbinding are deterministic, side-effect-free operations: releasing the final reference does not remove a namespace, terminate a process or authorise deletion of a tunnel. Conflicting rebinding requires explicit release before replanning. The separate operational `manage launch-consumer` command now provides gated execution; this logical binding planner remains side-effect-free. The resource ownership underneath the references is established by the Part 7 executors.
+The internal application-binding planner models registered applications as logical references to shared or isolated allocations. Binding and unbinding are deterministic, side-effect-free operations: releasing the final reference does not remove a namespace, terminate a process or authorise deletion of a tunnel. Conflicting rebinding requires explicit release before replanning. The separate operational `manage launch-consumer` command now provides gated execution; this logical binding planner remains side-effect-free. The resource ownership underneath the references is established by the startup restoration and cleanup executors.
 
-Part 5 Increment 5.3 adds offline application launch request preparation in `nord_tools_internal/nordvpn_application_launch.py`. It requires an exact existing logical binding and produces an immutable argument vector without shell interpretation. The original offline execution entry point remains deliberately disabled. The separate privileged `manage launch-consumer` path uses a pre-exec gate, verifies the provisioned namespace and ownership evidence, reserves a durable lease before releasing the executable, and drops to an explicit non-root identity. Full production firewall/DNS packet confinement and privileged desktop compatibility acceptance remain outstanding.
+application routing The application launch preparation implementation adds offline application launch request preparation in `nord_tools_internal/nordvpn_application_launch.py`. It requires an exact existing logical binding and produces an immutable argument vector without shell interpretation. The original offline execution entry point remains deliberately disabled. The separate privileged `manage launch-consumer` path uses a pre-exec gate, verifies the provisioned namespace and ownership evidence, reserves a durable lease before releasing the executable, and drops to an explicit non-root identity. Full production firewall/DNS packet confinement and privileged desktop compatibility acceptance remain outstanding.
 
-Part 5 Increment 5.4 adds offline application session lifecycle modelling and a documented checklist for eventual namespace-aware launching, including desktop environment integration. These records are not process handles, and no application execution or privileged namespace operation is enabled.
+application routing The application session lifecycle implementation adds offline application session lifecycle modelling and a documented checklist for eventual namespace-aware launching, including desktop environment integration. These records are not process handles, and no application execution or privileged namespace operation is enabled.
 
-Part 5 Increment 5.5 completes the five-increment offline programme with a read-only consistency audit for logical application bindings and sessions. It detects orphaned or stale sessions and allocation keys shared across incompatible profiles, and produces deterministic allocation summaries. A successful audit is not evidence of running processes, namespace ownership or fail-closed networking. Production application execution and privileged integration remain disabled until the outstanding requirements in `TODO.md` are met.
+application routing The offline application audit completes the five-increment offline programme with a read-only consistency audit for logical application bindings and sessions. It detects orphaned or stale sessions and allocation keys shared across incompatible profiles, and produces deterministic allocation summaries. A successful audit is not evidence of running processes, namespace ownership or fail-closed networking. Production application execution and privileged integration remain disabled until the outstanding requirements in `TODO.md` are met.
 
-Part 6 Increment 6.1 adds `nord_tools_internal.nordvpn_reconciliation_gate` for deterministic offline assessment of reconciliation operations against explicitly supplied ownership and freshness observations. The gate never authorises live changes; independent privileged verification and crash-safe coordination remain required.
+live reconciliation The reconciliation evidence gate adds `nord_tools_internal.nordvpn_reconciliation_gate` for deterministic offline assessment of reconciliation operations against explicitly supplied ownership and freshness observations. The gate never authorises live changes; independent privileged verification and crash-safe coordination remain required.
 
-Part 6 Increment 6.2 provides `nordvpn_recovery_coordinator.py`, an offline validator for ordered transaction checkpoints and interrupted/failed operation assessments. Checkpoint records are not kernel observations or creation-time ownership evidence; they cannot authorise resume, rollback, deletion or live networking changes.
+live reconciliation The recovery coordinator provides `nordvpn_recovery_coordinator.py`, an offline validator for ordered transaction checkpoints and interrupted/failed operation assessments. Checkpoint records are not kernel observations or creation-time ownership evidence; they cannot authorise resume, rollback, deletion or live networking changes.
 
-Part 6 Increment 6.3 adds `nord_tools_internal/nordvpn_replacement_stage.py`, an offline staged-replacement planner. It preserves existing logical assignments, identifies verification obligations and never authorises live cut-over or resource retirement. Production ownership and crash-safe coordination remain outstanding.
+live reconciliation The staged replacement planner adds `nord_tools_internal/nordvpn_replacement_stage.py`, an offline staged-replacement planner. It preserves existing logical assignments, identifies verification obligations and never authorises live cut-over or resource retirement. Production ownership and crash-safe coordination remain outstanding.
 
-### Offline drift assessment (Part 6.4)
+### Offline drift assessment (offline drift assessment)
 
 `nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. Production drift correction remains blocked pending authorised live repair and replacement, adversarial ownership acceptance and crash-safe execution guarantees.
 
-Part 6 Increment 6.5 adds `nord_tools_internal/nordvpn_reconciliation_audit.py`, a read-only cross-contract audit of reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; privileged ownership and crash-safe operational integration remain outstanding.
+live reconciliation The cross-contract audit adds `nord_tools_internal/nordvpn_reconciliation_audit.py`, a read-only cross-contract audit of reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; privileged ownership and crash-safe operational integration remain outstanding.
 
-The five-increment Part 6 offline programme remains a non-authorising planning layer. Separate production executors now provide verified boot creation, generation replacement, confirmed cleanup and constrained interrupted-operation recovery. General live update/drift repair and privileged replacement/interruption acceptance remain outstanding. See `TODO.md` for the remaining operational and acceptance requirements.
+The five-increment live reconciliation offline programme remains a non-authorising planning layer. Separate production executors now provide verified boot creation, generation replacement, confirmed cleanup and constrained interrupted-operation recovery. General live update/drift repair and privileged replacement/interruption acceptance remain outstanding. See `TODO.md` for the remaining operational and acceptance requirements.
 
-### Part 8 production authority preflight
+### privileged authority production authority preflight
 
-`nord_tools_internal.nordvpn_authority_preflight.inspect_authority_directory` provides a read-only inspection of a dedicated privileged state directory and its path components. It rejects symlinks, writable ancestors, unexpected ownership, and unsafe state entries. The report is advisory and explicitly non-authorising: even a trusted directory cannot establish crash-persistent kernel ownership or permit mutation without independent live verification and operation-specific coordination. The cooperating-process Part 8.1.6 lifecycle matrix has passed; adversarial privileged acceptance remains outstanding. Part 9 is reserved for the final project-wide documentation, security and consistency reconciliation.
+`nord_tools_internal.nordvpn_authority_preflight.inspect_authority_directory` provides a read-only inspection of a dedicated privileged state directory and its path components. It rejects symlinks, writable ancestors, unexpected ownership, and unsafe state entries. The report is advisory and explicitly non-authorising: even a trusted directory cannot establish crash-persistent kernel ownership or permit mutation without independent live verification and operation-specific coordination. The cooperating-process privileged lifecycle acceptance lifecycle matrix has passed; adversarial privileged acceptance remains outstanding. project-wide reconciliation is reserved for the final project-wide documentation, security and consistency reconciliation.
 
-### Part 8.1 authority preflight boundary
+### privileged lifecycle authority authority preflight boundary
 
 The read-only authority-directory inspector now traverses path components using opened directory descriptors and refuses symlink traversal, writable ancestors, unsafe file modes and multiply linked state files. Its report is diagnostic, not an authorisation token: directory renames after inspection, independent kernel resource identity and operation-specific locking remain production blockers.
 
-### Part 8.1 lifecycle execution lock
+### privileged lifecycle authority lifecycle execution lock
 
 Restoration, cleanup and recovery share a stable journal-specific execution lock. The lock is opened relative to the journal directory and checked for safe ownership, permissions and identity after acquisition. This prevents cooperating executors from interleaving their lifecycle operations; it does not authorise kernel mutations, make separate state stores atomic, or protect against a hostile actor with directory replacement privileges. The remaining authority and adversarial tests are tracked in TODO.md.
 
-### Part 8.1.4 namespace descriptor lifetime
+### kernel mutation authority namespace descriptor lifetime
 
 The production cleanup adapter now releases its opened namespace descriptor on both successful retirement and ownership-verification refusal. This prevents a failed retirement from retaining a privileged reference to a namespace. It does not solve the pathname replacement race between verification and the kernel deletion command, or establish independent authority over host interfaces. Those issues remain blockers for completion of 8.1.4 and adversarial acceptance.
 
-### Part 8.1.4 additional namespace verification
+### kernel mutation authority additional namespace verification
 
 Namespace ownership verification now rejects invalid bound names and non-regular held descriptors before any retirement command. These checks do not eliminate pathname replacement between verification and deletion; kernel mutation authority remains incomplete.
 
-### Part 8.1.4 host-interface mutation boundary
+### kernel mutation authority host-interface mutation boundary
 
-The cleanup executor checks the live host-interface name and index mapping before issuing a Linux rtnetlink `RTM_DELLINK` request by numeric interface index, requiring an explicit kernel acknowledgement. This avoids userspace name re-resolution at deletion, but does not close the race if a privileged adversary replaces and reuses the index before the kernel processes the request. Namespace retirement also remains pathname-based; neither mutation is claimed to be safe against a concurrent privileged adversary. A kernel-supported identity-bound deletion mechanism or a justified exclusive authority model is required before Part 8.1.4 can be accepted.
+The cleanup executor checks the live host-interface name and index mapping before issuing a Linux rtnetlink `RTM_DELLINK` request by numeric interface index, requiring an explicit kernel acknowledgement. This avoids userspace name re-resolution at deletion, but does not close the race if a privileged adversary replaces and reuses the index before the kernel processes the request. Namespace retirement also remains pathname-based; neither mutation is claimed to be safe against a concurrent privileged adversary. A kernel-supported identity-bound deletion mechanism or a justified exclusive authority model is required before this mutation could be safe against concurrent privileged replacement.
 
-### Part 8.1.4 namespace-directory mutation precondition
+### kernel mutation authority namespace-directory mutation precondition
 
-Before retiring a namespace, the executor requires `/run/netns` to be a root-owned directory without group/other write permission, and checks its opened descriptor against the current pathname. An unsafe or unavailable directory refuses retirement. This check does not protect against a privileged mount replacement between inspection and `ip netns del`, and it is not a substitute for an exclusive authority model or an atomic kernel mutation mechanism. Part 8.1.4 remains open.
+Before retiring a namespace, the executor requires `/run/netns` to be a root-owned directory without group/other write permission, and checks its opened descriptor against the current pathname. An unsafe or unavailable directory refuses retirement. This check does not protect against a privileged mount replacement between inspection and `ip netns del`, and it is not a substitute for an exclusive authority model or an atomic kernel mutation mechanism. kernel mutation authority remains open.
 
-### Part 8.1 kernel namespace type attestation
+### privileged lifecycle authority kernel namespace type attestation
 
 The ownership verifier now queries the Linux namespace filesystem (`NS_GET_NSTYPE`) through the held descriptor and requires `CLONE_NEWNET`. A matching path, inode and regular-file mode cannot substitute for kernel confirmation that the descriptor actually identifies a network namespace. This attestation does not make `ip netns del NAME` an identity-bound operation: a concurrent process with mount authority can still replace the pathname after verification. Namespace retirement against such an adversary remains blocked pending an exclusive-authority design or an identity-bound kernel primitive.
 
-### Part 8.1 privileged authority boundary
+### privileged lifecycle authority privileged authority boundary
 
-Privileged lifecycle operations require an administratively controlled host authority domain: the shared execution lock serialises cooperating Nord Tools processes, and the lock directory must belong to the effective execution identity without group or other write access. The kernel does not provide an atomic ownership compare-and-delete operation for the namespace pathname or interface index used here. An independent privileged actor with mount or network administration capabilities can replace those resources between verification and deletion. This risk is not eliminated by the checks in Part 8.1.4. See `docs/PRIVILEGED-AUTHORITY-BOUNDARY.md` for the supported deployment boundary and outstanding adversarial acceptance.
+Privileged lifecycle operations require an administratively controlled host authority domain: the shared execution lock serialises cooperating Nord Tools processes, and the lock directory must belong to the effective execution identity without group or other write access. The kernel does not provide an atomic ownership compare-and-delete operation for the namespace pathname or interface index used here. An independent privileged actor with mount or network administration capabilities can replace those resources between verification and deletion. This risk is not eliminated by the checks in kernel mutation authority. See `docs/PRIVILEGED-AUTHORITY-BOUNDARY.md` for the supported deployment boundary and outstanding adversarial acceptance.
 
-### Part 7 and Part 8.1.6 privileged acceptance
+### startup restoration and cleanup and privileged lifecycle acceptance privileged acceptance
 
-On 3 November 2026, the standalone Part 7 matrix and the complete five-stage Part 8.1.6 runner passed on the Arch Linux test host. The runner passed ownership preflight, startup restoration, confirmed cleanup, deterministic interrupted-operation recovery and a fresh integrated Part 7 matrix. Part 7 restored two pinned profiles, proved transient policy inert, interrupted recreation after durable intent but before kernel mutation, recovered both profiles, retired only the selected profile, verified repeat convergence, performed a final ownership-aware teardown and confirmed that host IPv4/IPv6 routes, nftables configuration and resolver contents were unchanged.
+On 3 November 2026, the standalone startup restoration and cleanup matrix and the complete five-stage privileged lifecycle acceptance runner passed on the Arch Linux test host. The runner passed ownership preflight, startup restoration, confirmed cleanup, deterministic interrupted-operation recovery and a fresh integrated startup restoration and cleanup matrix. startup restoration and cleanup restored two pinned profiles, proved transient policy inert, interrupted recreation after durable intent but before kernel mutation, recovered both profiles, retired only the selected profile, verified repeat convergence, performed a final ownership-aware teardown and confirmed that host IPv4/IPv6 routes, nftables configuration and resolver contents were unchanged.
 
-The final probes account for fixture effects without weakening the host checks. IPv4 comparison ignores only exact kernel-connected fixture routes on interfaces whose live indices match their creation-time bindings, including their expected removal during cleanup. Nftables comparison ignores packet and byte readings only. Namespace absence checks are scoped to the current fixture, so unrelated host namespaces are preserved. Failed probes retain their raw host snapshots and ownership stores; successful Part 7 runs retire the surviving fixture before deleting those stores.
+The final probes account for fixture effects without weakening the host checks. IPv4 comparison ignores only exact kernel-connected fixture routes on interfaces whose live indices match their creation-time bindings, including their expected removal during cleanup. Nftables comparison ignores packet and byte readings only. Namespace absence checks are scoped to the current fixture, so unrelated host namespaces are preserved. Failed probes retain their raw host snapshots and ownership stores; successful startup restoration and cleanup runs retire the surviving fixture before deleting those stores.
 
 Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after arbitrary partial kernel provisioning. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model; real-tunnel DNS confinement, fail-closed routing, live update and replacement, and application routing remain open in `TODO.md`.
 
