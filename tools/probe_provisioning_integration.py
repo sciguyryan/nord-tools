@@ -25,6 +25,11 @@ STAGES = (
         "probe_wireguard_dns_acceptance.py",
         ("--run-privileged",),
     ),
+    (
+        "single production-owned WireGuard profile confinement",
+        "probe_production_wireguard_confinement.py",
+        ("--run-privileged",),
+    ),
 )
 
 
