@@ -475,6 +475,130 @@ def upload_source():
         raise RuntimeError("Unable to upload the source tree: " + detail)
 
 
+# Only this probe currently declares retained diagnostic directories. The guest
+# owns the source paths, but never the destination or the set of permitted files.
+EVIDENCE_PREFIX = "nt-production-wg-"
+EVIDENCE_LIMIT = 4 * 1024 * 1024
+EVIDENCE_FILES = 40
+
+# Executed in the guest as root. It exports a deliberately restricted, redacted
+# representation, never private key files, arbitrary symlinks or raw archives.
+GUEST_EVIDENCE_SCRIPT = r"""
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+prefix = 'nt-production-wg-'
+root = Path('/tmp')
+limit = 4 * 1024 * 1024
+secret = re.compile(r'(secret|private|password|credential|token|auth|key)', re.I)
+
+def scrub(value):
+    if isinstance(value, dict):
+        return {str(k): ('[REDACTED]' if secret.search(str(k)) else scrub(v)) for k, v in value.items()}
+    if isinstance(value, list):
+        return [scrub(item) for item in value]
+    if isinstance(value, str) and ('PRIVATE KEY' in value or 'BEGIN ' in value):
+        return '[REDACTED]'
+    return value
+
+requested = sys.argv[1] if len(sys.argv) > 1 else ''
+if requested:
+    candidate = Path(requested)
+    if candidate.parent != root or not candidate.name.startswith(prefix):
+        raise SystemExit('Invalid guest evidence directory')
+    candidates = [candidate]
+else:
+    candidates = sorted((p for p in root.iterdir() if p.name.startswith(prefix) and p.is_dir() and not p.is_symlink()),
+                        key=lambda p: p.stat().st_mtime, reverse=True)[:1]
+if not candidates:
+    raise SystemExit('No retained production WireGuard evidence found')
+folder = candidates[0]
+if folder.is_symlink() or not folder.is_dir():
+    raise SystemExit('Evidence directory is not a real directory')
+result = {'guest_directory': str(folder), 'files': {}, 'excluded': []}
+size = 0
+for entry in sorted(folder.iterdir()):
+    if entry.is_symlink() or not entry.is_file() or entry.suffix != '.json' or secret.search(entry.name):
+        result['excluded'].append(entry.name)
+        continue
+    if len(result['files']) >= 40 or entry.stat().st_size > limit or size + entry.stat().st_size > limit:
+        result['excluded'].append(entry.name + ' (limit)')
+        continue
+    try:
+        # O_NOFOLLOW prevents a swapped symlink being opened during collection.
+        fd = os.open(entry, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        try:
+            with os.fdopen(fd, 'rb') as stream:
+                raw = stream.read(limit + 1)
+        except Exception:
+            raise
+        if len(raw) > limit:
+            raise ValueError('File exceeds size limit')
+        result['files'][entry.name] = scrub(json.loads(raw.decode('utf-8')))
+        size += len(raw)
+    except (OSError, UnicodeError, ValueError) as exc:
+        result['excluded'].append(entry.name + ' (unreadable or invalid JSON)')
+print(json.dumps(result, ensure_ascii=True))
+"""
+
+
+def export_evidence(guest_directory=None):
+    """Export redacted JSON evidence into a private parent-side temporary folder."""
+    if not readiness().startswith("Ready:"):
+        raise RuntimeError("Guest is not ready for evidence collection")
+    args = ["sudo", "-n", "python", "-c", GUEST_EVIDENCE_SCRIPT]
+    if guest_directory:
+        args.append(guest_directory)
+    result = ssh(*args, timeout=45)
+    if result.returncode:
+        raise RuntimeError("Guest evidence collection failed: " + (result.stderr.strip() or "no evidence"))
+    if len(result.stdout) > EVIDENCE_LIMIT * 2:
+        raise RuntimeError("Guest evidence response exceeds the collection limit")
+    payload = json.loads(result.stdout)
+    files = payload.get("files")
+    if not isinstance(files, dict) or len(files) > EVIDENCE_FILES:
+        raise RuntimeError("Guest evidence response is invalid")
+    destination = Path(tempfile.mkdtemp(prefix="nord-tools-acceptance-"))
+    destination.chmod(0o700)
+    for name, contents in files.items():
+        if not isinstance(name, str) or not re.fullmatch(r"[A-Za-z0-9_.-]+\.json", name) or name.startswith("."):
+            raise RuntimeError("Guest evidence contains an invalid filename")
+        target = destination / name
+        with target.open("x", encoding="utf-8") as output:
+            json.dump(contents, output, indent=2, ensure_ascii=False)
+            output.write("\n")
+        target.chmod(0o600)
+    manifest = destination / "manifest.json"
+    manifest.write_text(
+        json.dumps(
+            {
+                "guest_directory": payload.get("guest_directory"),
+                "exported": sorted(files),
+                "excluded": payload.get("excluded", []),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    manifest.chmod(0o600)
+    return f"Redacted guest evidence exported to: {destination}"
+
+
+def export_failure_evidence(output):
+    """Best-effort export without masking the original acceptance failure."""
+    matches = re.findall(r"FAILED RUN EVIDENCE RETAINED: (/tmp/nt-production-wg-[A-Za-z0-9_-]+)", output)
+    if not matches:
+        return "No registered guest evidence directory was reported."
+    try:
+        return export_evidence(matches[-1])
+    except (OSError, RuntimeError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as exc:
+        return f"Evidence export failed (original acceptance failure preserved): {exc}"
+
+
 def run_tests():
     """Upload this checkout, run quality gates, then run privileged acceptance."""
     ready = readiness()
@@ -544,14 +668,18 @@ sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged 
             tail = tail[-30:]
         returncode = process.wait()
         if returncode:
-            raise RuntimeError(f"Acceptance tests failed with exit {returncode}. Last output:\n" + "\n".join(tail))
+            evidence = export_failure_evidence("\n".join(tail))
+            raise RuntimeError(
+                f"Acceptance tests failed with exit {returncode}. Last output:\n" + "\n".join(tail) + "\n" + evidence
+            )
         return "Acceptance tests passed in the disposable guest."
     result = subprocess.run(
         ssh_args("bash", "-s"), input=command, text=True, capture_output=True, check=False, timeout=7200
     )
     output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
     if result.returncode:
-        raise RuntimeError(f"Acceptance tests failed with exit {result.returncode}:\n{output}")
+        evidence = export_failure_evidence(output)
+        raise RuntimeError(f"Acceptance tests failed with exit {result.returncode}:\n{output}\n{evidence}")
     return f"Acceptance tests passed in the disposable guest.\n{output}"
 
 
@@ -646,6 +774,7 @@ def gui():
                 ("Console", console),
                 ("SSH terminal", terminal),
                 ("Run acceptance tests", run_tests),
+                ("Export failure evidence", export_evidence),
                 ("Verify image cache", cache_image),
                 ("Delete VM", remove),
             ]
@@ -731,6 +860,7 @@ def main():
             "console",
             "ssh",
             "test",
+            "evidence",
             "remove",
             "rebuild",
             "wait",
@@ -748,6 +878,7 @@ def main():
         "console": console,
         "ssh": terminal,
         "test": run_tests,
+        "evidence": export_evidence,
         "remove": remove,
         "rebuild": rebuild,
         "wait": wait_ready,

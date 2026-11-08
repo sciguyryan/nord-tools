@@ -15,3 +15,9 @@ The official Arch Linux cloud QCOW2 image is cached in `${XDG_CACHE_HOME:-$HOME/
 The CLI supports `status`, `address`, `ready`, `wait`, `provision`, `rebuild`, `start`, `stop`, `console`, `ssh`, `test`, `cache` and `remove`. CLI `rebuild` is destructive and intended for deliberate, scripted use; the GUI requests confirmation. The script requires a working system libvirt connection and permission to manage it. `address` reports only an IPv4 address associated with the configured guest MAC; SSH itself always uses the loopback passt endpoint.
 
 All privileged acceptance commands run inside the disposable guest. A failed probe stops the matrix and retains its guest-side evidence for inspection. The host remains outside the tested network topology and is not used as the privileged acceptance target.
+
+## Failure evidence export
+
+When a privileged production WireGuard probe fails and reports a retained `/tmp/nt-production-wg-*` directory, `test` attempts to export a restricted, redacted set of JSON evidence files to a private `/tmp/nord-tools-acceptance-*` directory on the parent. The guest remains available and the original failure is never replaced by an export failure. Private keys and other non-JSON files are excluded. Treat exported diagnostics as potentially sensitive despite redaction and review them before sharing.
+
+Run `python scripts/acceptance-manager.py evidence` while the guest is running to retrieve the latest retained production WireGuard evidence independently. This command does not rebuild or reset the guest. The exported manifest lists omitted files; the original guest evidence remains in place for further inspection.
