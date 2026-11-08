@@ -549,10 +549,22 @@ def export_evidence(guest_directory=None):
     """Export redacted JSON evidence into a private parent-side temporary folder."""
     if not readiness().startswith("Ready:"):
         raise RuntimeError("Guest is not ready for evidence collection")
-    args = ["sudo", "-n", "python", "-c", GUEST_EVIDENCE_SCRIPT]
+    # Send the script over SSH stdin rather than through remote-shell -c quoting.
+    # The remote command is a fixed single-line string; the optional path is
+    # validated before inclusion and passed as a separate Python argument.
+    if guest_directory and not re.fullmatch(r"/tmp/nt-production-wg-[A-Za-z0-9_-]+", guest_directory):
+        raise RuntimeError("Invalid guest evidence directory")
+    remote_command = "sudo -n python -"
     if guest_directory:
-        args.append(guest_directory)
-    result = ssh(*args, timeout=45)
+        remote_command += " " + guest_directory
+    result = subprocess.run(
+        ssh_args(remote_command),
+        input=GUEST_EVIDENCE_SCRIPT,
+        text=True,
+        capture_output=True,
+        check=False,
+        timeout=45,
+    )
     if result.returncode:
         raise RuntimeError("Guest evidence collection failed: " + (result.stderr.strip() or "no evidence"))
     if len(result.stdout) > EVIDENCE_LIMIT * 2:

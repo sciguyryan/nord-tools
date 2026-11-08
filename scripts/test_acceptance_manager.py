@@ -135,8 +135,8 @@ def test_evidence_export_rejects_guest_filename_traversal(manager, monkeypatch, 
     monkeypatch.setattr(manager.tempfile, "mkdtemp", lambda **_kwargs: str(tmp_path / "export"))
     (tmp_path / "export").mkdir()
     monkeypatch.setattr(
-        manager,
-        "ssh",
+        manager.subprocess,
+        "run",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=0, stdout='{"files": {"../escape.json": {"x": 1}}}', stderr=""
         ),
@@ -151,8 +151,8 @@ def test_evidence_export_writes_private_redacted_files(manager, monkeypatch, tmp
     monkeypatch.setattr(manager.tempfile, "mkdtemp", lambda **_kwargs: str(tmp_path / "export"))
     (tmp_path / "export").mkdir()
     monkeypatch.setattr(
-        manager,
-        "ssh",
+        manager.subprocess,
+        "run",
         lambda *_args, **_kwargs: SimpleNamespace(
             returncode=0,
             stdout='{"guest_directory": "/tmp/nt-production-wg-abc", "files": {"startup.json": {"safe": 1}}, "excluded": ["client.key"]}',
@@ -162,3 +162,39 @@ def test_evidence_export_writes_private_redacted_files(manager, monkeypatch, tmp
     assert "Redacted guest evidence exported" in manager.export_evidence()
     assert (tmp_path / "export" / "startup.json").is_file()
     assert (tmp_path / "export" / "startup.json").stat().st_mode & 0o777 == 0o600
+
+
+def test_evidence_export_sends_script_on_stdin(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: cloud-init completed successfully")
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return SimpleNamespace(returncode=1, stdout="", stderr="deliberate stop")
+
+    monkeypatch.setattr(manager.subprocess, "run", fake_run)
+    with pytest.raises(RuntimeError, match="deliberate stop"):
+        manager.export_evidence("/tmp/nt-production-wg-test")
+    assert captured["args"][-1] == "sudo -n python - /tmp/nt-production-wg-test"
+    assert captured["kwargs"]["input"] == manager.GUEST_EVIDENCE_SCRIPT
+    assert captured["kwargs"]["text"] is True
+
+
+def test_evidence_export_rejects_untrusted_guest_path(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: cloud-init completed successfully")
+    with pytest.raises(RuntimeError, match="Invalid guest evidence directory"):
+        manager.export_evidence("/tmp/nt-production-wg-safe;touch /tmp/unsafe")
+
+
+def test_evidence_collector_executes_from_stdin(manager):
+    import subprocess
+
+    result = subprocess.run(
+        ["sh", "-c", "python -"],
+        input="import json\nprint(json.dumps({'ok': True}))\n",
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+    assert result.stdout.strip() == '{"ok": true}'
