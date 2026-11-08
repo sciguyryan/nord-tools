@@ -18,7 +18,7 @@ python nord_tools.py manage plan --policy examples/vpn-policy.json
 python nord_tools.py namespace-probe
 ```
 
-The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The entry point includes explicitly authorised provisioning, generation replacement, recovery and registered-application launch commands. General in-place live updates, host-domain default protection and automatic default-server switching remain not implemented.
+The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The entry point includes explicitly authorised provisioning, generation replacement, recovery and registered-application launch commands. General in-place live updates and automatic default-server switching remain unimplemented. Host-domain default protection has a narrowly scoped executable lifecycle, but its complete privileged acceptance remains outstanding.
 
 ## What works today
 
@@ -39,18 +39,18 @@ The internal lifecycle modules provide permission-restricted atomic journal pers
 
 ## Tunnel management implementation status
 
-The ownership, restoration, cleanup and recovery executors for pinned provider plans exist and are offline-tested, but **the manager is not yet ready for unrestricted general production use**. The following work remains before Nord Tools can safely manage multiple live VPN connections:
+The ownership, restoration, cleanup and recovery executors for pinned provider plans have automated and scoped privileged acceptance, but **the manager is not yet ready for unrestricted general production use**. The table distinguishes implemented capabilities from the remaining integrated or platform-specific evidence:
 
 | Area | Current state | Required before live use |
 | --- | --- | --- |
 | Tunnel provisioning | Pinned-provider boot provisioning through durable creation intents, creation-time owner records and the privileged namespace, isolation, routing and WireGuard primitives | Provider credentials acquisition, fastest and country selection at boot, and real-tunnel endpoint handling |
-| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance; restored namespaces install the fail-closed firewall before any traffic configuration | Validate fail-closed IPv4/IPv6 routing, DNS confinement and underlay exceptions using real tunnels |
-| Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Registered launch gate and explicit direct mode implemented; broader desktop integration and general leak-prevention acceptance remain outstanding |
+| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance; restored namespaces install the fail-closed firewall before any traffic configuration | Validate the combined production-installed WireGuard, firewall, dual-stack routes and resolver path; separate real-tunnel DNS and underlay confinement probes have passed |
+| Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Accept the actual registered VPN-bound launch-to-packet path and common desktop integration; direct-mode launch and separate application lifecycle probes have privileged evidence |
 | Ownership and reconciliation | Immutable creation-time owner bindings, fresh preflight verification, read-only convergence classification, restoration and cleanup executors | Hostile privileged mutation remains outside the authority model; general in-place live updates are not authorised |
-| Replacement and recovery | Generation-scoped provisioning, verified durable cut-over, launch selection, leases and old-generation retirement; conservative operation-intent recovery remains the kernel mutation foundation | Final privileged generation-replacement and failure-injection acceptance against the current source |
-| Startup and persistence | `manage startup-install` renders the systemd unit, and `restore-startup` runs the boot executor with recovery; privileged restoration acceptance passed | The host-domain default profile's protective routing |
+| Replacement and recovery | Generation-scoped provisioning, verified durable cut-over, launch selection, leases and old-generation retirement; conservative operation-intent recovery remains the kernel mutation foundation | Maintain generation replacement regression evidence; combined VPN-bound application and packet acceptance remains outstanding |
+| Startup and persistence | `manage startup-install` renders the systemd unit, and `restore-startup` runs the boot executor with recovery; privileged restoration acceptance passed | Integrated host-domain protection, packet confinement and real-reboot acceptance; the narrowly scoped host executor exists |
 | Cleanup | Ownership-aware `cleanup` and `clear-ownership` executors with dry-run plans, verified deletion and store-reset archives; privileged cleanup acceptance passed | Production integration with live update and replacement authorities |
-| Integration and acceptance | Automated tests, the privileged startup restoration and cleanup matrix and the five-stage privileged lifecycle acceptance lifecycle matrix pass on the Arch Linux test host | Official NordVPN client coexistence checks, real-tunnel leak prevention and adversarial ownership testing |
+| Integration and acceptance | Automated tests, the privileged startup restoration and cleanup matrix and the five-stage privileged lifecycle acceptance lifecycle matrix pass on the Arch Linux test host | Supported-platform compatibility, integrated production tunnel leak prevention and cooperating-process failure/ownership tests; independently privileged hostile mutators are outside the release boundary |
 
 `manage graph` depicts **configured intent**, not live connectivity. Likewise, `manage cleanup-plan` and `manage transaction-plan` are advisory; they do not execute network changes. These boundaries apply even if a saved policy is persistent.
 
@@ -387,7 +387,7 @@ Compare the reports offline with `python tools/compare_sampling.py --fixed fixed
 
 ## Routing policy and management diagnostics
 
-The proposed default-VPN and per-application routing architecture is documented in [docs/VPN-ROUTING-DESIGN.md](docs/VPN-ROUTING-DESIGN.md). An offline default-optimisation preview is available through `nordvpn_policy.py`; it reads an existing versioned benchmark report and **does not** connect, disconnect or modify networking. Independent application tunnels and automatic switching are not implemented yet.
+The proposed default-VPN and per-application routing architecture is documented in [docs/VPN-ROUTING-DESIGN.md](docs/VPN-ROUTING-DESIGN.md). An offline default-optimisation preview is available through `nordvpn_policy.py`; it reads an existing versioned benchmark report and **does not** connect, disconnect or modify networking. Pinned independent application tunnels and explicit registered launch operations exist; integrated VPN-bound launch-to-packet acceptance and automatic switching remain outstanding.
 
 ### Offline ownership audit
 
@@ -624,7 +624,7 @@ Only pinned tunnel plans are provisioned, credentials travel through `LoadCreden
 
 The supported entry point remains `python nord_tools.py`. Lifecycle, identity, discovery, reconciliation and ownership implementation modules now reside in `nord_tools_internal/`; they are not standalone user commands. Development and privileged acceptance probes remain in `tools/`. Existing command-line options and the privileged namespace smoke probe retain their entry points.
 
-recovery triage establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. Later startup restoration and cleanup and privileged lifecycle acceptance acceptance covers deterministic interruption before the first kernel creation callback, but does not prove safe deletion under concurrent privileged name replacement or recovery after arbitrary partial kernel provisioning.
+recovery triage establishes offline lifecycle and operation-intent records, read-only Linux evidence correlation, inter-process journal locking and process-bound disposable namespace identity checks. The privileged normal-operation namespace smoke test passed on Arch Linux, including confirmation that no named namespaces remained. Later startup restoration and cleanup and privileged lifecycle acceptance cover deterministic interruption before the first kernel creation callback, but does not prove safe deletion under concurrent privileged name replacement or recovery after arbitrary partial kernel provisioning.
 
 ## WireGuard provisioning development
 
@@ -760,7 +760,7 @@ The disposable DNS packet probe accepts a synchronous `EPERM` from the packet ge
 
 ### Experimental namespace resolver installation
 
-`nord_tools_internal.nordvpn_resolver_install` can exclusively create a namespace-specific `/etc/netns/NAME/resolv.conf` from a validated `NamespaceResolverPolicy`. Linux `ip netns exec` uses this file as the resolver configuration for processes launched through that namespace mechanism. The installer refuses pre-existing directories, symlinked or writable resolver roots, and unexpected cleanup state. It does not modify the host's `/etc/resolv.conf` and is not yet integrated into the privileged VPN lifecycle. Callers must own the namespace, ensure processes have stopped before cleanup, and treat the installation as unverified until namespace execution, route confinement and resolver behaviour are independently tested. Filesystem races with untrusted privileged actors are outside this preliminary helper's guarantees.
+`nord_tools_internal.nordvpn_resolver_install` can exclusively create a namespace-specific `/etc/netns/NAME/resolv.conf` from a validated `NamespaceResolverPolicy`. Linux `ip netns exec` uses this file as the resolver configuration for processes launched through that namespace mechanism. The installer refuses pre-existing directories, symlinked or writable resolver roots, and unexpected cleanup state. It does not modify the host's `/etc/resolv.conf` and is also used by the pinned restoration provisioning path; standalone installation does not itself establish packet confinement. Callers must own the namespace, ensure processes have stopped before cleanup, and distinguish the accepted namespace resolver visibility and real WireGuard DNS probes from the outstanding combined production-installed application DNS test. Filesystem races with untrusted privileged actors are outside this preliminary helper's guarantees.
 
 ### Disposable namespace resolver visibility probe
 
