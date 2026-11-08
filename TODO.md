@@ -8,11 +8,7 @@ The release target is the **cooperating-process authority model** described in `
 
 ## Current acceptance baseline and limits
 
-The 7 November 2026 disposable Arch Linux guest run completed 1,135 pytest tests and 354 subtests, Ruff lint and formatting, Markdown lint and the privileged lifecycle, application, real WireGuard, dual-stack and DNS probe suites. The acceptance manager in `scripts/acceptance-manager.py` provisions the guest with passt userspace networking. This is evidence for the executed probe scopes, **not** for a combined production-installed tunnel/firewall/resolver application path, host-domain default protection, common desktop integration or every deployment environment. Maintain a current, source-linked evidence matrix in Phase A rather than repeating historical completion notes in this file.
-
-## Phase A: Acceptance evidence reconciliation
-
-- [ ] **A3: Publish a release acceptance matrix.** Distinguish static checks, disposable privileged acceptance and platform-specific acceptance. Record the exact configuration and safety scope each test demonstrates, identify release blockers and keep failed or unverified guarantees visible.
+The 7 November 2026 disposable Arch Linux guest run completed 1,135 pytest tests and 354 subtests, Ruff lint and formatting, Markdown lint and the privileged lifecycle, application, real WireGuard, dual-stack and DNS probe suites. The acceptance manager in `scripts/acceptance-manager.py` provisions the guest with passt userspace networking. This is evidence for the executed probe scopes, **not** for a combined production-installed tunnel/firewall/resolver application path, host-domain default protection, common desktop integration or every deployment environment. The source-linked QA inventory is maintained in [`docs/RELEASE-ACCEPTANCE-MATRIX.md`](docs/RELEASE-ACCEPTANCE-MATRIX.md); it must be updated as new evidence is accepted.
 
 ## Phase B: Integrated production VPN confinement
 
