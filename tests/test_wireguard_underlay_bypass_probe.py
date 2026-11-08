@@ -48,3 +48,31 @@ def test_underlay_probe_rejects_delivered_packet():
         pytest.raises(probe.DNSAcceptanceError, match="escaped to the underlay"),
     ):
         probe._verify_application_underlay_refusal("client", "server", "underlay")
+
+
+def test_endpoint_exception_probe_rejects_wrong_port_delivery():
+    process = _listener()
+    process.wait.return_value = 3
+    with (
+        patch.object(probe.subprocess, "Popen", return_value=process),
+        patch.object(probe.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")),
+        pytest.raises(probe.DNSAcceptanceError, match="wrong port"),
+    ):
+        probe._verify_endpoint_exception_is_port_bound("client", "server")
+
+
+def test_endpoint_exception_probe_accepts_refusal():
+    with (
+        patch.object(probe.subprocess, "Popen", return_value=_listener()),
+        patch.object(probe.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")),
+    ):
+        probe._verify_endpoint_exception_is_port_bound("client", "server")
+
+
+def test_endpoint_exception_probe_rejects_sender_failure():
+    with (
+        patch.object(probe.subprocess, "Popen", return_value=_listener()),
+        patch.object(probe.subprocess, "run", return_value=subprocess.CompletedProcess([], 2, "", "invalid")),
+        pytest.raises(probe.DNSAcceptanceError, match="invalid"),
+    ):
+        probe._verify_endpoint_exception_is_port_bound("client", "server")

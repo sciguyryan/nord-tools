@@ -123,6 +123,65 @@ except OSError as exc:
             process.stderr.close()
 
 
+def _verify_endpoint_exception_is_port_bound(namespace: str, server: str) -> None:
+    """Reject application traffic to the legitimate endpoint on an unauthorised port.
+
+    This complements the different-destination bypass probe. A firewall that
+    allows all UDP to the WireGuard server would otherwise pass that probe.
+    """
+    listener = """import socket, sys
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.bind(('198.18.1.1', 51002))
+sock.settimeout(3)
+print('READY', flush=True)
+try:
+    sock.recvfrom(1024)
+except socket.timeout:
+    sys.exit(0)
+sys.exit(3)
+"""
+    sender = """import errno, socket, sys
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+try:
+    sock.sendto(b'nt-wrong-port', ('198.18.1.1', 51002))
+except OSError as exc:
+    if exc.errno not in (errno.EPERM, errno.EACCES, errno.ENETUNREACH, errno.EHOSTUNREACH):
+        print(str(exc), file=sys.stderr)
+        sys.exit(2)
+"""
+    process = subprocess.Popen(
+        ["ip", "netns", "exec", server, sys.executable, "-I", "-c", listener],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        if process.stdout is None or process.stdout.readline().strip() != "READY":
+            raise DNSAcceptanceError("endpoint port-refusal listener failed to start")
+        result = subprocess.run(
+            ["ip", "netns", "exec", namespace, sys.executable, "-I", "-c", sender],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+        if result.returncode:
+            raise DNSAcceptanceError(
+                "endpoint port-refusal sender failed: " + (result.stderr.strip() or str(result.returncode))
+            )
+        if process.wait(timeout=6):
+            raise DNSAcceptanceError("application UDP escaped through the endpoint exception on the wrong port")
+        print("PASS: WireGuard endpoint exception refuses application UDP on other ports")
+    finally:
+        if process.poll() is None:
+            process.kill()
+            process.wait(timeout=5)
+        if process.stdout:
+            process.stdout.close()
+        if process.stderr:
+            process.stderr.close()
+
+
 def _exchange_dns_packets(client: str, server: str) -> None:
     """Exchange DNS-shaped UDP datagrams over both real WireGuard families."""
     server_code = """import select, socket, sys
@@ -233,6 +292,7 @@ def experiment(token: str) -> None:
         print("PASS: namespace process observes the pinned resolver configuration")
         _exchange_dns_packets(client, server)
         _verify_application_underlay_refusal(client, server, client_link)
+        _verify_endpoint_exception_is_port_bound(client, server)
         # The underlay must not become an alternative route after the tunnel fails.
         run("ip", "-n", client, "link", "set", "wgtest", "down")
         _require_no_underlay_fallback(client, client_link)
