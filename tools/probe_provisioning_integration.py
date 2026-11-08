@@ -20,6 +20,11 @@ STAGES = (
     ("independent named-profile retirement", "probe_selected_profile_retirement.py", ("--run-privileged",)),
     ("isolated allocation and lease retirement", "probe_isolated_consumer_retirement.py", ("--run-privileged",)),
     ("interruption after durable namespace binding", "probe_recovery.py", ("--after-binding", "--run-privileged")),
+    (
+        "real WireGuard dual-stack DNS and firewall confinement",
+        "probe_wireguard_dns_acceptance.py",
+        ("--run-privileged",),
+    ),
 )
 
 

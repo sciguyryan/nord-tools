@@ -38,6 +38,7 @@ def test_matrix_contains_distinct_authority_and_isolation_checks():
         "probe_selected_profile_retirement.py",
         "probe_isolated_consumer_retirement.py",
         "probe_recovery.py",
+        "probe_wireguard_dns_acceptance.py",
     ]
     for _, filename, arguments in module.STAGES:
         assert (module.ROOT / "tools" / filename).is_file()
@@ -66,7 +67,7 @@ def test_success_requires_all_stages(capsys):
     with patch.object(module.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as runner:
         assert module.run_acceptance(python="python")
     assert runner.call_count == len(module.STAGES)
-    assert "all 4" in capsys.readouterr().out
+    assert "all 5" in capsys.readouterr().out
 
 
 def test_root_confirmation_delegates_to_runner():
@@ -76,3 +77,20 @@ def test_root_confirmation_delegates_to_runner():
     ):
         assert module.main(["--run-privileged"]) == 0
     runner.assert_called_once_with()
+
+
+def test_real_tunnel_stage_follows_authority_and_recovery():
+    """A successful integration run must reach the real tunnel confinement stage."""
+    filenames = [filename for _, filename, _ in module.STAGES]
+    assert filenames[-1] == "probe_wireguard_dns_acceptance.py"
+    assert filenames.index("probe_recovery.py") < filenames.index("probe_wireguard_dns_acceptance.py")
+
+
+def test_real_tunnel_failure_prevents_success_reporting(capsys):
+    """Failure of the final packet stage cannot be hidden by prior successes."""
+    results = [SimpleNamespace(returncode=0) for _ in module.STAGES[:-1]]
+    results.append(SimpleNamespace(returncode=7))
+    with patch.object(module.subprocess, "run", side_effect=results) as runner:
+        assert not module.run_acceptance(python="python")
+    assert runner.call_count == len(module.STAGES)
+    assert "real WireGuard dual-stack DNS and firewall confinement" in capsys.readouterr().err
