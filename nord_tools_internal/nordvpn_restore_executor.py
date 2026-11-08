@@ -189,7 +189,7 @@ def _real_kernel() -> RestoreKernel:
         )
         expected = (
             ("endpoints", f"{peer_public_key}\t{expected_endpoint}\n"),
-            ("allowed-ips", f"{peer_public_key}\t{','.join(specification.peer_allowed_ips)}\n"),
+            ("allowed-ips", f"{peer_public_key}\t{' '.join(specification.peer_allowed_ips)}\n"),
             ("persistent-keepalive", f"{peer_public_key}\t{specification.persistent_keepalive_seconds or 'off'}\n"),
         )
         for field, value in expected:

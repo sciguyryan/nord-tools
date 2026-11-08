@@ -74,6 +74,21 @@ class CompletePeerReadbackTests(unittest.TestCase):
     def test_allowed_ips_mismatch_is_refused(self):
         self.assertFalse(self.verify(self.results(allowed=b"0.0.0.0/0")))
 
+    def test_multiple_allowed_ips_use_script_friendly_space_separation(self):
+        from nord_tools_internal.nordvpn_wireguard_provision import TunnelSpecification
+
+        self.spec = TunnelSpecification(
+            self.spec.namespace,
+            self.spec.interface,
+            self.spec.peer_public_key,
+            self.spec.endpoint_address,
+            self.spec.endpoint_port,
+            self.spec.tunnel_address,
+            ("0.0.0.0/0", "::/0"),
+            self.spec.persistent_keepalive_seconds,
+        )
+        self.assertTrue(self.verify(self.results(allowed=b"0.0.0.0/0 ::/0")))
+
     def test_keepalive_mismatch_is_refused(self):
         self.assertFalse(self.verify(self.results(keepalive=b"off")))
 
