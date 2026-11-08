@@ -479,7 +479,13 @@ def run_tests():
     """Upload this checkout, run quality gates, then run privileged acceptance."""
     ready = readiness()
     if not ready.startswith("Ready:"):
-        raise RuntimeError("Guest is not ready for testing: " + ready)
+        message = "Guest is not ready for testing: " + ready
+        if ready == "Guest is not running":
+            message += (
+                "\nHint: Run 'python scripts/acceptance-manager.py rebuild' "
+                "to create and start a fresh disposable guest, then retry 'test'."
+            )
+        raise RuntimeError(message)
     upload_source()
     command = f"""set -euo pipefail
 cd {REMOTE_ROOT}

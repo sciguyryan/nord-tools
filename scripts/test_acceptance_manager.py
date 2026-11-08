@@ -98,3 +98,17 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     source = Path(__file__).with_name("acceptance-manager.py").read_text(encoding="utf-8")
 
     assert "- [install, -d, -m, '0755', -o, root, -g, root, /etc/netns]" in source
+
+
+@pytest.mark.parametrize(
+    "state",
+    ["Guest is not running", "SSH or cloud-init unavailable: connection refused", "Provisioning failed: broken"],
+)
+def test_test_command_reports_rebuild_hint_only_for_stopped_guest(manager, monkeypatch, state):
+    monkeypatch.setattr(manager, "readiness", lambda: state)
+    monkeypatch.setattr(manager, "upload_source", lambda: pytest.fail("source uploaded despite failed readiness"))
+    with pytest.raises(RuntimeError) as error:
+        manager.run_tests()
+    message = str(error.value)
+    assert state in message
+    assert ("acceptance-manager.py rebuild" in message) == (state == "Guest is not running")
