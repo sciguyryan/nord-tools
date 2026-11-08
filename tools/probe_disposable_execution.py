@@ -54,7 +54,13 @@ def run_probe() -> str:
     public_key = command("wg", "pubkey", input_data=private_key).decode("ascii")
     peer_public_key = command("wg", "pubkey", input_data=peer_private_key).decode("ascii")
     spec = TunnelSpecification(
-        namespace, interface, peer_public_key, "198.51.100.2", 51820, "10.213.240.2/32", ("10.213.240.1/32",)
+        namespace,
+        interface,
+        peer_public_key,
+        "198.51.100.2",
+        51820,
+        ("10.213.240.2/32",),
+        ("10.213.240.1/32",),
     )
     allocation = allocate_identity("interface", interface, "default")
     token = allocation["allocation_id"]

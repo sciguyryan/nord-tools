@@ -25,7 +25,7 @@ class DisposableExecutionTests(unittest.TestCase):
             "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
             "198.51.100.2",
             51820,
-            "10.213.240.2/32",
+            ("10.213.240.2/32",),
             ("10.213.240.1/32",),
         )
         allocation = allocate_identity("interface", self.spec.interface, "default")
@@ -114,7 +114,7 @@ class DisposableExecutionTests(unittest.TestCase):
             self.spec.peer_public_key,
             self.spec.endpoint_address,
             self.spec.endpoint_port,
-            self.spec.tunnel_address,
+            self.spec.tunnel_addresses,
             self.spec.peer_allowed_ips,
         )
         with self.assertRaises(RegistryError):

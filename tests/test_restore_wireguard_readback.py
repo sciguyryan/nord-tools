@@ -42,7 +42,7 @@ class CompletePeerReadbackTests(unittest.TestCase):
             base64.b64encode(bytes(range(32))).decode(),
             "198.51.100.2",
             51820,
-            "10.42.0.2/32",
+            ("10.42.0.2/32",),
             ("10.42.0.1/32",),
             25,
         )
@@ -83,7 +83,7 @@ class CompletePeerReadbackTests(unittest.TestCase):
             self.spec.peer_public_key,
             self.spec.endpoint_address,
             self.spec.endpoint_port,
-            self.spec.tunnel_address,
+            self.spec.tunnel_addresses,
             ("0.0.0.0/0", "::/0"),
             self.spec.persistent_keepalive_seconds,
         )

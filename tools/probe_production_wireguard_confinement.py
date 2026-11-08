@@ -213,15 +213,19 @@ def run_probe() -> None:
             "run_record": str(temporary / "runs.json"),
             "tunnels": {
                 "alpha": {
-                    **tunnel_plan("10.214.10.1", "10.250.0.2/32", 10, peer_public),
+                    **tunnel_plan(
+                        "10.214.10.1",
+                        ("10.250.0.2/32", "fd42:250::2/128"),
+                        10,
+                        peer_public,
+                    ),
                     "peer_allowed_ips": ["0.0.0.0/0", "::/0"],
-                    "tunnel_address": "10.250.0.2/32",
                 }
             },
             "credentials": {"alpha": str(client_key)},
         }
-        # An IPv6 route alone is insufficient. The live IPv6 ping below must
-        # succeed or the probe fails, exposing the production address gap.
+        # Both address families must exchange live packets. Route presence on
+        # its own is not evidence that the peer can return tunnel traffic.
         write(temporary / "startup.json", config)
         restore_boot_state(config)
         attach_underlay_to_peer(config, "alpha", bridge, "10.214.10.1/30")

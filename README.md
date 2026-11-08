@@ -44,7 +44,7 @@ The ownership, restoration, cleanup and recovery executors for pinned provider p
 | Area | Current state | Required before live use |
 | --- | --- | --- |
 | Tunnel provisioning | Pinned-provider boot provisioning through durable creation intents, creation-time owner records and the privileged namespace, isolation, routing and WireGuard primitives | Provider credentials acquisition, fastest and country selection at boot, and real-tunnel endpoint handling |
-| Network isolation | Disposable namespace firewall, DNS route, endpoint-exception and host-integrity probes passed privileged acceptance; restored namespaces install the fail-closed firewall before any traffic configuration | Validate the combined production-installed WireGuard, firewall, dual-stack routes and resolver path; separate real-tunnel DNS and underlay confinement probes have passed |
+| Network isolation | One production-installed dual-stack WireGuard profile passed scoped guest acceptance with its nftables policy, routes, pinned resolver, live IPv4/IPv6 traffic, endpoint-port refusal and ownership-aware retirement | Complete application DNS-bypass, establishment-failure and tunnel loss/restart acceptance on that installed path |
 | Per-application routing | Offline routing plans, binding and session lifecycle models, launch preparation and consistency audit | Accept the actual registered VPN-bound launch-to-packet path and common desktop integration; direct-mode launch and separate application lifecycle probes have privileged evidence |
 | Ownership and reconciliation | Immutable creation-time owner bindings, fresh preflight verification, read-only convergence classification, restoration and cleanup executors | Hostile privileged mutation remains outside the authority model; general in-place live updates are not authorised |
 | Replacement and recovery | Generation-scoped provisioning, verified durable cut-over, launch selection, leases and old-generation retirement; conservative operation-intent recovery remains the kernel mutation foundation | Maintain generation replacement regression evidence; combined VPN-bound application and packet acceptance remains outstanding |
@@ -512,7 +512,7 @@ python nord_tools.py manage apply-live --config path/to/startup.json --execute
 
 `startup-plan` renders the `nord-tools-restore.service` unit and reports what installation would do without writing anything. `startup-install` writes the unit atomically into the target directory, refuses to replace a foreign pre-existing unit, keeps an already-identical unit untouched, and rewrites a previously generated one as needed; it never enables the service. `restore-startup` is the unit's `ExecStart`: it obtains a fresh read-only ownership preflight, reconciles the persistent desired policy, restores only pinned profiles whose owned resources are entirely absent in this boot session, retires journal records for resources that an earlier boot lost, and appends a bounded startup run record. Transient intent is refused outright.
 
-The startup configuration is a version 1 JSON document pinning every persistent path (policy, journal, owner bindings, operation intents, run record), the provider tunnel plans and the credential inputs:
+The startup configuration is a version 1 JSON document pinning every persistent path (policy, journal, owner bindings, operation intents, run record), the provider tunnel plans and the credential inputs. `tunnel_addresses` accepts one canonical address per family; a saved single `tunnel_address` remains readable and is normalised before execution:
 
 ```json
 {
@@ -527,8 +527,8 @@ The startup configuration is a version 1 JSON document pinning every persistent 
       "peer_public_key": "REDACTED_PUBLIC_PEER_KEY",
       "endpoint_address": "198.51.100.10",
       "endpoint_port": 51820,
-      "tunnel_address": "10.5.0.2/32",
-      "peer_allowed_ips": ["0.0.0.0/0"],
+      "tunnel_addresses": ["10.5.0.2/32", "fd42:5::2/128"],
+      "peer_allowed_ips": ["0.0.0.0/0", "::/0"],
       "underlay": {"namespace_address": "10.214.0.2/30", "host_address": "10.214.0.1/30"}
     }
   },
@@ -545,7 +545,7 @@ sudo systemctl enable --now nord-tools-restore.service
 
 Idempotency is structural: a converged profile is left untouched, so a repeat run (manual or after a service restart) reports `network_changes_applied: false` and appends exactly one run record. Ordering follows an optional dependency graph, prerequisites are restored first, and a dependent is refused when a prerequisite cannot be restored or is merely blocked. Failure handling is fail-closed: the first uncertain step stops the whole run, the attempt's own namespace is rolled back, its allocations are recorded as failed and its creation intent stays uncertain for review, and running profiles that never began remain exactly as observed.
 
-Two boundaries must be stated plainly. First, provider tunnel plans pin a single numeric endpoint, peer key and addresses per profile: NordVPN's fastest-server selection and country pools are not resolvable at boot without provider data, so unpinned profiles are reported as not restored rather than guessed. Second, the restoration scope is the namespace domain: the default profile's host-domain routing (the host kill switch) modifies host firewall and routing state and is deliberately outside this increment, and the executor reports any such profile rather than partially configuring it. Real-tunnel DNS confinement, IPv6 conformance and leak-prevention acceptance remain the outstanding network confinement programme; run the acceptance probe only on a disposable-capable Linux test system:
+Two boundaries must be stated plainly. First, provider tunnel plans pin a single numeric endpoint, peer key and one or two tunnel addresses per profile: NordVPN's fastest-server selection and country pools are not resolvable at boot without provider data, so unpinned profiles are reported as not restored rather than guessed. Second, the restoration scope is the namespace domain: the default profile's host-domain routing (the host kill switch) modifies host firewall and routing state and is deliberately outside this increment, and the executor reports any such profile rather than partially configuring it. The production-installed dual-stack path has scoped guest evidence, while application DNS bypass, failure injection and host-domain acceptance remain outstanding. Run acceptance probes only on a disposable-capable Linux test system:
 
 ```bash
 python tools/probe_restore_startup.py
@@ -725,7 +725,7 @@ The internal `execute_disposable_session` adapter combines an existing operation
 
 ## Production network-isolation acceptance status
 
-The production provisioning path now verifies the dedicated namespace firewall rules and objects, IPv4 and IPv6 default routes, the pinned WireGuard endpoint route, and optional namespace DNS configuration against live route, peer AllowedIPs and resolver readback. The consolidated privileged network-isolation adversarial probe passed (`sudo python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged`), including disposable real WireGuard and DNS-shaped packet exchange, failure recovery and host-integrity checks. These are complementary fixtures rather than one production-installed tunnel carrying the tested traffic. Integrated production firewall, DNS and real-tunnel confinement, disposable acceptance of the new host-default executor and privileged acceptance of the registered application launch gate remain outstanding. See `TODO.md` and `docs/PRODUCTION-PROVISIONING-CONTRACT.md` for the exact acceptance boundary.
+The production provisioning path verifies the dedicated namespace firewall rules and objects, IPv4 and IPv6 default routes, the pinned WireGuard endpoint route, and optional namespace DNS configuration against live route, peer AllowedIPs and resolver readback. Its production confinement probe installs one owned profile with IPv4 and IPv6 tunnel addresses, carries live traffic over both families, checks endpoint-port refusal, retires the profile through verified ownership and compares host routes, nftables and resolver state before and after. The separate adversarial matrix adds DNS-shaped packet exchange, interruption recovery and lifecycle-lock checks. Application-selected alternative DNS, failed establishment, tunnel loss/restart, host-default execution and the registered VPN-bound launch path remain outstanding. See `TODO.md` and `docs/PRODUCTION-PROVISIONING-CONTRACT.md` for the exact acceptance boundary.
 
 ## network confinement: Experimental namespace isolation policy
 
@@ -850,7 +850,7 @@ On 3 November 2026, the standalone startup restoration and cleanup matrix and th
 
 The final probes account for fixture effects without weakening the host checks. IPv4 comparison ignores only exact kernel-connected fixture routes on interfaces whose live indices match their creation-time bindings, including their expected removal during cleanup. Nftables comparison ignores packet and byte readings only. Namespace absence checks are scoped to the current fixture, so unrelated host namespaces are preserved. Failed probes retain their raw host snapshots and ownership stores; successful startup restoration and cleanup runs retire the surviving fixture before deleting those stores.
 
-Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after arbitrary partial kernel provisioning. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model. Separate real-tunnel DNS, routing, replacement and application lifecycle probes have passed, but combined production-installed confinement, general in-place updates and registered VPN-bound launch-to-packet acceptance remain open in `TODO.md`.
+Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after arbitrary partial kernel provisioning. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model. Production-installed dual-stack confinement and separate real-tunnel DNS, routing, replacement and application lifecycle probes have passed, but failure injection on the installed profile, general in-place updates and registered VPN-bound launch-to-packet acceptance remain open in `TODO.md`.
 
 ### Live reconciliation and generation replacement
 

@@ -148,6 +148,19 @@ class UnitRenderingTests(unittest.TestCase):
         cfg["credentials"] = {"primary": "/etc/nord-tools/primary.key", "other": "/etc/nord-tools/other.key"}
         checked = validate_startup_config(cfg)
         self.assertEqual(checked["credentials"]["other"], "/etc/nord-tools/other.key")
+        self.assertEqual(checked["tunnels"]["primary"]["tunnel_addresses"], ["10.213.240.2/32"])
+
+        cfg["tunnels"]["primary"].pop("tunnel_address")
+        cfg["tunnels"]["primary"]["tunnel_addresses"] = ["10.213.240.2/32", "fd42:213::2/128"]
+        checked = validate_startup_config(cfg)
+        self.assertEqual(
+            checked["tunnels"]["primary"]["tunnel_addresses"],
+            ["10.213.240.2/32", "fd42:213::2/128"],
+        )
+
+        cfg["tunnels"]["primary"]["tunnel_address"] = "10.213.240.2/32"
+        with self.assertRaises(RegistryError):
+            validate_startup_config(cfg)
 
 
 def nordvpn_manage_render(cfg):

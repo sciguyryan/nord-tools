@@ -17,7 +17,7 @@ class MultipleProfileRestorationTests(RestoreTestBase):
         self.policy_path.write_text(json.dumps(policy), encoding="utf-8")
         secondary = deepcopy(self.config["tunnels"]["primary"])
         secondary["endpoint_address"] = "198.51.100.11"
-        secondary["tunnel_address"] = "10.213.241.2/32"
+        secondary["tunnel_addresses"] = ["10.213.241.2/32"]
         secondary["underlay"] = {
             "namespace_address": "10.214.1.2/30",
             "host_address": "10.214.1.1/30",

@@ -32,7 +32,7 @@ class TunnelSpecification:
     peer_public_key: str
     endpoint_address: str
     endpoint_port: int
-    tunnel_address: str
+    tunnel_addresses: tuple[str, ...]
     peer_allowed_ips: tuple[str, ...]
     persistent_keepalive_seconds: int = 0
 
@@ -52,13 +52,27 @@ class TunnelSpecification:
             raise ProvisioningError("non-canonical WireGuard peer public key")
         try:
             endpoint = ipaddress.ip_address(self.endpoint_address)
-            tunnel = ipaddress.ip_interface(self.tunnel_address)
         except (ValueError, TypeError) as exc:
-            raise ProvisioningError("endpoint and tunnel address must be numeric IP literals") from exc
+            raise ProvisioningError("endpoint address must be a numeric IP literal") from exc
         if endpoint.is_unspecified or endpoint.is_multicast or endpoint.is_loopback:
             raise ProvisioningError("invalid peer endpoint address")
-        if tunnel.ip.is_unspecified or tunnel.ip.is_multicast:
-            raise ProvisioningError("invalid tunnel interface address")
+        if not isinstance(self.tunnel_addresses, tuple) or not 1 <= len(self.tunnel_addresses) <= 2:
+            raise ProvisioningError("one or two tunnel interface addresses are required")
+        tunnels = []
+        try:
+            for value in self.tunnel_addresses:
+                if not isinstance(value, str):
+                    raise TypeError
+                tunnel = ipaddress.ip_interface(value)
+                if str(tunnel) != value or tunnel.ip.is_unspecified or tunnel.ip.is_multicast:
+                    raise ValueError
+                tunnels.append(tunnel)
+        except (ValueError, TypeError) as exc:
+            raise ProvisioningError("tunnel addresses must be canonical numeric interfaces") from exc
+        if len({tunnel.version for tunnel in tunnels}) != len(tunnels):
+            raise ProvisioningError("tunnel addresses must use distinct address families")
+        if endpoint.version not in {tunnel.version for tunnel in tunnels}:
+            raise ProvisioningError("one tunnel address must match the peer endpoint family")
         if type(self.endpoint_port) is not int or not 1 <= self.endpoint_port <= 65535:
             raise ProvisioningError("invalid peer endpoint port")
         if not isinstance(self.peer_allowed_ips, tuple) or not self.peer_allowed_ips:
@@ -80,7 +94,7 @@ class TunnelSpecification:
     def public_plan(self) -> dict:
         """Return a credential-free plan; never imply that it was executed."""
         return {
-            "version": 1,
+            "version": 2,
             "mode": "offline_wireguard_provisioning",
             "network_changes_applied": False,
             "ownership_verified": False,
@@ -90,7 +104,7 @@ class TunnelSpecification:
             "endpoint": f"[{self.endpoint_address}]:{self.endpoint_port}"
             if ":" in self.endpoint_address
             else f"{self.endpoint_address}:{self.endpoint_port}",
-            "tunnel_address": self.tunnel_address,
+            "tunnel_addresses": list(self.tunnel_addresses),
             "peer_allowed_ips": list(self.peer_allowed_ips),
             "persistent_keepalive_seconds": self.persistent_keepalive_seconds,
             "requires_privileged_executor": True,

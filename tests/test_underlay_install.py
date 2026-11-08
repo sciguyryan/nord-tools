@@ -92,7 +92,21 @@ class UnderlayWiringTests(unittest.TestCase):
     def test_routing_requires_matching_address_families(self):
         with self.assertRaises(RegistryError):
             install_tunnel_routing(
-                "nt-1a2b3c4d5e6f7a8b", "ntwg0123abcd", "ntul0123ab", "198.51.100.10", "fd00::2/128", "10.214.0.1"
+                "nt-1a2b3c4d5e6f7a8b",
+                "ntwg0123abcd",
+                "ntul0123ab",
+                "198.51.100.10",
+                ("fd00::2/128",),
+                "10.214.0.1",
+            )
+        with self.assertRaises(RegistryError):
+            install_tunnel_routing(
+                "nt-1a2b3c4d5e6f7a8b",
+                "ntwg0123abcd",
+                "ntul0123ab",
+                "198.51.100.10",
+                ("10.213.240.2/32", "10.213.241.2/32"),
+                "10.214.0.1",
             )
 
     def test_tunnel_routing_adds_default_and_endpoint_routes_only(self):
@@ -102,7 +116,7 @@ class UnderlayWiringTests(unittest.TestCase):
             "ntwg0123abcd",
             "ntul0123ab",
             "198.51.100.10",
-            "10.213.240.2/32",
+            ("10.213.240.2/32", "fd42:213::2/128"),
             "10.214.0.1",
             runner=runner,
         )
@@ -124,7 +138,7 @@ class UnderlayWiringTests(unittest.TestCase):
                 "ntwg0123abcd",
                 "ntul0123ab",
                 "198.51.100.10",
-                "10.213.240.2/32",
+                ("10.213.240.2/32", "fd42:213::2/128"),
                 "10.214.0.1",
                 runner=runner,
             )

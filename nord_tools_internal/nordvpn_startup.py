@@ -59,22 +59,40 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
         "endpoint_address",
         "endpoint_port",
         "tunnel_address",
+        "tunnel_addresses",
         "peer_allowed_ips",
         "underlay",
         "dns_servers",
     }
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
         raise RegistryError("invalid profile name in startup configuration")
-    if not isinstance(plan, dict) or not (allowed - {"dns_servers"}) <= set(plan) or set(plan) - allowed:
+    required = {"peer_public_key", "endpoint_address", "endpoint_port", "peer_allowed_ips", "underlay"}
+    if (
+        not isinstance(plan, dict)
+        or not required <= set(plan)
+        or set(plan) - allowed
+        or ("tunnel_address" in plan) == ("tunnel_addresses" in plan)
+    ):
         raise RegistryError(
             f"tunnel plan for {name} requires peer_public_key, endpoint_address, endpoint_port, "
-            "tunnel_address, peer_allowed_ips and underlay"
+            "one tunnel address field, peer_allowed_ips and underlay"
         )
     if not isinstance(plan["peer_public_key"], str):
         raise RegistryError(f"tunnel plan for {name} requires a peer public key string")
-    for field in ("endpoint_address", "tunnel_address"):
-        if not isinstance(plan[field], str) or not plan[field]:
-            raise RegistryError(f"tunnel plan for {name} requires a textual {field}")
+    if not isinstance(plan["endpoint_address"], str) or not plan["endpoint_address"]:
+        raise RegistryError(f"tunnel plan for {name} requires a textual endpoint_address")
+    if "tunnel_address" in plan:
+        if not isinstance(plan["tunnel_address"], str) or not plan["tunnel_address"]:
+            raise RegistryError(f"tunnel plan for {name} requires a textual tunnel_address")
+        tunnel_addresses = [plan["tunnel_address"]]
+    else:
+        tunnel_addresses = plan["tunnel_addresses"]
+        if (
+            not isinstance(tunnel_addresses, list)
+            or not 1 <= len(tunnel_addresses) <= 2
+            or any(not isinstance(item, str) or not item for item in tunnel_addresses)
+        ):
+            raise RegistryError(f"tunnel plan for {name} requires one or two textual tunnel_addresses")
     if type(plan["endpoint_port"]) is not int or not 1 <= plan["endpoint_port"] <= 65535:
         raise RegistryError(f"tunnel plan for {name} requires a valid endpoint port")
     if not isinstance(plan["peer_allowed_ips"], list) or any(
@@ -99,7 +117,9 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
             NamespaceResolverPolicy(tuple(servers))
         except (ValueError, TypeError) as exc:
             raise RegistryError(f"invalid DNS servers for {name}: {exc}") from exc
-    return dict(plan)
+    normalised = {key: value for key, value in plan.items() if key != "tunnel_address"}
+    normalised["tunnel_addresses"] = list(tunnel_addresses)
+    return normalised
 
 
 def validate_startup_config(document: object) -> dict:

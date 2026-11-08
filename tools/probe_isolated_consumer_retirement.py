@@ -87,7 +87,7 @@ def run_probe() -> None:
                 "peer_public_key": command("wg", "pubkey", input_data=peer_key).decode("ascii"),
                 "endpoint_address": "198.51.100.10",
                 "endpoint_port": 51820,
-                "tunnel_address": f"10.213.{240 + index}.2/32",
+                "tunnel_addresses": [f"10.213.{240 + index}.2/32"],
                 "peer_allowed_ips": [f"10.213.{240 + index}.1/32"],
                 "underlay": {
                     "namespace_address": f"10.214.{index}.2/30",

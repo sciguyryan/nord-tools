@@ -175,7 +175,7 @@ def install_tunnel_routing(
     tunnel_interface: str,
     namespace_interface: str,
     endpoint_address: str,
-    tunnel_address: str,
+    tunnel_addresses: tuple[str, ...],
     host_gateway: str,
     *,
     runner=subprocess.run,
@@ -189,10 +189,15 @@ def install_tunnel_routing(
     default route. The namespace firewall remains the independent enforcement
     boundary for traffic and endpoint restrictions.
     """
-    tunnel_ip = _canonical_address(tunnel_address, "tunnel address")
+    if not isinstance(tunnel_addresses, tuple) or not 1 <= len(tunnel_addresses) <= 2:
+        raise RegistryError("tunnel addresses must contain one or two interfaces")
     endpoint = ipaddress.ip_address(endpoint_address)
-    if endpoint.version != ipaddress.ip_interface(tunnel_ip).version:
-        raise RegistryError("the tunnel address family must match the peer endpoint family")
+    addresses = tuple(_canonical_address(address, "tunnel address") for address in tunnel_addresses)
+    families = {ipaddress.ip_interface(address).version for address in addresses}
+    if len(families) != len(addresses):
+        raise RegistryError("tunnel addresses must use distinct address families")
+    if endpoint.version not in families:
+        raise RegistryError("one tunnel address must match the peer endpoint family")
     add_tunnel_route(namespace, namespace_interface, str(ipaddress.ip_network(endpoint)), host_gateway, runner=runner)
     # Do not let an absent tunnel address family acquire a host/underlay
     # fallback through a later resolver or application configuration change.

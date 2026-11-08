@@ -181,18 +181,23 @@ def assess_host_default_protection(plan: object) -> dict:
     """
     if not isinstance(plan, Mapping):
         raise RegistryError("host default protection requires a tunnel plan mapping")
-    required = {"endpoint_address", "endpoint_port", "tunnel_address", "peer_allowed_ips", "dns_servers"}
+    required = {"endpoint_address", "endpoint_port", "tunnel_addresses", "peer_allowed_ips", "dns_servers"}
     if not required <= plan.keys():
         raise RegistryError("host default protection requires endpoint, tunnel, allowed IPs and DNS servers")
     try:
         endpoint = ipaddress.ip_address(plan["endpoint_address"])
-        tunnel = ipaddress.ip_interface(plan["tunnel_address"])
+        tunnels = tuple(ipaddress.ip_interface(value) for value in plan["tunnel_addresses"])
     except (ValueError, TypeError) as exc:
         raise RegistryError("host default protection requires numeric endpoint and tunnel addresses") from exc
     if endpoint.is_unspecified or endpoint.is_multicast or endpoint.is_loopback or endpoint.is_link_local:
         raise RegistryError("host default endpoint is unsuitable for a pinned underlay exception")
-    if tunnel.ip.is_unspecified or tunnel.ip.is_multicast:
-        raise RegistryError("host default tunnel address is invalid")
+    if (
+        len(tunnels) != 2
+        or {tunnel.version for tunnel in tunnels} != {4, 6}
+        or any(str(tunnel) != value for tunnel, value in zip(tunnels, plan["tunnel_addresses"], strict=True))
+        or any(tunnel.ip.is_unspecified or tunnel.ip.is_multicast for tunnel in tunnels)
+    ):
+        raise RegistryError("host default tunnel addresses must be canonical dual-stack interfaces")
     port = plan["endpoint_port"]
     if type(port) is not int or not 1 <= port <= 65535:
         raise RegistryError("host default endpoint port is invalid")

@@ -127,9 +127,14 @@ def _real_kernel() -> RestoreKernel:
         return install_disposable_isolation(owned, policy)
 
     def route_tunnel(
-        namespace: str, tunnel_interface: str, underlay_interface: str, endpoint: str, tunnel_address: str, gateway: str
+        namespace: str,
+        tunnel_interface: str,
+        underlay_interface: str,
+        endpoint: str,
+        tunnel_addresses: tuple[str, ...],
+        gateway: str,
     ) -> None:
-        install_tunnel_routing(namespace, tunnel_interface, underlay_interface, endpoint, tunnel_address, gateway)
+        install_tunnel_routing(namespace, tunnel_interface, underlay_interface, endpoint, tunnel_addresses, gateway)
         verify_tunnel_route_readback(namespace, tunnel_interface, underlay_interface, endpoint)
 
     def configure_wireguard(specification: TunnelSpecification, owned: OwnedNamespace, key_fd: int) -> None:
@@ -352,7 +357,7 @@ def _validated_plan(plan: dict, namespace: str, interface: str) -> dict:
         plan["peer_public_key"],
         plan["endpoint_address"],
         plan["endpoint_port"],
-        plan["tunnel_address"],
+        tuple(plan["tunnel_addresses"]),
         tuple(plan["peer_allowed_ips"]),
     )
     return {**plan, "specification": specification}
@@ -386,8 +391,9 @@ def _prevalidate_plans(config: dict, desired: dict) -> dict:
             ipaddress.ip_interface(plan["underlay"]["namespace_address"])
             ipaddress.ip_interface(plan["underlay"]["host_address"])
             endpoint = ipaddress.ip_address(plan["endpoint_address"])
-            if endpoint.version != ipaddress.ip_interface(plan["tunnel_address"]).version:
-                raise RegistryError(f"the tunnel address family must match the peer endpoint family for {name}")
+            tunnel_interfaces = tuple(ipaddress.ip_interface(address) for address in plan["tunnel_addresses"])
+            if endpoint.version not in {tunnel.version for tunnel in tunnel_interfaces}:
+                raise RegistryError(f"one tunnel address must match the peer endpoint family for {name}")
         except (ValueError, TypeError) as exc:
             raise RegistryError(f"invalid provider plan for {name}: {exc}") from exc
     return tunnels
@@ -628,7 +634,7 @@ def _restore_profile(
                 interface,
                 underlay_ns,
                 plan["endpoint_address"],
-                plan["tunnel_address"],
+                tuple(plan["tunnel_addresses"]),
                 gateway,
             )
             if (

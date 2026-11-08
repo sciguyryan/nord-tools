@@ -11,7 +11,7 @@ from nord_tools_internal.nordvpn_registry import RegistryError
 BASE = {
     "endpoint_address": "198.51.100.2",
     "endpoint_port": 51820,
-    "tunnel_address": "10.7.0.2/32",
+    "tunnel_addresses": ["10.7.0.2/32", "2001:db8:1::2/128"],
     "peer_allowed_ips": ["0.0.0.0/0", "::/0"],
     "dns_servers": ["10.7.0.1", "2001:db8::53"],
 }
@@ -33,7 +33,9 @@ def test_assessment_never_authorises_host_mutation():
         ("endpoint_address", "fe80::1"),
         ("endpoint_port", True),
         ("endpoint_port", 65536),
-        ("tunnel_address", "not-an-address"),
+        ("tunnel_addresses", ["not-an-address", "2001:db8:1::2/128"]),
+        ("tunnel_addresses", ["10.7.0.2/32"]),
+        ("tunnel_addresses", ["10.7.0.2/32", "10.8.0.2/32"]),
         ("peer_allowed_ips", ["0.0.0.0/0"]),
         ("peer_allowed_ips", ["0.0.0.0/0", "::/0", "10.0.0.0/8"]),
         ("peer_allowed_ips", ["::/0", "::/0"]),

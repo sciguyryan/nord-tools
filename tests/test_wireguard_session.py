@@ -18,7 +18,7 @@ class SessionTests(TestCase):
             base64.b64encode(bytes(range(32))).decode(),
             "198.51.100.2",
             51820,
-            "10.42.0.2/32",
+            ("10.42.0.2/32", "2001:db8::2/128"),
             ("10.42.0.1/32",),
         )
         self.owned = OwnedNamespace(self.spec.namespace, 5, 1, 2)
@@ -40,12 +40,13 @@ class SessionTests(TestCase):
     @patch.object(OwnedNamespace, "verify")
     def test_command_sequence_and_no_key_in_arguments(self, verify, run, index):
         self.execute()
-        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_count, 5)
         commands = [call.args[0] for call in run.call_args_list]
         self.assertEqual(commands[0][:5], ["ip", "-n", self.spec.namespace, "link", "add"])
         self.assertIn("private-key", commands[1])
         self.assertNotIn("private-key " + self.key.decode(), repr(commands))
-        self.assertNotIn(self.key.decode(), repr(commands[0] + commands[2] + commands[3]))
+        self.assertNotIn(self.key.decode(), repr(commands[0] + commands[2] + commands[3] + commands[4]))
+        self.assertEqual([commands[2][5], commands[3][5]], list(self.spec.tunnel_addresses))
         self.assertEqual(commands[-1][-1], "up")
         self.assertGreaterEqual(verify.call_count, 4)
 
@@ -74,6 +75,16 @@ class SessionTests(TestCase):
         with self.assertRaises(SessionError):
             self.execute()
         run.assert_called_once()
+
+    @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
+    @patch("nord_tools_internal.nordvpn_wireguard_session._run")
+    @patch.object(OwnedNamespace, "verify")
+    def test_failed_second_address_does_not_raise_interface(self, verify, run, index):
+        run.side_effect = [None, None, None, SessionError("failed")]
+        with self.assertRaises(SessionError):
+            self.execute()
+        self.assertEqual(run.call_count, 4)
+        self.assertEqual(run.call_args.args[0][5], "2001:db8::2/128")
 
     @patch("nord_tools_internal.nordvpn_wireguard_session.namespace_interface_index", return_value=12)
     @patch("nord_tools_internal.nordvpn_wireguard_session._run")

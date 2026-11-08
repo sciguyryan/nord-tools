@@ -25,7 +25,7 @@ def fixture():
         peer_public_key=base64.b64encode(bytes(range(32))).decode(),
         endpoint_address="198.51.100.1",
         endpoint_port=51820,
-        tunnel_address="10.0.0.2/32",
+        tunnel_addresses=("10.0.0.2/32",),
         peer_allowed_ips=("0.0.0.0/0",),
     )
     allocations = {

@@ -164,12 +164,12 @@ def stop_launch(process: subprocess.Popen) -> None:
         raise ProbeError("application launcher did not release its lease") from exc
 
 
-def tunnel_plan(endpoint: str, tunnel_address: str, underlay_index: int, peer_key: str) -> dict:
+def tunnel_plan(endpoint: str, tunnel_addresses: tuple[str, ...], underlay_index: int, peer_key: str) -> dict:
     return {
         "peer_public_key": peer_key,
         "endpoint_address": endpoint,
         "endpoint_port": 51820,
-        "tunnel_address": tunnel_address,
+        "tunnel_addresses": list(tunnel_addresses),
         "peer_allowed_ips": ["0.0.0.0/0"],
         "underlay": {
             "namespace_address": f"10.214.{underlay_index}.2/30",
@@ -316,7 +316,7 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             "bindings": str(temporary / "bindings.json"),
             "intent": str(temporary / "intents.json"),
             "run_record": str(temporary / "runs.json"),
-            "tunnels": {"alpha": tunnel_plan("10.214.10.1", "10.250.0.2/32", 10, peer_public)},
+            "tunnels": {"alpha": tunnel_plan("10.214.10.1", ("10.250.0.2/32",), 10, peer_public)},
             "credentials": {"alpha": str(key_a)},
             "handovers": {"profile:alpha": str(handover)},
         }
@@ -337,7 +337,7 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
         launchers.append(first)
         wait_for_lease(leases, policy, "consumer-a", "generation-a")
 
-        config["tunnels"]["alpha"] = tunnel_plan("10.214.11.1", "10.250.0.3/32", 11, peer_public)
+        config["tunnels"]["alpha"] = tunnel_plan("10.214.11.1", ("10.250.0.3/32",), 11, peer_public)
         config["credentials"]["alpha"] = str(key_b)
         write(config_path, config)
 

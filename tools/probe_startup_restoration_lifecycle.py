@@ -550,7 +550,7 @@ def _write_startup_config(matrix: Matrix) -> None:
                         "peer_public_key": data["peer_public_key"],
                         "endpoint_address": "198.51.100.10" if name == "primary" else "203.0.113.10",
                         "endpoint_port": 51820,
-                        "tunnel_address": f"10.213.{240 + index}.2/32",
+                        "tunnel_addresses": [f"10.213.{240 + index}.2/32"],
                         "peer_allowed_ips": [f"10.213.{240 + index}.1/32"],
                         "underlay": {
                             "namespace_address": f"10.214.{index}.2/30",

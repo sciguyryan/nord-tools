@@ -98,7 +98,8 @@ def configure_disposable_wireguard(spec: TunnelSpecification, owned: OwnedNamesp
             raise SessionError("configured WireGuard interface identity could not be verified") from exc
         if configured_index != created_index:
             raise SessionError("WireGuard interface identity changed during configuration")
-        _run(["ip", "-n", spec.namespace, "address", "add", spec.tunnel_address, "dev", spec.interface])
+        for address in spec.tunnel_addresses:
+            _run(["ip", "-n", spec.namespace, "address", "add", address, "dev", spec.interface])
         owned.verify()
         _run(["ip", "-n", spec.namespace, "link", "set", "dev", spec.interface, "up"])
         owned.verify()

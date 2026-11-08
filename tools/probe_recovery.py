@@ -138,7 +138,7 @@ def run_probe(*, after_binding: bool = False, checkpoint: str | None = None) -> 
                             "peer_public_key": peer_public,
                             "endpoint_address": "198.51.100.10",
                             "endpoint_port": 51820,
-                            "tunnel_address": "10.213.240.2/32",
+                            "tunnel_addresses": ["10.213.240.2/32"],
                             "peer_allowed_ips": ["10.213.240.1/32"],
                             "underlay": {
                                 "namespace_address": "10.214.0.2/30",
