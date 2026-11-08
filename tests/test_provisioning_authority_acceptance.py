@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 SOURCE = Path(__file__).resolve().parents[1] / "tools" / "probe_provisioning_authority_acceptance.py"
-spec = importlib.util.spec_from_file_location("part8_acceptance", SOURCE)
+spec = importlib.util.spec_from_file_location("provisioning_authority_acceptance", SOURCE)
 assert spec and spec.loader
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)

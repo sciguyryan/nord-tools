@@ -35,7 +35,7 @@ def run_acceptance(*, python: str = sys.executable) -> bool:
             print(f"FAIL: {label} (exit {result.returncode}); later stages not attempted", file=sys.stderr, flush=True)
             return False
         print(f"PASS: {label}", flush=True)
-    print("PASS: integrated Part 4a acceptance stages (within their documented evidence scopes)", flush=True)
+    print("PASS: integrated production routing acceptance stages (within their documented evidence scopes)", flush=True)
     return True
 
 

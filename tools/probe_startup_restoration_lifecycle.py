@@ -473,7 +473,7 @@ def stage_final_teardown(matrix: Matrix) -> None:
 
 
 def run_matrix() -> dict:
-    """Execute the full matrix once; return the summary of what remains open."""
+    """Execute the full matrix once and return observed interruption evidence."""
     if os.geteuid() != 0:
         raise ProbeError("root privileges are required")
     for binary in ("ip", "wg", "nft"):
@@ -507,18 +507,7 @@ def run_matrix() -> dict:
         stage_final_teardown(matrix)
         _snapshot_gate(matrix, "convergence", "final-cleanup")
         print("PASS F: the host routes, nftables rules and resolver contents never moved", flush=True)
-        unresolved = [
-            "provider credentials acquisition and fastest/country selection at boot remain operator-pinned plans",
-            "the default profile's host-domain protective routing and the kill switch are not implemented",
-            "real-tunnel DNS confinement, IPv6 conformance and leak prevention remain unverified",
-            "live replacement cut-over with verified rollback stays administrative work",
-            "adversarial ownership testing of the stores under racing privileged actors is outstanding",
-            "per-application launch execution and desktop integration remain disabled",
-        ]
-        print("--- remaining production work after lifecycle acceptance ---", flush=True)
-        for line in unresolved:
-            print(f"  {line}", flush=True)
-        return {"interrupted_evidence": all_findings, "unresolved": unresolved}
+        return {"interrupted_evidence": all_findings}
     except BaseException:
         print(f"Retained matrix evidence for review: {temporary}", file=sys.stderr)
         raise

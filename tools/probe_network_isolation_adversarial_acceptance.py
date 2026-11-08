@@ -61,7 +61,7 @@ def run_acceptance(*, python: str = sys.executable) -> bool:
     if failure:
         print(f"FAIL: {failure}; subsequent stages not attempted", file=sys.stderr, flush=True)
         return False
-    print("PASS: Part 4 adversarial acceptance within the documented evidence boundaries", flush=True)
+    print("PASS: network isolation adversarial acceptance within the documented evidence boundaries", flush=True)
     return True
 
 
@@ -70,7 +70,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--run-privileged", action="store_true", help="authorise all disposable privileged probes")
     args = parser.parse_args(argv)
     if not args.run_privileged:
-        print("DRY RUN: Part 4 adversarial acceptance stages:")
+        print("DRY RUN: network isolation adversarial acceptance stages:")
         for label, filename, argument in STAGES:
             print(f"  {label}: {filename} {argument}")
         print("No host observations or privileged probes executed.")

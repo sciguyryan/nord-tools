@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the explicit, fail-fast Part 8.1 privileged acceptance sequence.
+"""Run the explicit, fail-fast privileged provisioning authority acceptance sequence.
 
 Each existing probe creates its own disposable resources and retains failure
 artefacts. This runner never removes those artefacts or attempts recovery after

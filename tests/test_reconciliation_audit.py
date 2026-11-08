@@ -1,4 +1,4 @@
-"""Adversarial composition tests for the non-authorising Part 6 audit."""
+"""Adversarial composition tests for the non-authorising reconciliation audit."""
 
 import copy
 

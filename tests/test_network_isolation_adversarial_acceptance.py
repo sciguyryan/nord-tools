@@ -1,4 +1,4 @@
-"""Behavioural tests for the Part 4 adversarial acceptance orchestrator."""
+"""Behavioural tests for the network isolation adversarial acceptance orchestrator."""
 
 from __future__ import annotations
 
