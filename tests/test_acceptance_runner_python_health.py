@@ -53,9 +53,39 @@ def test_ready_requires_healthy_python_and_successful_cloud_init(monkeypatch):
     assert not runner.readiness().startswith("Ready:")
 
 
+def test_cloud_init_nonzero_during_package_upgrade_is_retryable(monkeypatch):
+    runner = load_runner()
+    monkeypatch.setattr(runner, "status", lambda: "running")
+    monkeypatch.setattr(
+        runner,
+        "ssh",
+        lambda *args, **kwargs: (
+            result()
+            if args[0] == "/usr/bin/python"
+            else result(1, stderr="ModuleNotFoundError: No module named 'operator'")
+        ),
+    )
+    assert runner.readiness().startswith("Cloud-init status temporarily unavailable:")
+
+
+def test_transient_cloud_init_error_recovers_without_rebuild(monkeypatch):
+    runner = load_runner()
+    states = iter(
+        (
+            "Cloud-init status temporarily unavailable: import failed",
+            "Guest Python unhealthy: import failed",
+            "Ready: cloud-init completed successfully",
+        )
+    )
+    monkeypatch.setattr(runner, "readiness", lambda: next(states))
+    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(runner, "progress", lambda _message: None)
+    assert runner.wait_ready(timeout=360).startswith("Ready:")
+
+
 def test_persistent_python_failure_reports_diagnostics(monkeypatch):
     runner = load_runner()
-    clock = iter((0, 0, 0, 0, 0, 91, 91, 91))
+    clock = iter((0, 0, 0, 0, 0, 361, 361))
     monkeypatch.setattr(runner.time, "monotonic", lambda: next(clock))
     monkeypatch.setattr(runner, "readiness", lambda: "Guest Python unhealthy: missing operator")
     monkeypatch.setattr(runner, "guest_boot_diagnostics", lambda: "package logs")
@@ -64,3 +94,13 @@ def test_persistent_python_failure_reports_diagnostics(monkeypatch):
 
     with pytest.raises(RuntimeError, match="package logs"):
         runner.wait_ready(timeout=360)
+
+
+def test_explicit_cloud_init_error_is_fatal(monkeypatch):
+    runner = load_runner()
+    monkeypatch.setattr(runner, "readiness", lambda: "Provisioning failed:\nstatus: error")
+    monkeypatch.setattr(runner, "guest_boot_diagnostics", lambda: "package logs")
+    import pytest
+
+    with pytest.raises(RuntimeError, match="package logs"):
+        runner.wait_ready()

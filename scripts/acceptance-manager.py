@@ -220,7 +220,12 @@ def guest_boot_diagnostics():
 
 
 def readiness():
-    """Require both a healthy Python installation and completed cloud-init."""
+    """Require healthy guest Python and a successful cloud-init completion.
+
+    A cloud-init invocation can fail while pacman replaces Python or its
+    standard library. Such a failure is not a terminal provisioning result:
+    only an observable cloud-init error/degraded status is terminal.
+    """
     if status() != "running":
         return "Guest is not running"
     try:
@@ -238,16 +243,23 @@ def readiness():
     if "status: done" in output and result.returncode == 0:
         return "Ready: cloud-init completed successfully\n" + output
     if result.returncode != 0:
-        return "Cloud-init check failed: " + (output or f"exit status {result.returncode}")
+        # A nonzero exit alone is not a reliable cloud-init failure while the
+        # guest is upgrading Python. Keep polling until a structured terminal
+        # status is available or the overall readiness deadline expires.
+        return "Cloud-init status temporarily unavailable: " + (output or f"exit status {result.returncode}")
     return "Provisioning in progress:\n" + (output or "No status returned")
 
 
 def wait_ready(timeout=360, interval=5):
-    """Allow transient package upgrades, but never certify an unhealthy guest."""
+    """Poll until positive readiness or a genuine terminal provisioning state.
+
+    Use the overall deadline for transient Python/cloud-init inconsistencies:
+    package transactions can legitimately take longer than 90 seconds on a
+    slow guest. Never treat a failed status invocation as a successful boot.
+    """
     deadline = time.monotonic() + timeout
     last = "Not checked"
     reported = None
-    unhealthy_since = None
     while time.monotonic() < deadline:
         last = readiness()
         summary = last.splitlines()[0]
@@ -257,17 +269,7 @@ def wait_ready(timeout=360, interval=5):
             reported = summary
         if last.startswith("Ready:"):
             return last
-        if last.startswith("Guest Python unhealthy:"):
-            if unhealthy_since is None:
-                unhealthy_since = time.monotonic()
-            # A package transaction may temporarily expose a mismatched Python
-            # executable and stdlib. Give it time to finish, but never loop
-            # indefinitely or claim that the guest is ready.
-            if time.monotonic() - unhealthy_since >= 90:
-                raise RuntimeError(last + "\nGuest diagnostics:\n" + guest_boot_diagnostics())
-        else:
-            unhealthy_since = None
-        if last.startswith(("Provisioning failed:", "Cloud-init check failed:")) or last == "Guest is not running":
+        if last.startswith("Provisioning failed:") or last == "Guest is not running":
             raise RuntimeError(last + "\nGuest diagnostics:\n" + guest_boot_diagnostics())
         time.sleep(interval)
     raise RuntimeError(
