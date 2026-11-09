@@ -198,3 +198,55 @@ def test_evidence_collector_executes_from_stdin(manager):
         check=True,
     )
     assert result.stdout.strip() == '{"ok": true}'
+
+
+def test_rebuild_plan_force_never_inspects_guest(manager, monkeypatch):
+    monkeypatch.setattr(manager, "inspect_guest", lambda: (_ for _ in ()).throw(AssertionError("inspected")))
+    assert manager.rebuild_plan(force=True) == (False, ["forced clean rebuild requested"])
+
+
+def test_rebuild_plan_reuses_only_with_positive_inspection(manager, monkeypatch):
+    monkeypatch.setattr(manager, "inspect_guest", lambda: [])
+    assert manager.rebuild_plan() == (True, [])
+    monkeypatch.setattr(manager, "inspect_guest", lambda: ["guest state uncertain"])
+    assert manager.rebuild_plan() == (False, ["guest state uncertain"])
+
+
+def test_source_manifest_detects_content_and_mode(manager, tmp_path):
+    source = tmp_path / "source"
+    source.mkdir()
+    script = source / "probe.py"
+    script.write_text("print('ok')\n")
+    script.chmod(0o755)
+    (source / "node_modules").mkdir()
+    (source / "node_modules" / "ignored.js").write_text("ignored")
+    original = manager.source_manifest(source)
+    assert list(original) == ["probe.py"]
+    assert original["probe.py"][1] == 0o755
+    script.chmod(0o644)
+    assert manager.source_manifest(source) != original
+    script.write_text("print('changed')\n")
+    assert manager.source_manifest(source)["probe.py"][0] != original["probe.py"][0]
+
+
+def test_source_manifest_refuses_symlinks(manager, tmp_path):
+    import pytest
+
+    (tmp_path / "file").write_text("data")
+    (tmp_path / "link").symlink_to(tmp_path / "file")
+    with pytest.raises(RuntimeError, match="symlinks"):
+        manager.source_manifest(tmp_path)
+
+
+def test_source_upload_skips_only_exact_verified_manifest(manager, monkeypatch, tmp_path):
+    import json
+    import subprocess
+
+    (tmp_path / "source.py").write_text("print('ok')\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+    manifest = manager.source_manifest(tmp_path)
+    monkeypatch.setattr(
+        manager, "guest_command", lambda *a, **kw: subprocess.CompletedProcess([], 0, json.dumps(manifest), "")
+    )
+    monkeypatch.setattr(manager, "ssh", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unnecessary transfer")))
+    manager.upload_source()

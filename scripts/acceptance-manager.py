@@ -6,21 +6,26 @@ The GUI delegates blocking operations to workers so that its event loop remains 
 """
 
 import argparse
-import json
-import ipaddress
-import time
+import base64
 import hashlib
+import io
+import ipaddress
+import json
 import os
-from pathlib import Path
 import queue
 import re
 import shutil
 import socket
+import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import threading
+import time
 import urllib.request
+import xml.etree.ElementTree as ET
+from pathlib import Path
 
 VM = "nord-tools-acceptance"
 URI = "qemu:///system"
@@ -37,6 +42,27 @@ SSH_HOST = "127.0.0.1"
 SSH_PORT = int(os.environ.get("NORD_TOOLS_ACCEPTANCE_SSH_PORT", "22222"))
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/arch/nord-tools"
+GUEST_ATTESTATION = "/etc/nord-tools-acceptance-spec"
+PROVISION_REVISION = "2"
+REQUIRED_PACKAGES = (
+    "git",
+    "python",
+    "python-pip",
+    "python-pytest",
+    "ruff",
+    "nodejs",
+    "npm",
+    "openssh",
+    "sudo",
+    "nftables",
+    "wireguard-tools",
+    "curl",
+    "iproute2",
+    "iputils",
+    "bind",
+    "jq",
+    "qemu-guest-agent",
+)
 _PRIVILEGE_PASSWORD = None
 _CLI_PROGRESS = False
 
@@ -278,6 +304,141 @@ def acceptance_public_key():
     return SSH_PUBLIC_KEY.read_text(encoding="utf-8").strip()
 
 
+def provisioning_spec(key):
+    """Fingerprint the immutable cloud-init contract, not the source checkout."""
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "revision": PROVISION_REVISION,
+                "vm": VM,
+                "mac": GUEST_MAC,
+                "port": SSH_PORT,
+                "ssh_key": key,
+                "memory_mib": 4096,
+                "vcpus": 4,
+                "disk_gib": 32,
+                "packages": REQUIRED_PACKAGES,
+                "network": "passt",
+                "cpu": "host-passthrough",
+            },
+            sort_keys=True,
+        ).encode()
+    ).hexdigest()
+
+
+def guest_command(script, *, timeout=30):
+    """Pass scripts through SSH stdin; never interpolate multiline code into a shell."""
+    return subprocess.run(
+        ssh_args("python -"), input=script, text=True, capture_output=True, timeout=timeout, check=False
+    )
+
+
+def inspect_guest():
+    """Observe actual domain and guest state; uncertainty always forbids reuse."""
+    reasons = []
+    state = status()
+    if state == "Absent":
+        return ["domain absent"]
+    if state != "running":
+        return [f"domain state is {state!r}"]
+    try:
+        xml = ET.fromstring(virsh("dumpxml", VM).stdout)
+        memory = xml.findtext("memory")
+        memory_unit = xml.find("memory").get("unit", "KiB") if xml.find("memory") is not None else None
+        if memory != "4194304" or memory_unit != "KiB":
+            reasons.append("domain memory differs")
+        if xml.findtext("vcpu") != "4":
+            reasons.append("domain CPU count differs")
+        cpu = xml.find("cpu")
+        if cpu is None or cpu.get("mode") != "host-passthrough":
+            reasons.append("domain CPU mode differs")
+        disks = xml.findall("./devices/disk")
+
+        def matching_disk(path, device):
+            return any(
+                d.get("device") == device and d.find("source") is not None and d.find("source").get("file") == str(path)
+                for d in disks
+            )
+
+        if not matching_disk(DISK, "disk") or not matching_disk(SEED, "cdrom"):
+            reasons.append("domain storage differs")
+        interfaces = xml.findall("./devices/interface")
+        if (
+            len(interfaces) != 1
+            or interfaces[0].get("type") != "user"
+            or interfaces[0].find("mac") is None
+            or interfaces[0].find("mac").get("address", "").lower() != GUEST_MAC.lower()
+        ):
+            reasons.append("domain network differs")
+        # A passt forwarding change can make an otherwise valid domain unreachable.
+        if f"{SSH_PORT}" not in ET.tostring(xml, encoding="unicode"):
+            reasons.append("domain SSH forwarding is not verified")
+        if not DISK.is_file() or not SEED.is_file():
+            reasons.append("guest storage missing")
+    except (OSError, ValueError, ET.ParseError, RuntimeError, AttributeError) as exc:
+        reasons.append(f"domain inspection failed: {exc}")
+    ready = readiness()
+    if not ready.startswith("Ready:"):
+        reasons.append("guest readiness not verified: " + ready.splitlines()[0])
+        return reasons
+    if not SSH_PUBLIC_KEY.is_file():
+        reasons.append("acceptance SSH public key missing")
+        return reasons
+    spec = provisioning_spec(SSH_PUBLIC_KEY.read_text(encoding="utf-8").strip())
+    try:
+        probe = guest_command(f"""from pathlib import Path
+import json, subprocess
+p = Path('/etc/nord-tools-acceptance-spec')
+try:
+    spec = p.read_text().strip()
+except OSError:
+    spec = ''
+missing = []
+packages = {REQUIRED_PACKAGES!r}
+if subprocess.run(['pacman', '-Q', *packages], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
+    missing.append('provisioned package set')
+for executable in ('python', 'pytest', 'ruff', 'node', 'npm', 'wg', 'nft', 'ip', 'cloud-init'):
+    if subprocess.run(
+        ['bash', '-lc', 'command -v ' + executable],
+        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+    ).returncode:
+        missing.append(executable)
+print(json.dumps({{'spec': spec, 'missing': missing}}))
+""")
+    except (OSError, subprocess.SubprocessError) as exc:
+        reasons.append(f"guest attestation failed: {exc}")
+        return reasons
+    if probe.returncode:
+        reasons.append("guest provisioning attestation unavailable")
+    else:
+        try:
+            report = json.loads(probe.stdout)
+            if report.get("spec") != spec:
+                reasons.append("guest provisioning specification differs")
+            if report.get("missing"):
+                reasons.append("guest dependencies missing: " + ", ".join(report["missing"]))
+        except (ValueError, TypeError, KeyError):
+            reasons.append("guest provisioning attestation malformed")
+    # A successful acceptance run does not prove a clean baseline. This marker
+    # is set before any privileged tests, and cleared only by fresh provisioning.
+    try:
+        taint = ssh("test", "!", "-e", "/var/tmp/nord-tools-acceptance-used", timeout=15)
+    except (OSError, subprocess.SubprocessError) as exc:
+        reasons.append(f"guest baseline check failed: {exc}")
+        return reasons
+    if taint.returncode:
+        reasons.append("guest has run privileged acceptance; baseline is not certified clean")
+    return reasons
+
+
+def rebuild_plan(force=False):
+    """Produce a conservative, explainable reuse decision without mutation."""
+    if force:
+        return (False, ["forced clean rebuild requested"])
+    reasons = inspect_guest()
+    return (not reasons, reasons)
+
+
 def provision():
     """Provision with passt userspace networking and no host bridge or firewall changes."""
     if status() != "Absent":
@@ -301,6 +462,7 @@ ethernets:
     dhcp4: true
     dhcp6: false
 """
+    spec = provisioning_spec(key)
     user_data = f"""#cloud-config
 hostname: {VM}
 manage_etc_hosts: true
@@ -317,6 +479,10 @@ users:
 package_update: true
 packages: [git, python, python-pip, python-pytest, ruff, nodejs, npm, openssh, sudo, nftables, wireguard-tools, curl, iproute2, iputils, bind, jq, qemu-guest-agent]
 write_files:
+  - path: /etc/nord-tools-acceptance-spec
+    owner: root:root
+    permissions: '0644'
+    content: "{spec}"
   - path: /etc/systemd/network/20-acceptance.network
     owner: root:root
     permissions: '0644'
@@ -432,47 +598,110 @@ def terminal():
     return "SSH terminal launched."
 
 
+SOURCE_EXCLUDES = {".git", "node_modules", "__pycache__", ".pytest_cache", ".ruff_cache", ".venv"}
+
+
+def source_manifest(root):
+    """Hash the canonical checkout, including mode bits, but not transient caches."""
+    result = {}
+    for path in sorted(root.rglob("*")):
+        relative = path.relative_to(root)
+        if any(part in SOURCE_EXCLUDES for part in relative.parts):
+            continue
+        if path.is_symlink():
+            raise RuntimeError(f"Source symlinks are not accepted: {relative}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise RuntimeError(f"Unsupported source entry: {relative}")
+        result[relative.as_posix()] = [
+            hashlib.sha256(path.read_bytes()).hexdigest(),
+            stat.S_IMODE(path.stat().st_mode) & 0o777,
+        ]
+    return result
+
+
+GUEST_MANIFEST_SCRIPT = r"""
+from pathlib import Path
+import hashlib, json, stat
+root = Path('/home/arch/nord-tools')
+excluded = {'.git', 'node_modules', '__pycache__', '.pytest_cache', '.ruff_cache', '.venv'}
+result = {}
+if root.is_dir():
+    for path in sorted(root.rglob('*')):
+        rel = path.relative_to(root)
+        if any(part in excluded for part in rel.parts):
+            continue
+        if path.is_symlink():
+            raise SystemExit('Guest source contains a symlink')
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise SystemExit('Guest source contains an unsupported entry')
+        result[rel.as_posix()] = [hashlib.sha256(path.read_bytes()).hexdigest(), stat.S_IMODE(path.stat().st_mode) & 0o777]
+print(json.dumps(result, sort_keys=True))
+"""
+
+
 def upload_source():
-    """Copy the current working tree into the guest without Git or cache artefacts."""
-    if not SOURCE_ROOT.is_dir():
-        raise RuntimeError(f"Source tree is unavailable: {SOURCE_ROOT}")
-    progress("Uploading the current working tree to the guest...")
-    prepare = ssh("rm", "-rf", "--", REMOTE_ROOT, timeout=30)
-    if prepare.returncode:
-        raise RuntimeError("Unable to clear the guest test tree: " + prepare.stderr.strip())
-    prepare = ssh("mkdir", "-p", "--", REMOTE_ROOT, timeout=30)
-    if prepare.returncode:
-        raise RuntimeError("Unable to create the guest test tree: " + prepare.stderr.strip())
-    archive = subprocess.Popen(
-        [
-            "tar",
-            "--exclude=.git",
-            "--exclude=node_modules",
-            "--exclude=__pycache__",
-            "--exclude=.pytest_cache",
-            "--exclude=.ruff_cache",
-            "-C",
-            str(SOURCE_ROOT),
-            "-cf",
-            "-",
-            ".",
-        ],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    assert archive.stdout is not None
-    receiver = subprocess.run(
-        ssh_args("tar", "-C", REMOTE_ROOT, "-xf", "-"),
-        stdin=archive.stdout,
-        capture_output=True,
-        check=False,
-        timeout=180,
-    )
-    archive.stdout.close()
-    archive_stderr = archive.communicate(timeout=30)[1].decode(errors="replace").strip()
-    if archive.returncode or receiver.returncode:
-        detail = archive_stderr or receiver.stderr.decode(errors="replace").strip()
-        raise RuntimeError("Unable to upload the source tree: " + detail)
+    """Synchronise changed source bytes and verify the final guest manifest."""
+    desired = source_manifest(SOURCE_ROOT)
+    current_result = guest_command(GUEST_MANIFEST_SCRIPT, timeout=120)
+    if current_result.returncode:
+        # Never repair an untrusted or unreadable tree by blindly extracting over it.
+        raise RuntimeError("Guest source inspection failed: " + current_result.stderr.strip())
+    try:
+        current = json.loads(current_result.stdout)
+        if not isinstance(current, dict):
+            raise ValueError("manifest is not a dictionary")
+    except (ValueError, TypeError) as exc:
+        raise RuntimeError("Guest source manifest invalid") from exc
+    changed = [name for name, entry in desired.items() if current.get(name) != entry]
+    removed = sorted(set(current) - set(desired))
+    if not changed and not removed:
+        progress("Source tree verified unchanged; no transfer required.")
+        return
+    progress(f"Synchronising source: {len(changed)} changed, {len(removed)} removed.")
+    # Extract only regular files from the trusted local checkout. The remote
+    # destination is fixed and the final manifest is checked independently.
+    if changed:
+        buffer = io.BytesIO()
+        with tarfile.open(fileobj=buffer, mode="w") as archive:
+            for name in changed:
+                archive.add(SOURCE_ROOT / name, arcname=name, recursive=False)
+        prepare = ssh("mkdir", "-p", REMOTE_ROOT, timeout=30)
+        if prepare.returncode:
+            raise RuntimeError("Unable to create guest source tree: " + prepare.stderr.strip())
+        receiver = subprocess.run(
+            ssh_args("tar -C " + REMOTE_ROOT + " -xf -"),
+            input=buffer.getvalue(),
+            capture_output=True,
+            timeout=180,
+            check=False,
+        )
+        if receiver.returncode:
+            raise RuntimeError("Guest source transfer failed: " + receiver.stderr.decode(errors="replace"))
+    if removed:
+        # Delete only names obtained from the verified guest manifest. The
+        # guest script revalidates the relative paths and refuses symlinks.
+        encoded = base64.b64encode(json.dumps(removed).encode()).decode()
+        deletion = guest_command(f"""from pathlib import Path
+import base64, json
+root = Path({REMOTE_ROOT!r})
+for name in json.loads(base64.b64decode({encoded!r})):
+    rel = Path(name)
+    if rel.is_absolute() or '..' in rel.parts or not rel.parts:
+        raise SystemExit('Invalid source removal path')
+    target = root / rel
+    if target.is_symlink() or not target.is_file():
+        raise SystemExit('Unexpected source removal target')
+    target.unlink()
+""")
+        if deletion.returncode:
+            raise RuntimeError("Unable to remove obsolete guest files: " + deletion.stderr.strip())
+    verified = guest_command(GUEST_MANIFEST_SCRIPT, timeout=120)
+    if verified.returncode or json.loads(verified.stdout) != desired:
+        raise RuntimeError("Guest source verification failed after synchronisation")
 
 
 # Only this probe currently declares retained diagnostic directories. The guest
@@ -632,8 +861,16 @@ ruff check .
 echo "RUN: Ruff format check"
 ruff format --check .
 echo "RUN: Markdown lint"
-npm ci --ignore-scripts --no-audit --no-fund
+npm_state="$(sha256sum package-lock.json | cut -d' ' -f1):$(node --version):$(npm --version)"
+if [ -f node_modules/.nt-install-state ] && [ "$(cat node_modules/.nt-install-state)" = "$npm_state" ] && npm ls --depth=0 --offline >/dev/null 2>&1; then
+  echo "Reusing verified Node dependencies"
+else
+  npm ci --ignore-scripts --no-audit --no-fund
+  npm ls --depth=0 --offline >/dev/null
+  printf '%s' "$npm_state" > node_modules/.nt-install-state
+fi
 npm run lint:markdown
+sudo -n touch /var/tmp/nord-tools-acceptance-used
 echo "RUN: privileged network isolation acceptance"
 sudo -n python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged
 echo "RUN: privileged application lifecycle acceptance"
@@ -711,8 +948,12 @@ def remove():
     return "Disposable guest and its generated storage removed. Image cache retained."
 
 
-def rebuild():
-    """Replace a failed disposable guest, then wait for verified readiness."""
+def rebuild(force=False):
+    """Reuse only an attested, unused guest; otherwise reprovision from scratch."""
+    reuse, reasons = rebuild_plan(force=force)
+    if reuse:
+        return "Existing guest verified equivalent and unused; no rebuild required.\n" + readiness()
+    progress("Clean rebuild required: " + "; ".join(reasons))
     if status() != "Absent":
         if status() == "running":
             progress("Stopping the existing disposable VM...")
@@ -814,7 +1055,10 @@ def gui():
                 choice = QMessageBox.question(
                     self,
                     "Delete disposable guest",
-                    f"{name} {VM}? Its disposable disk and guest data will be permanently erased. The verified image cache is retained.",
+                    (
+                        f"{name} {VM}? Rebuild may erase the disposable disk if equivalence "
+                        "cannot be verified. Delete always erases it. The image cache is retained."
+                    ),
                 )
                 if choice != QMessageBox.StandardButton.Yes:
                     return
@@ -878,7 +1122,11 @@ def main():
             "wait",
         ],
     )
+    parser.add_argument("--force", action="store_true", help="Always recreate the disposable VM with rebuild")
+    parser.add_argument("--plan", action="store_true", help="Explain rebuild decisions without making changes")
     args = parser.parse_args()
+    if (args.force or args.plan) and args.action != "rebuild":
+        parser.error("--force and --plan apply only to rebuild")
     actions = {
         "status": status,
         "ready": readiness,
@@ -899,7 +1147,13 @@ def main():
         if args.action == "gui":
             return gui()
         _CLI_PROGRESS = True
-        print(actions[args.action]())
+        if args.action == "rebuild" and args.plan:
+            reuse, reasons = rebuild_plan(force=args.force)
+            print("Decision: " + ("reuse verified unused VM" if reuse else "clean rebuild"))
+            for reason in reasons:
+                print("Reason: " + reason)
+            return 0
+        print(rebuild(force=args.force) if args.action == "rebuild" else actions[args.action]())
         return 0
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
