@@ -69,7 +69,6 @@ with socket.socket(family, kind) as sock:
 """
 
 UNDERLAY_CLIENT = r"""
-import errno
 import socket
 import sys
 
@@ -83,9 +82,10 @@ with socket.socket(family, kind) as sock:
         else:
             sock.sendto(b'forbidden', (sys.argv[3], int(sys.argv[4])))
     except OSError as exc:
-        if exc.errno not in (errno.EPERM, errno.EACCES, errno.ENETUNREACH,
-                             errno.EHOSTUNREACH, errno.ETIMEDOUT, errno.ECONNREFUSED):
-            raise
+        # A failed connect is not evidence of a leak. The independent
+        # listener must still prove that no traffic was delivered.
+        print(f'BLOCKED_SOCKET_ERROR:{exc.errno}:{exc.strerror}', file=sys.stderr)
+        sys.exit(0)
 """
 
 
@@ -145,7 +145,8 @@ def verify_underlay_bypass(
         sender = _execute(namespace, UNDERLAY_CLIENT, str(family), protocol, address, str(port))
         if sender.returncode:
             raise ApplicationConfinementError(
-                f"underlay {protocol} sender failed unexpectedly: {sender.stderr.strip()[:160]}"
+                f"underlay {protocol} sender failed unexpectedly (exit {sender.returncode}): "
+                f"{sender.stderr.strip()[-1200:]}"
             )
         if listener.wait(timeout=6) != 0:
             raise ApplicationConfinementError(f"IPv{family} application {protocol} escaped onto underlay")

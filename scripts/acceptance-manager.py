@@ -14,6 +14,7 @@ import json
 import os
 import queue
 import re
+import shlex
 import shutil
 import socket
 import stat
@@ -43,7 +44,7 @@ SSH_PORT = int(os.environ.get("NORD_TOOLS_ACCEPTANCE_SSH_PORT", "22222"))
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/arch/nord-tools"
 GUEST_ATTESTATION = "/etc/nord-tools-acceptance-spec"
-PROVISION_REVISION = "2"
+PROVISION_REVISION = "3"
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -121,8 +122,9 @@ def ssh_endpoint():
 
 
 def ssh_args(*args):
+    """Build SSH arguments, preserving remote command argument boundaries."""
     KNOWN_HOSTS.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return (
+    command = (
         "ssh",
         "-F",
         "/dev/null",
@@ -141,8 +143,13 @@ def ssh_args(*args):
         "-i",
         str(SSH_PRIVATE_KEY),
         f"arch@{SSH_HOST}",
-        *args,
     )
+    if not args:
+        return command
+    # OpenSSH joins separate command arguments with spaces before asking the
+    # remote login shell to parse them. Quote the complete argv here so values
+    # such as Python's -c program remain one remote argument.
+    return (*command, shlex.join(args))
 
 
 def ssh(*args, timeout=15, check=False):
@@ -160,8 +167,60 @@ def port_available():
     return True
 
 
+def python_health():
+    """Check guest Python independently of cloud-init's Python entry point.
+
+    A rolling Arch upgrade can briefly replace the interpreter before its
+    matching standard library is available. A broken cloud-init command is
+    therefore not by itself evidence that cloud-init has failed.
+    """
+    try:
+        result = ssh("/usr/bin/python", "-c", "import operator, argparse, sys; print(sys.version)")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"Python health probe unavailable: {exc}"
+    if result.returncode:
+        detail = (result.stderr or result.stdout).strip()
+        return f"Guest Python standard library unavailable: {detail[:700]}"
+    return None
+
+
+def guest_boot_diagnostics():
+    """Collect bounded, read-only diagnostics without relying on guest Python."""
+    commands = (
+        ("Python package and stdlib", ("sh", "-c", "pacman -Q python; ls -l /usr/lib/python*/operator.py")),
+        ("Package operations", ("sh", "-c", "ps -eo pid,comm,args | grep -E '[p]acman|[c]loud-init'")),
+        (
+            "Cloud-init logs",
+            (
+                "sudo",
+                "-n",
+                "journalctl",
+                "-b",
+                "-u",
+                "cloud-init.service",
+                "-u",
+                "cloud-config.service",
+                "-u",
+                "cloud-final.service",
+                "--no-pager",
+                "-n",
+                "55",
+            ),
+        ),
+    )
+    sections = []
+    for title, args in commands:
+        try:
+            result = ssh(*args, timeout=12)
+            output = "\n".join(part.strip() for part in (result.stdout, result.stderr) if part.strip())
+            sections.append(f"{title}:\n{output[-3500:] or '(no output)'}")
+        except (OSError, subprocess.SubprocessError) as exc:
+            sections.append(f"{title}: unavailable ({exc})")
+    return "\n".join(sections)
+
+
 def readiness():
-    """Report actual cloud-init status and treat failures as failures."""
+    """Require both a healthy Python installation and completed cloud-init."""
     if status() != "running":
         return "Guest is not running"
     try:
@@ -171,9 +230,12 @@ def readiness():
     output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
     if result.returncode == 255:
         return "SSH or cloud-init unavailable: " + (output or "SSH exited with status 255")
+    health = python_health()
+    if health:
+        return "Guest Python unhealthy: " + health + "\n" + output
     if "status: error" in output or "status: degraded" in output:
         return "Provisioning failed:\n" + output
-    if "status: done" in output:
+    if "status: done" in output and result.returncode == 0:
         return "Ready: cloud-init completed successfully\n" + output
     if result.returncode != 0:
         return "Cloud-init check failed: " + (output or f"exit status {result.returncode}")
@@ -181,10 +243,11 @@ def readiness():
 
 
 def wait_ready(timeout=360, interval=5):
-    """Wait for a real SSH and cloud-init success, with a bounded deadline."""
+    """Allow transient package upgrades, but never certify an unhealthy guest."""
     deadline = time.monotonic() + timeout
     last = "Not checked"
     reported = None
+    unhealthy_since = None
     while time.monotonic() < deadline:
         last = readiness()
         summary = last.splitlines()[0]
@@ -194,10 +257,24 @@ def wait_ready(timeout=360, interval=5):
             reported = summary
         if last.startswith("Ready:"):
             return last
+        if last.startswith("Guest Python unhealthy:"):
+            if unhealthy_since is None:
+                unhealthy_since = time.monotonic()
+            # A package transaction may temporarily expose a mismatched Python
+            # executable and stdlib. Give it time to finish, but never loop
+            # indefinitely or claim that the guest is ready.
+            if time.monotonic() - unhealthy_since >= 90:
+                raise RuntimeError(last + "\nGuest diagnostics:\n" + guest_boot_diagnostics())
+        else:
+            unhealthy_since = None
         if last.startswith(("Provisioning failed:", "Cloud-init check failed:")) or last == "Guest is not running":
-            raise RuntimeError(last)
+            raise RuntimeError(last + "\nGuest diagnostics:\n" + guest_boot_diagnostics())
         time.sleep(interval)
-    raise RuntimeError(f"Guest was not ready after {timeout} seconds. Last observation: {last}")
+    raise RuntimeError(
+        f"Guest was not ready after {timeout} seconds. Last observation: {last}"
+        + "\nGuest diagnostics:\n"
+        + guest_boot_diagnostics()
+    )
 
 
 def digest_from_text(text):
@@ -329,7 +406,7 @@ def provisioning_spec(key):
 def guest_command(script, *, timeout=30):
     """Pass scripts through SSH stdin; never interpolate multiline code into a shell."""
     return subprocess.run(
-        ssh_args("python -"), input=script, text=True, capture_output=True, timeout=timeout, check=False
+        ssh_args("python", "-"), input=script, text=True, capture_output=True, timeout=timeout, check=False
     )
 
 
@@ -673,7 +750,7 @@ def upload_source():
         if prepare.returncode:
             raise RuntimeError("Unable to create guest source tree: " + prepare.stderr.strip())
         receiver = subprocess.run(
-            ssh_args("tar -C " + REMOTE_ROOT + " -xf -"),
+            ssh_args("tar", "-C", REMOTE_ROOT, "-xf", "-"),
             input=buffer.getvalue(),
             capture_output=True,
             timeout=180,
@@ -779,15 +856,15 @@ def export_evidence(guest_directory=None):
     if not readiness().startswith("Ready:"):
         raise RuntimeError("Guest is not ready for evidence collection")
     # Send the script over SSH stdin rather than through remote-shell -c quoting.
-    # The remote command is a fixed single-line string; the optional path is
+    # The remote command uses structured arguments; the optional path is
     # validated before inclusion and passed as a separate Python argument.
     if guest_directory and not re.fullmatch(r"/tmp/nt-production-wg-[A-Za-z0-9_-]+", guest_directory):
         raise RuntimeError("Invalid guest evidence directory")
-    remote_command = "sudo -n python -"
+    remote_command = ["sudo", "-n", "python", "-"]
     if guest_directory:
-        remote_command += " " + guest_directory
+        remote_command.append(guest_directory)
     result = subprocess.run(
-        ssh_args(remote_command),
+        ssh_args(*remote_command),
         input=GUEST_EVIDENCE_SCRIPT,
         text=True,
         capture_output=True,

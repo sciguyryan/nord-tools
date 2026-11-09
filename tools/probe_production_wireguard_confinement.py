@@ -157,6 +157,9 @@ def run_probe() -> None:
     dns_responder: subprocess.Popen | None = None
     dns_responder_v6: subprocess.Popen | None = None
     succeeded = False
+    config: dict | None = None
+    restoration_attempted = False
+    retired = False
     try:
         peer_private = command("wg", "genkey")
         client_private = command("wg", "genkey")
@@ -256,6 +259,7 @@ while True:
         # Both address families must exchange live packets. Route presence on
         # its own is not evidence that the peer can return tunnel traffic.
         write(temporary / "startup.json", config)
+        restoration_attempted = True
         restore_boot_state(config)
         attach_underlay_to_peer(config, "alpha", bridge, "10.214.10.1/30")
         # The second underlay family is deliberately available to the peer.
@@ -323,6 +327,7 @@ while True:
         )
         if not result["executed"]:
             raise AcceptanceError("ownership-aware retirement was not executed")
+        retired = True
         if any(
             item["identifier"] in discover().get("namespaces", ())
             for item in read(Path(config["journal"]))["allocations"]["resources"]
@@ -341,6 +346,25 @@ while True:
         succeeded = True
         print("PASS: one production-owned WireGuard profile, firewall, routes, DNS, live traffic and retirement")
     finally:
+        # A failing traffic assertion must not strand a production-owned namespace.
+        # Retire only resources verified by the existing ownership-aware executor;
+        # retain the journal and other evidence when a probe fails.
+        if restoration_attempted and not retired and config is not None:
+            try:
+                result = plan_cleanup(
+                    config["journal"],
+                    config["bindings"],
+                    intent_path=config["intent"],
+                    selected_profiles=("alpha",),
+                    resolvers=True,
+                    execute=True,
+                )
+                if not result["executed"]:
+                    print("FAIL: recovery cleanup did not execute; evidence retained", file=sys.stderr)
+                else:
+                    print("PASS: failure-path ownership-aware retirement completed", flush=True)
+            except (OSError, RuntimeError, ValueError) as exc:
+                print(f"FAIL: failure-path ownership-aware retirement: {exc}", file=sys.stderr)
         if dns_responder is not None:
             dns_responder.terminate()
             dns_responder.wait(timeout=5)

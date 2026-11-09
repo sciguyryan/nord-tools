@@ -67,3 +67,29 @@ def test_tunnel_loss_must_refuse_successful_dns(family, resolver):
 def test_tunnel_loss_accepts_dns_failure(family, resolver):
     with patch.object(application, "_execute", return_value=CompletedProcess([], 1, "", "timeout")):
         application.verify_dns_unavailable("owned-ns", resolver, family=family)
+
+
+@pytest.mark.parametrize("socket_errno", [1, 13, 22, 101, 113])
+def test_blocked_tcp_socket_errors_are_classified_by_listener_not_errno(socket_errno):
+    """Linux may return different socket errors for a blocked TCP connect."""
+    import subprocess
+    import sys
+
+    shim = f"""
+import errno
+import socket
+class BlockedSocket:
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+    def settimeout(self, value): pass
+    def connect(self, address): raise OSError({socket_errno}, 'blocked by policy')
+socket.socket = lambda *args: BlockedSocket()
+"""
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", shim + application.UNDERLAY_CLIENT, "4", "tcp", "10.214.10.1", "53053"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "BLOCKED_SOCKET_ERROR:" in result.stderr

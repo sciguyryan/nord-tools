@@ -42,6 +42,7 @@ def test_status_does_not_treat_libvirt_failure_as_absence(manager, monkeypatch):
 
 def test_readiness_reports_cloud_init_failure(manager, monkeypatch):
     monkeypatch.setattr(manager, "status", lambda: "running")
+    monkeypatch.setattr(manager, "python_health", lambda: None)
     monkeypatch.setattr(
         manager,
         "ssh",
@@ -79,6 +80,22 @@ def test_ssh_uses_loopback_forward_and_dedicated_identity(manager):
     assert f"arch@{manager.SSH_HOST}" in command
     assert "IdentitiesOnly=yes" in command
     assert any(value.startswith("UserKnownHostsFile=") for value in command)
+
+
+def test_ssh_preserves_remote_command_argument_boundaries(manager):
+    command = manager.ssh_args(
+        "/usr/bin/python",
+        "-c",
+        "import operator, argparse, sys; print(sys.version)",
+    )
+
+    assert command[-1] == ("/usr/bin/python -c 'import operator, argparse, sys; print(sys.version)'")
+
+
+def test_ssh_without_remote_command_remains_interactive(manager):
+    command = manager.ssh_args()
+
+    assert command[-1] == f"arch@{manager.SSH_HOST}"
 
 
 def test_acceptance_key_is_generated_without_using_personal_key(manager, monkeypatch, tmp_path):
