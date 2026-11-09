@@ -23,6 +23,10 @@ def test_matrix_uses_complete_registered_packet_stage():
     assert "probe_application_network_confinement.py" not in filenames
 
 
+def test_host_matrix_leaves_nested_desktop_acceptance_to_disposable_guest():
+    assert "probe_desktop_launch_acceptance.py" not in [filename for _, filename, _ in probe.STAGES]
+
+
 @pytest.mark.parametrize("uid,gid", [(0, 1000), (1000, 0), (-1, 1000)])
 def test_privileged_identity_must_be_nonroot(uid, gid):
     with patch.object(probe.os, "geteuid", return_value=0), pytest.raises(SystemExit):

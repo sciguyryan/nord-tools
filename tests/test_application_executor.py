@@ -194,9 +194,11 @@ def test_generation_drift_blocks_pre_exec_release_after_lease_reservation():
 
     class SuspendedChild:
         pid = 9876
+        environment = None
 
         def __init__(self, argv, **kwargs):
             os.write(int(argv[7]), b"R")
+            type(self).environment = kwargs["env"]
             self.terminated = False
 
         def poll(self):
@@ -225,6 +227,10 @@ def test_generation_drift_blocks_pre_exec_release_after_lease_reservation():
     with (
         patch("nord_tools_internal.nordvpn_application_executor.os.geteuid", return_value=0),
         patch("nord_tools_internal.nordvpn_application_executor.plan_application", return_value=plan),
+        patch(
+            "nord_tools_internal.nordvpn_application_executor.application_environment",
+            return_value={"DISPLAY": ":0"},
+        ) as environment,
         patch("nord_tools_internal.nordvpn_application_executor.selected_allocation", return_value=allocation),
         patch("nord_tools_internal.nordvpn_application_executor.read_handover", return_value={}),
         patch("nord_tools_internal.nordvpn_application_executor._namespace_for_profile", return_value="nt-12345678"),
@@ -261,3 +267,5 @@ def test_generation_drift_blocks_pre_exec_release_after_lease_reservation():
     reserve.assert_called_once()
     release.assert_called_once()
     packet.assert_not_called()
+    environment.assert_called_once_with(1000, desktop_session=False, source=None)
+    assert SuspendedChild.environment == {"DISPLAY": ":0"}

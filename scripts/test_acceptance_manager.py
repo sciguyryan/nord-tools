@@ -115,6 +115,8 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     source = Path(__file__).with_name("acceptance-manager.py").read_text(encoding="utf-8")
 
     assert "- [install, -d, -m, '0755', -o, root, -g, root, /etc/netns]" in source
+    assert 'package_list = ", ".join(REQUIRED_PACKAGES)' in source
+    assert "sudo -n python tools/probe_desktop_launch_acceptance.py" in source
 
 
 @pytest.mark.parametrize(
@@ -129,6 +131,15 @@ def test_test_command_reports_rebuild_hint_only_for_stopped_guest(manager, monke
     message = str(error.value)
     assert state in message
     assert ("acceptance-manager.py rebuild" in message) == (state == "Guest is not running")
+
+
+def test_test_command_refuses_incomplete_guest_contract(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: cloud-init completed successfully")
+    monkeypatch.setattr(manager, "guest_provisioning_issues", lambda: ["guest dependencies missing: weston"])
+    monkeypatch.setattr(manager, "upload_source", lambda: pytest.fail("source uploaded despite stale guest"))
+
+    with pytest.raises(RuntimeError, match="acceptance-manager.py rebuild"):
+        manager.run_tests()
 
 
 def test_failure_evidence_exports_only_registered_path(manager, monkeypatch):

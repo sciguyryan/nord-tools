@@ -76,7 +76,7 @@ def test_direct_launcher_does_not_use_namespace_or_shell():
     process.wait.return_value = 23
     with (
         patch("nord_tools_internal.nordvpn_application_executor.os.geteuid", return_value=0),
-        patch("nord_tools_internal.nordvpn_application_executor.pwd.getpwuid") as account,
+        patch("nord_tools_internal.nordvpn_desktop_environment.pwd.getpwuid") as account,
         patch("nord_tools_internal.nordvpn_application_executor.subprocess.Popen", return_value=process) as popen,
     ):
         account.return_value.pw_dir = "/home/example"

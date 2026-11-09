@@ -8,16 +8,17 @@ This is a cooperating-process launch contract, not a hostile-root boundary.
 from __future__ import annotations
 
 import os
-import pwd
 from pathlib import Path
 import select
 import subprocess
 import sys
+from typing import Mapping
 
 from nord_tools_internal.nordvpn_application_plan import plan_application
 from nord_tools_internal.nordvpn_allocation_profiles import kernel_profile_for_allocation
 from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError, read_private_json
 from nord_tools_internal.nordvpn_consumer_reference_store import locked_consumer_references
+from nord_tools_internal.nordvpn_desktop_environment import application_environment
 from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock
 from nord_tools_internal.nordvpn_generation_handover import read_handover, selected_allocation
 from nord_tools_internal.nordvpn_generation_recovery import _verify_live_confinement
@@ -29,7 +30,16 @@ from nord_tools_internal.nordvpn_runtime_consumers import (
 )
 
 
-def launch_direct_application(policy: dict, application: str, arguments: tuple[str, ...], *, uid: int, gid: int) -> int:
+def launch_direct_application(
+    policy: dict,
+    application: str,
+    arguments: tuple[str, ...],
+    *,
+    uid: int,
+    gid: int,
+    desktop_session: bool = False,
+    environment_source: Mapping[str, str] | None = None,
+) -> int:
     """Execute an explicitly direct-registered program using the host network.
 
     Direct is never a fallback. It uses the host's current routing and DNS
@@ -41,17 +51,7 @@ def launch_direct_application(policy: dict, application: str, arguments: tuple[s
     plan = plan_application(policy, application, arguments)
     if plan.profile != "direct" or plan.sharing != "direct":
         raise ConsumerReferenceError("direct execution requires an explicitly direct-registered application")
-    try:
-        account = pwd.getpwuid(uid)
-    except KeyError as exc:
-        raise ConsumerReferenceError("direct launch target uid does not exist") from exc
-    environment = {
-        "HOME": account.pw_dir,
-        "USER": account.pw_name,
-        "LOGNAME": account.pw_name,
-        "PATH": "/usr/local/bin:/usr/bin:/bin",
-        "LANG": os.environ.get("LANG", "C.UTF-8"),
-    }
+    environment = application_environment(uid, desktop_session=desktop_session, source=environment_source)
     # Popen's POSIX credential parameters apply before exec. There is no shell,
     # privilege-preserving supplementary group, or namespace transition.
     try:
@@ -97,6 +97,8 @@ def launch_provisioned_application(
     ready_timeout: float = 10.0,
     handover_path: str | None = None,
     tunnel_plan: dict | None = None,
+    desktop_session: bool = False,
+    environment_source: Mapping[str, str] | None = None,
 ) -> int:
     """Block until the registered program exits; refuse unverified execution.
 
@@ -113,6 +115,7 @@ def launch_provisioned_application(
         raise ConsumerReferenceError("direct applications cannot use VPN namespace leases")
     if handover_path is not None and tunnel_plan is None:
         raise ConsumerReferenceError("generation launch requires the pinned tunnel plan")
+    environment = application_environment(uid, desktop_session=desktop_session, source=environment_source)
     kernel_profile = kernel_profile_for_allocation(plan.allocation_key, plan.profile, plan.sharing)
     generation_id = "unversioned"
     # Resolve the interpreter before creating the child. It is only the trusted
@@ -154,6 +157,7 @@ def launch_provisioned_application(
                 ],
                 pass_fds=(ready_w, release_r),
                 close_fds=True,
+                env=environment,
             )
             os.close(ready_w)
             ready_w = -1

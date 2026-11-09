@@ -275,6 +275,11 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--uid", required=True, type=int, help="Non-root application user ID")
             command.add_argument("--gid", required=True, type=int, help="Non-root application group ID")
             command.add_argument(
+                "--desktop-session",
+                action="store_true",
+                help="Forward a validated Wayland/X11 and user D-Bus session environment",
+            )
+            command.add_argument(
                 "--execute", action="store_true", help="Launch after verified namespace and lease reservation"
             )
             command.add_argument("arguments", nargs="*", help="Application arguments (no shell expansion)")
@@ -618,6 +623,7 @@ def main(argv: list[str] | None = None) -> int:
                             "argv": [plan.executable, *plan.arguments],
                             "routing_mode": "host" if plan.profile == "direct" else "vpn",
                             "host_vpn_may_apply": plan.profile == "direct",
+                            "desktop_session": args.desktop_session,
                         },
                         indent=2,
                         sort_keys=True,
@@ -633,6 +639,7 @@ def main(argv: list[str] | None = None) -> int:
                     tuple(args.arguments),
                     uid=args.uid,
                     gid=args.gid,
+                    desktop_session=args.desktop_session,
                 )
             if not config["intent"]:
                 raise ManagementError("application launch requires a pinned operation intent store")
@@ -649,6 +656,7 @@ def main(argv: list[str] | None = None) -> int:
                 observe=discover,
                 uid=args.uid,
                 gid=args.gid,
+                desktop_session=args.desktop_session,
                 handover_path=config.get("handovers", {}).get(plan.allocation_key)
                 or config.get("handovers", {}).get(plan.profile),
                 tunnel_plan=config["tunnels"].get(plan.profile),

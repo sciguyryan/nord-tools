@@ -44,7 +44,7 @@ SSH_PORT = int(os.environ.get("NORD_TOOLS_ACCEPTANCE_SSH_PORT", "22222"))
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/arch/nord-tools"
 GUEST_ATTESTATION = "/etc/nord-tools-acceptance-spec"
-PROVISION_REVISION = "3"
+PROVISION_REVISION = "4"
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -61,8 +61,14 @@ REQUIRED_PACKAGES = (
     "iproute2",
     "iputils",
     "bind",
+    "dbus",
     "jq",
     "qemu-guest-agent",
+    "weston",
+    "wayland-utils",
+    "xorg-server-xvfb",
+    "xorg-xauth",
+    "xorg-xdpyinfo",
 )
 _PRIVILEGE_PASSWORD = None
 _CLI_PROGRESS = False
@@ -412,6 +418,44 @@ def guest_command(script, *, timeout=30):
     )
 
 
+def guest_provisioning_issues():
+    """Check the reusable guest contract without requiring a pristine baseline."""
+    if not SSH_PUBLIC_KEY.is_file():
+        return ["acceptance SSH public key missing"]
+    expected = provisioning_spec(SSH_PUBLIC_KEY.read_text(encoding="utf-8").strip())
+    try:
+        probe = guest_command(f"""from pathlib import Path
+import json, subprocess
+p = Path('/etc/nord-tools-acceptance-spec')
+try:
+    spec = p.read_text().strip()
+except OSError:
+    spec = ''
+packages = {REQUIRED_PACKAGES!r}
+missing = [package for package in packages if subprocess.run(
+    ['pacman', '-Q', package], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+).returncode]
+print(json.dumps({{'spec': spec, 'missing': missing}}))
+""")
+    except (OSError, subprocess.SubprocessError) as exc:
+        return [f"guest provisioning attestation failed: {exc}"]
+    if probe.returncode:
+        return ["guest provisioning attestation unavailable"]
+    try:
+        report = json.loads(probe.stdout)
+    except (ValueError, TypeError):
+        return ["guest provisioning attestation malformed"]
+    issues = []
+    if report.get("spec") != expected:
+        issues.append("guest provisioning specification differs")
+    missing = report.get("missing")
+    if not isinstance(missing, list):
+        issues.append("guest provisioning attestation malformed")
+    elif missing:
+        issues.append("guest dependencies missing: " + ", ".join(missing))
+    return issues
+
+
 def inspect_guest():
     """Observe actual domain and guest state; uncertainty always forbids reuse."""
     reasons = []
@@ -460,44 +504,7 @@ def inspect_guest():
     if not ready.startswith("Ready:"):
         reasons.append("guest readiness not verified: " + ready.splitlines()[0])
         return reasons
-    if not SSH_PUBLIC_KEY.is_file():
-        reasons.append("acceptance SSH public key missing")
-        return reasons
-    spec = provisioning_spec(SSH_PUBLIC_KEY.read_text(encoding="utf-8").strip())
-    try:
-        probe = guest_command(f"""from pathlib import Path
-import json, subprocess
-p = Path('/etc/nord-tools-acceptance-spec')
-try:
-    spec = p.read_text().strip()
-except OSError:
-    spec = ''
-missing = []
-packages = {REQUIRED_PACKAGES!r}
-if subprocess.run(['pacman', '-Q', *packages], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode:
-    missing.append('provisioned package set')
-for executable in ('python', 'pytest', 'ruff', 'node', 'npm', 'wg', 'nft', 'ip', 'cloud-init'):
-    if subprocess.run(
-        ['bash', '-lc', 'command -v ' + executable],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    ).returncode:
-        missing.append(executable)
-print(json.dumps({{'spec': spec, 'missing': missing}}))
-""")
-    except (OSError, subprocess.SubprocessError) as exc:
-        reasons.append(f"guest attestation failed: {exc}")
-        return reasons
-    if probe.returncode:
-        reasons.append("guest provisioning attestation unavailable")
-    else:
-        try:
-            report = json.loads(probe.stdout)
-            if report.get("spec") != spec:
-                reasons.append("guest provisioning specification differs")
-            if report.get("missing"):
-                reasons.append("guest dependencies missing: " + ", ".join(report["missing"]))
-        except (ValueError, TypeError, KeyError):
-            reasons.append("guest provisioning attestation malformed")
+    reasons.extend(guest_provisioning_issues())
     # A successful acceptance run does not prove a clean baseline. This marker
     # is set before any privileged tests, and cleared only by fresh provisioning.
     try:
@@ -542,6 +549,7 @@ ethernets:
     dhcp6: false
 """
     spec = provisioning_spec(key)
+    package_list = ", ".join(REQUIRED_PACKAGES)
     user_data = f"""#cloud-config
 hostname: {VM}
 manage_etc_hosts: true
@@ -556,7 +564,7 @@ users:
     ssh_authorized_keys:
       - {json.dumps(key)}
 package_update: true
-packages: [git, python, python-pip, python-pytest, ruff, nodejs, npm, openssh, sudo, nftables, wireguard-tools, curl, iproute2, iputils, bind, jq, qemu-guest-agent]
+packages: [{package_list}]
 write_files:
   - path: /etc/nord-tools-acceptance-spec
     owner: root:root
@@ -930,6 +938,13 @@ def run_tests():
                 "to create and start a fresh disposable guest, then retry 'test'."
             )
         raise RuntimeError(message)
+    provisioning_issues = guest_provisioning_issues()
+    if provisioning_issues:
+        raise RuntimeError(
+            "Guest provisioning contract is incomplete: "
+            + "; ".join(provisioning_issues)
+            + "\nHint: Run 'python scripts/acceptance-manager.py rebuild' before retrying 'test'."
+        )
     upload_source()
     command = f"""set -euo pipefail
 cd {REMOTE_ROOT}
@@ -954,6 +969,8 @@ echo "RUN: privileged network isolation acceptance"
 sudo -n python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged
 echo "RUN: privileged application lifecycle acceptance"
 sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
+echo "RUN: registered desktop session integration"
+sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
 """
     progress("Starting guest quality gates and privileged acceptance matrices...")
     if _CLI_PROGRESS:
