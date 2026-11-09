@@ -11,6 +11,7 @@ Packet confinement and desktop integration remain separate acceptance scopes.
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import io
 import json
@@ -19,6 +20,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import tempfile
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -76,6 +78,49 @@ def tunnel_plan(index: int, peer_public_key: str) -> dict:
     }
 
 
+def verify_exact_leases(leases: list[dict], expected: dict[str, str]) -> None:
+    """Reject duplicate, missing, unexpected or misallocated runtime leases."""
+    if not isinstance(leases, list) or len(leases) != len(expected):
+        raise ProbeError("concurrent VPN lease count did not match registered children")
+    actual = collections.Counter(item.get("application") for item in leases if isinstance(item, dict))
+    if actual != collections.Counter(expected.keys()):
+        raise ProbeError("concurrent VPN lease identities were not exact")
+    for item in leases:
+        if not isinstance(item, dict) or item.get("allocation_key") != expected[item["application"]]:
+            raise ProbeError("concurrent VPN lease allocation identity was incorrect")
+
+
+def wait_for_lease_release(path: Path, policy: dict, *, timeout: float = 10) -> None:
+    """Allow launcher cleanup to finish, without guessing that leases were released."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not read_runtime_consumers(path, policy)["leases"]:
+            return
+        time.sleep(0.1)
+    raise ProbeError("launcher termination did not release all runtime leases")
+
+
+def recover_failed_allocations(
+    journal: Path, bindings: Path, intents: Path, leases: Path, policy: dict, profiles: tuple[str, ...]
+) -> str:
+    """Retire only verified owned allocations after the children have released leases."""
+    try:
+        wait_for_lease_release(leases, policy)
+        plan_cleanup(
+            journal,
+            bindings,
+            intent_path=intents,
+            selected_profiles=profiles,
+            consumer_policy=policy,
+            released_consumers=("shared-a", "shared-b", "isolated-a", "isolated-b"),
+            runtime_consumers_path=leases,
+            execute=True,
+        )
+    except (OSError, RuntimeError, ValueError) as exc:
+        return f"ownership-verified recovery refused or failed: {exc}"
+    return "ownership-verified recovery completed"
+
+
 def write_child_script(path: Path) -> None:
     path.write_text(
         "import json, os, pathlib, sys, time\n"
@@ -95,7 +140,7 @@ def write_child_script(path: Path) -> None:
         "    json.dump(evidence, stream, sort_keys=True)\n"
         "    stream.flush()\n"
         "    os.fsync(stream.fileno())\n"
-        "deadline = time.monotonic() + 120\n"
+        "deadline = time.monotonic() + 300\n"
         "while not release.exists() and time.monotonic() < deadline:\n"
         "    time.sleep(0.05)\n"
         "raise SystemExit(0 if release.exists() else 124)\n",
@@ -204,6 +249,7 @@ def run_probe(uid: int, gid: int) -> None:
     temporary.chmod(0o755)
     launchers: list[subprocess.Popen] = []
     succeeded = False
+    recovery_context = None
     print(
         f"Creating shared and isolated application allocations under {temporary}; inspect /run/netns if interrupted",
         flush=True,
@@ -273,6 +319,7 @@ def run_probe(uid: int, gid: int) -> None:
         if sorted(restored) != sorted(profiles):
             raise ProbeError("shared and isolated production allocations were not restored")
         initialise_runtime_consumers(leases_path, policy)
+        recovery_context = (journal_path, bindings_path, intents_path, leases_path, policy, profiles)
         journal = read(journal_path)
         recorded_namespaces = {namespace_for_profile(journal, profile) for profile in profiles}
         if len(recorded_namespaces) != 3:
@@ -338,8 +385,15 @@ def run_probe(uid: int, gid: int) -> None:
         if isolated_reports[0]["namespace_inode"] == isolated_reports[1]["namespace_inode"]:
             raise ProbeError("isolated registered applications shared a namespace")
         active_leases = read_runtime_consumers(leases_path, policy)["leases"]
-        if len(active_leases) != 4 or any(item["application"] == "direct-a" for item in active_leases):
-            raise ProbeError("concurrent VPN and direct lease membership was not exact")
+        verify_exact_leases(
+            active_leases,
+            {
+                "shared-a": "profile:shared",
+                "shared-b": "profile:shared",
+                "isolated-a": "application:isolated-a:profile:isolated",
+                "isolated-b": "application:isolated-b:profile:isolated",
+            },
+        )
         print("PASS: concurrent shared applications reused one production allocation", flush=True)
         print("PASS: concurrent isolated applications used independent production allocations", flush=True)
         print("PASS: explicit direct application remained on the host without a VPN lease", flush=True)
@@ -431,6 +485,8 @@ def run_probe(uid: int, gid: int) -> None:
         if succeeded:
             shutil.rmtree(temporary)
         else:
+            if recovery_context is not None:
+                print(recover_failed_allocations(*recovery_context), file=sys.stderr, flush=True)
             print(f"FAILED RUN EVIDENCE RETAINED: {temporary}", file=sys.stderr, flush=True)
 
 

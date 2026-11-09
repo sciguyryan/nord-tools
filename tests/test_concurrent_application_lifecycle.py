@@ -64,3 +64,57 @@ def test_direct_evidence_rejects_supplementary_groups():
             host_namespace=namespace,
             executable="/usr/bin/python",
         )
+
+
+@pytest.mark.parametrize(
+    ("leases", "expected"),
+    [
+        ([{"application": "shared-a", "allocation_key": "profile:shared"}], {"shared-a": "profile:shared"}),
+        ([], {}),
+    ],
+)
+def test_exact_runtime_lease_membership_accepts_expected(leases, expected):
+    probe.verify_exact_leases(leases, expected)
+
+
+@pytest.mark.parametrize(
+    "leases",
+    [
+        [],
+        [{"application": "direct-a", "allocation_key": "profile:shared"}],
+        [{"application": "shared-a", "allocation_key": "wrong"}],
+        [{"application": "shared-a", "allocation_key": "profile:shared"}] * 2,
+    ],
+)
+def test_exact_runtime_lease_membership_rejects_unexpected(leases):
+    with pytest.raises(probe.ProbeError):
+        probe.verify_exact_leases(leases, {"shared-a": "profile:shared"})
+
+
+def test_failure_recovery_refuses_when_leases_remain(monkeypatch, tmp_path):
+    def blocked(*args, **kwargs):
+        raise probe.ProbeError("live lease remains")
+
+    monkeypatch.setattr(probe, "wait_for_lease_release", blocked)
+    monkeypatch.setattr(probe, "plan_cleanup", lambda *a, **k: pytest.fail("must not retire live allocation"))
+    result = probe.recover_failed_allocations(
+        tmp_path / "journal", tmp_path / "bindings", tmp_path / "intents", tmp_path / "leases", {}, ("shared",)
+    )
+    assert "refused" in result
+
+
+def test_failure_recovery_uses_owned_profiles_and_lease_evidence(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(probe, "wait_for_lease_release", lambda *a, **k: None)
+    monkeypatch.setattr(probe, "plan_cleanup", lambda *a, **k: calls.append((a, k)))
+    paths = tuple(tmp_path / name for name in ("journal", "bindings", "intents", "leases"))
+    assert "completed" in probe.recover_failed_allocations(*paths, {}, ("shared", "ntiso_a"))
+    assert calls[0][1]["selected_profiles"] == ("shared", "ntiso_a")
+    assert calls[0][1]["runtime_consumers_path"] == paths[3]
+    assert calls[0][1]["execute"] is True
+
+
+def test_child_watchdog_allows_slow_privileged_acceptance(tmp_path):
+    script = tmp_path / "child.py"
+    probe.write_child_script(script)
+    assert "time.monotonic() + 300" in script.read_text()
