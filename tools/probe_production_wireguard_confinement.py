@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Accept one real WireGuard profile installed by the production restoration executor.
+"""Accept production WireGuard traffic, failure confinement and recovery.
 
 The peer and underlay are disposable. Only the production executor installs the
-client namespace, firewall, WireGuard interface, routes and pinned resolver.
-The probe preserves failure evidence rather than deleting uncertain resources.
+client namespace, firewall, WireGuard interface, routes and pinned resolver. The
+probe exercises establishment rollback, explicit recovery, loss and restart,
+conservative readback refusal and verified retirement. It preserves failure
+evidence rather than deleting uncertain resources.
 """
 
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 import os
 from pathlib import Path
 import secrets
@@ -16,17 +19,27 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from nord_tools_internal.nordvpn_cleanup_executor import plan_cleanup  # noqa: E402
 from nord_tools_internal.nordvpn_discovery import discover  # noqa: E402
-from nord_tools_internal.nordvpn_isolation_install import _verify_base_chains  # noqa: E402
+from nord_tools_internal.nordvpn_dns_confinement import (  # noqa: E402
+    DNSConfinementError,
+    verify_dns_routes,
+    verify_resolver_file,
+)
+from nord_tools_internal.nordvpn_isolation_install import (  # noqa: E402
+    IsolationInstallError,
+    _verify_base_chains,
+)
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy  # noqa: E402
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership  # noqa: E402
 from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy  # noqa: E402
-from nord_tools_internal.nordvpn_dns_confinement import verify_dns_routes, verify_resolver_file  # noqa: E402
+from nord_tools_internal import nordvpn_restore_executor as restore_executor  # noqa: E402
+from nord_tools_internal.nordvpn_recovery_executor import plan_recovery  # noqa: E402
 from nord_tools_internal.nordvpn_restore_executor import restore_boot_state  # noqa: E402
 from tools.probe_live_tunnel_replacement import (  # noqa: E402
     attach_underlay_to_peer,
@@ -55,20 +68,28 @@ def owned_namespace(config: dict) -> tuple[str, str, str]:
     bindings = read(Path(config["bindings"]))
     intents = read(Path(config["intent"]))
     status = preflight_ownership(journal, bindings, discover(), intents)
-    if status["operator_review_required"] or any(
-        resource["finding"] != "verified_current" for resource in status["resources"]
-    ):
+    states = {event["allocation_id"]: event["state"] for event in journal["events"]}
+    active = {token for token, state in states.items() if state == "active"}
+    findings = {item["allocation_id"]: item["finding"] for item in status["resources"]}
+    if status["operator_review_required"] or any(findings.get(token) != "verified_current" for token in active):
         raise AcceptanceError("production ownership could not be verified")
-    resources = {item["allocation_id"]: item for item in journal["allocations"]["resources"]}
+    verified = {token for token in active if findings.get(token) == "verified_current"}
+    resources = {
+        item["allocation_id"]: item for item in journal["allocations"]["resources"] if item["allocation_id"] in verified
+    }
     identified: dict[str, list[str]] = {"namespace": [], "wireguard": [], "underlay": []}
     for item in bindings["bindings"]:
+        if item["allocation_id"] not in verified:
+            continue
         resource = resources[item["allocation_id"]]
         if resource["kind"] == "namespace":
             identified["namespace"].append(item["identifier"])
         elif resource["kind"] == "interface" and item["binding"].get("scope") != "host":
             scope = item["binding"]["scope"]
             if scope not in {
-                binding["identifier"] for binding in bindings["bindings"] if binding["kind"] == "namespace"
+                binding["identifier"]
+                for binding in bindings["bindings"]
+                if binding["kind"] == "namespace" and binding["allocation_id"] in verified
             }:
                 raise AcceptanceError("interface binding refers to an unexpected namespace")
             group = "wireguard" if item["identifier"].startswith("ntwg") else "underlay"
@@ -78,7 +99,118 @@ def owned_namespace(config: dict) -> tuple[str, str, str]:
     return identified["namespace"][0], identified["wireguard"][0], identified["underlay"][0]
 
 
-def verify_tunnel(namespace: str, interface: str, peer_public: str) -> None:
+def verify_profile_absent(config: dict) -> None:
+    """Require rollback to remove every resource named by the failed attempt."""
+    journal = read(Path(config["journal"]))
+    observation = discover()
+    namespaces = set(observation.get("namespaces", ()))
+    host_interfaces = {item["name"] for item in observation.get("host_interfaces", ())}
+    namespace_interfaces = {
+        item["name"] for details in observation.get("namespace_details", ()) for item in details.get("interfaces", ())
+    }
+    for resource in journal["allocations"]["resources"]:
+        identifier = resource["identifier"]
+        if resource["kind"] == "namespace" and identifier in namespaces:
+            raise AcceptanceError("failed establishment left its namespace present")
+        if resource["kind"] == "interface" and identifier in host_interfaces | namespace_interfaces:
+            raise AcceptanceError("failed establishment left an interface present")
+    intents = read(Path(config["intent"]))
+    if not any(item["outcome"] == "uncertain" for item in intents["operations"]):
+        raise AcceptanceError("failed establishment did not retain uncertain recovery evidence")
+
+
+def verify_failed_establishment(config: dict, baseline: dict) -> None:
+    """Fail after WireGuard configuration, then require complete real-kernel rollback."""
+    kernel = restore_executor._real_kernel()
+
+    def refuse_routing(*_args, **_kwargs):
+        raise AcceptanceError("injected route establishment failure")
+
+    try:
+        restore_boot_state(config, kernel=replace(kernel, route_tunnel=refuse_routing))
+    except AcceptanceError as exc:
+        if str(exc) != "injected route establishment failure":
+            raise
+    else:
+        raise AcceptanceError("injected establishment failure was not propagated")
+    verify_profile_absent(config)
+    verify_host(baseline, observe_host())
+    print("PASS: failed production establishment rolled back without host drift", flush=True)
+
+    recovery = plan_recovery(
+        config["journal"],
+        config["bindings"],
+        config["intent"],
+        execute=True,
+        resolvers=True,
+    )
+    if recovery["operator_review_required"] or not recovery["executed"]:
+        raise AcceptanceError("explicit recovery did not close the rolled-back generation")
+    print("PASS: explicit recovery closed the uncertain rolled-back generation", flush=True)
+
+
+def verify_fail_closed(namespace: str, server_namespace: str, port: int) -> None:
+    """Require both DNS families and reachable underlay transports to remain closed."""
+    for family, address in ((4, "10.214.10.1"), (6, "fd42:214::1")):
+        for protocol in ("udp", "tcp"):
+            verify_underlay_bypass(
+                namespace,
+                server_namespace,
+                address,
+                port,
+                family=family,
+                protocol=protocol,
+            )
+    verify_dns_unavailable(namespace, "10.250.0.1", family=4)
+    verify_dns_unavailable(namespace, "fd42:250::1", family=6)
+
+
+def verify_uncertain_readbacks(
+    namespace: str,
+    firewall: NamespaceIsolationPolicy,
+    resolver: NamespaceResolverPolicy,
+    temporary: Path,
+) -> None:
+    """Require malformed firewall and unsafe resolver observations to be refused."""
+    fake_bin = temporary / "malformed-readback-bin"
+    fake_bin.mkdir(mode=0o700)
+    fake_nft = fake_bin / "nft"
+    fake_nft.write_text("#!/bin/sh\nprintf '%s\\n' '{malformed-json'\n", encoding="ascii")
+    fake_nft.chmod(0o700)
+    original_path = os.environ.get("PATH")
+    os.environ["PATH"] = str(fake_bin) + (os.pathsep + original_path if original_path else "")
+    try:
+        try:
+            _verify_base_chains(namespace, firewall)
+        except IsolationInstallError:
+            pass
+        else:
+            raise AcceptanceError("malformed firewall readback was accepted")
+    finally:
+        if original_path is None:
+            os.environ.pop("PATH", None)
+        else:
+            os.environ["PATH"] = original_path
+
+    resolver_path = Path("/etc/netns") / namespace / "resolv.conf"
+    extra_link = resolver_path.with_name("uncertain-resolver-link")
+    os.link(resolver_path, extra_link)
+    try:
+        try:
+            verify_resolver_file(namespace, resolver)
+        except DNSConfinementError:
+            pass
+        else:
+            raise AcceptanceError("multiply linked resolver readback was accepted")
+    finally:
+        extra_link.unlink()
+    _verify_base_chains(namespace, firewall)
+    verify_resolver_file(namespace, resolver)
+    print("PASS: malformed firewall and uncertain resolver readbacks were refused", flush=True)
+
+
+def verify_tunnel(namespace: str, interface: str, peer_public: str, *, timeout: float = 15) -> None:
+    """Require pinned routes and live traffic within a bounded handshake window."""
     actual = command("ip", "netns", "exec", namespace, "wg", "show", interface, "peers").decode()
     if actual.strip() != peer_public:
         raise AcceptanceError("production WireGuard peer differs from pinned plan")
@@ -86,10 +218,19 @@ def verify_tunnel(namespace: str, interface: str, peer_public: str) -> None:
         route = command("ip", "-n", namespace, family, "route", "get", destination).decode()
         if f"dev {interface}" not in route:
             raise AcceptanceError(f"{family} route does not use the production WireGuard interface")
-        try:
-            command("ip", "netns", "exec", namespace, "ping", family, "-c", "2", "-W", "3", destination)
-        except subprocess.CalledProcessError as exc:
-            raise AcceptanceError(f"production {family} tunnel traffic did not succeed") from exc
+        deadline = time.monotonic() + timeout
+        while True:
+            result = subprocess.run(
+                ["ip", "netns", "exec", namespace, "ping", family, "-c", "1", "-W", "2", destination],
+                capture_output=True,
+                check=False,
+                timeout=5,
+            )
+            if result.returncode == 0:
+                break
+            if time.monotonic() >= deadline:
+                raise AcceptanceError(f"production {family} tunnel traffic did not recover within {timeout:g} seconds")
+            time.sleep(1)
 
 
 def verify_endpoint_port(namespace: str, server_namespace: str) -> None:
@@ -256,11 +397,17 @@ while True:
             },
             "credentials": {"alpha": str(client_key)},
         }
-        # Both address families must exchange live packets. Route presence on
-        # its own is not evidence that the peer can return tunnel traffic.
         write(temporary / "startup.json", config)
         restoration_attempted = True
+        # Exercise a real late provisioning failure after the production
+        # firewall, underlay and WireGuard device exist. Rollback must leave
+        # only durable uncertainty, without changing unrelated host state.
+        profile_baseline = observe_host()
+        verify_failed_establishment(config, profile_baseline)
+        # Boot recovery resolves the certified-absent failed generation before
+        # creating a new production generation from the same pinned plan.
         restore_boot_state(config)
+        command("ip", "netns", "exec", server_namespace, "wg", "set", peer_interface, "listen-port", "0")
         attach_underlay_to_peer(config, "alpha", bridge, "10.214.10.1/30")
         # The second underlay family is deliberately available to the peer.
         # A successful leak attempt must therefore be observable, not merely unroutable.
@@ -269,10 +416,28 @@ while True:
         # Provide a real connected IPv6 underlay route. Otherwise an IPv6
         # bypass test could pass simply because no IPv6 path existed.
         command("ip", "-n", namespace, "-6", "address", "add", "fd42:214::2/64", "dev", underlay)
-        _verify_base_chains(namespace, NamespaceIsolationPolicy(interface, underlay, "10.214.10.1", 51820))
+        firewall = NamespaceIsolationPolicy(interface, underlay, "10.214.10.1", 51820)
+        _verify_base_chains(namespace, firewall)
         resolver = NamespaceResolverPolicy(("10.250.0.1",))
         verify_resolver_file(namespace, resolver)
         verify_dns_routes(namespace, interface, resolver)
+        # The underlay is live and reachable, but the peer cannot establish.
+        # The installed production policy must not fall back to that path.
+        verify_fail_closed(namespace, server_namespace, 53051)
+        print("PASS: unavailable peer establishment remained fail closed", flush=True)
+        command(
+            "ip",
+            "netns",
+            "exec",
+            server_namespace,
+            "wg",
+            "set",
+            peer_interface,
+            "listen-port",
+            "51820",
+        )
+        # Both address families must exchange live packets. Route presence on
+        # its own is not evidence that the peer can return tunnel traffic.
         verify_tunnel(namespace, interface, peer_public)
         verify_endpoint_port(namespace, server_namespace)
         verify_application_dns(namespace, "10.250.0.1", family=4)
@@ -300,23 +465,28 @@ while True:
                     protocol=protocol,
                 )
         print("PASS: alternate underlay DNS destinations refused for both families and transports")
-        # The production firewall must retain the fail-closed property even
-        # when the tunnel is administratively unavailable. This is not the
-        # full restart/recovery lifecycle, which belongs to B3.
-        command("ip", "-n", namespace, "link", "set", interface, "down")
-        for family, address in ((4, "10.214.10.1"), (6, "fd42:214::1")):
-            for protocol in ("udp", "tcp"):
-                verify_underlay_bypass(
-                    namespace,
-                    server_namespace,
-                    address,
-                    53054,
-                    family=family,
-                    protocol=protocol,
-                )
-        verify_dns_unavailable(namespace, "10.250.0.1", family=4)
-        verify_dns_unavailable(namespace, "fd42:250::1", family=6)
+        verify_uncertain_readbacks(namespace, firewall, resolver, temporary)
+        # After a live session has been established, stop only the peer's
+        # WireGuard listener. The production namespace retains its firewall,
+        # routes and resolver while the encrypted transport is unavailable.
+        command("ip", "netns", "exec", server_namespace, "wg", "set", peer_interface, "listen-port", "0")
+        verify_fail_closed(namespace, server_namespace, 53054)
         print("PASS: tunnel shutdown refused application DNS and underlay fallback")
+        command(
+            "ip",
+            "netns",
+            "exec",
+            server_namespace,
+            "wg",
+            "set",
+            peer_interface,
+            "listen-port",
+            "51820",
+        )
+        verify_tunnel(namespace, interface, peer_public)
+        verify_application_dns(namespace, "10.250.0.1", family=4)
+        verify_application_dns(namespace, "fd42:250::1", family=6)
+        print("PASS: owned tunnel restart restored IPv4, IPv6 and application DNS", flush=True)
         result = plan_cleanup(
             config["journal"],
             config["bindings"],

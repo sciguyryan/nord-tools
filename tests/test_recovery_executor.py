@@ -366,6 +366,40 @@ class HalfBuiltCreationTests(RecoveryTestBase):
         self.assertEqual(repeat["actions"], [])
         self.assertEqual(self.harness.deleted, [("namespace", "nt-alpha00000")])
 
+    def test_operator_recovery_closes_a_partially_bound_generation_already_rolled_back(self):
+        journal, bindings, tokens = ecosystem(
+            "alpha", "nt-alpha00000", "ntwgalpha000", "ntlualpha000", "nthlalpha000", states="creating"
+        )
+        bindings = {
+            "version": 1,
+            "bindings": [entry for entry in bindings["bindings"] if entry["identifier"] != "ntwgalpha000"],
+        }
+        fixture = self.make_fixture(
+            journal,
+            bindings,
+            namespace_name="nt-alpha00000",
+            wg_name="ntwgalpha000",
+            ul_name="ntlualpha000",
+            host_name="nthlalpha000",
+        )
+        self.pending_create_intent(fixture, tokens["nt-alpha00000"])
+        self.mark_uncertain(fixture)
+        journal = json.loads(fixture["journal"].read_text(encoding="utf-8"))
+        for token in tokens.values():
+            journal = record_transition(journal, token, "failed")
+        fixture["journal"].write_text(json.dumps(journal), encoding="utf-8")
+        self.harness.namespaces.clear()
+        self.harness.host_links.clear()
+
+        with self.assertRaises(ProvisioningUncertainError):
+            self.recover(fixture, boot=True, execute=True)
+        report = self.recover(fixture, execute=True)
+
+        self.assertFalse(report["operator_review_required"])
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
+        self.assertEqual(self.intent_outcomes(fixture), ["failed"])
+        self.assertEqual(self.harness.deleted, [])
+
 
 class RetirementCrashTests(RecoveryTestBase):
     def cleanup_crash(self, *, outcome="pending", kernel=("present",), binding_kept=True):

@@ -22,14 +22,17 @@ def test_dry_run_does_not_mutate(capsys):
 
 def test_ipv6_packet_failure_is_not_accepted():
     def command(*args, **kwargs):
-        if "ping" in args and "-6" in args:
-            raise subprocess.CalledProcessError(1, args)
         if "peers" in args:
             return b"pinned-peer\n"
         return b"fd42:250::1 dev ntwg123\n" if "-6" in args else b"10.250.0.1 dev ntwg123\n"
 
+    def ping(args, **kwargs):
+        return subprocess.CompletedProcess(args, 1 if "-6" in args else 0)
+
     with (
         patch.object(probe, "command", side_effect=command),
+        patch.object(probe.subprocess, "run", side_effect=ping),
+        patch.object(probe.time, "monotonic", side_effect=[0, 0, 16]),
         pytest.raises(probe.AcceptanceError, match="production -6 tunnel traffic"),
     ):
         probe.verify_tunnel("ntns123", "ntwg123", "pinned-peer")

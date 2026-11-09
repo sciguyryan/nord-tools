@@ -60,7 +60,9 @@ class ProbeError(RuntimeError):
 def command(*arguments: str, input_data: bytes | None = None) -> bytes:
     result = subprocess.run(arguments, input=input_data, capture_output=True, check=False, timeout=15)
     if result.returncode:
-        raise ProbeError(f"command failed: {arguments[0]}")
+        detail = result.stderr.decode(errors="replace").strip()[-600:]
+        rendered = " ".join(arguments)
+        raise ProbeError(f"command failed ({result.returncode}): {rendered}: {detail or 'no stderr'}")
     return result.stdout.strip()
 
 
@@ -138,10 +140,12 @@ def attach_underlay_to_peer(config: dict, kernel_profile: str, bridge: str, host
     """Bridge one production-owned host veth directly to the peer namespace."""
     journal = read(Path(config["journal"]))
     bindings = {item["allocation_id"]: item["binding"] for item in read(Path(config["bindings"]))["bindings"]}
+    states = {event["allocation_id"]: event["state"] for event in journal["events"]}
     candidates = [
         item
         for item in journal["allocations"]["resources"]
         if item["profile"] == kernel_profile
+        and states.get(item["allocation_id"]) == "active"
         and item["kind"] == "interface"
         and bindings.get(item["allocation_id"], {}).get("scope") == "host"
     ]

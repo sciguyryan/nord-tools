@@ -288,6 +288,32 @@ def _classify(
         ):
             absent_staged_profiles.add(profile)
 
+    # A failed provisioning attempt can remove its namespace before returning
+    # while leaving only a partial set of creation-time bindings. The namespace
+    # binding and fresh global name inventory then prove that the entire failed
+    # generation is absent; explicit operator recovery may retire its records
+    # without inventing ownership for the never-bound interface.
+    rolled_back_profiles: set[str] = set()
+    for token, operation in unresolved_by_token.items():
+        namespace = allocations[token]
+        if operation["action"] != "create" or namespace["kind"] != "namespace":
+            continue
+        profile = namespace["profile"]
+        generation = _current_generation(allocations, states, profile)
+        namespace_binding = bindings_by_token.get(token)
+        if (
+            operation["outcome"] == "uncertain"
+            and namespace_binding is not None
+            and helpers.netns_identity(namespace["identifier"]) is None
+            and all(states.get(resource["allocation_id"]) == "failed" for resource in generation)
+            and not any(resource["identifier"] in observed_names for resource in generation)
+            and not any(
+                other["allocation_id"] != token and other["allocation_id"] in unresolved_by_token
+                for other in generation
+            )
+        ):
+            rolled_back_profiles.add(profile)
+
     items: list[dict] = []
     seen: set[str] = set()
 
@@ -431,6 +457,10 @@ def _classify(
             item["disposition"] = "complete_retirement_records"
             item["authority"] = OPERATOR if allocation["profile"] in uncertain_profiles else BOOT
             item["reason"] = "the entire unbound staged generation is absent; retire records only"
+        elif state == "failed" and allocation["profile"] in rolled_back_profiles:
+            item["disposition"] = "complete_retirement_records"
+            item["authority"] = OPERATOR
+            item["reason"] = "the failed generation was rolled back and is absent; retire records only"
         elif binding is None and (
             allocation["kind"] == "namespace" and helpers.netns_identity(allocation["identifier"]) is not None
         ):
