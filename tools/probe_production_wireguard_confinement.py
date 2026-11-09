@@ -36,6 +36,11 @@ from tools.probe_live_tunnel_replacement import (  # noqa: E402
     tunnel_plan,
     write,
 )
+from tools.production_application_dns import (  # noqa: E402
+    verify_application_dns,
+    verify_dns_unavailable,
+    verify_underlay_bypass,
+)
 from tools.probe_wireguard_host_integrity import observe as observe_host  # noqa: E402
 from tools.probe_wireguard_host_integrity import verify as verify_host  # noqa: E402
 
@@ -150,6 +155,7 @@ def run_probe() -> None:
     temporary = Path(tempfile.mkdtemp(prefix="nt-production-wg-"))
     baseline = observe_host()
     dns_responder: subprocess.Popen | None = None
+    dns_responder_v6: subprocess.Popen | None = None
     succeeded = False
     try:
         peer_private = command("wg", "genkey")
@@ -172,6 +178,7 @@ def run_probe() -> None:
         command("ip", "-n", server_namespace, "link", "set", "lo", "up")
         command("ip", "-n", server_namespace, "link", "set", server_link, "up")
         command("ip", "-n", server_namespace, "address", "add", "10.214.10.1/30", "dev", server_link)
+        command("ip", "-n", server_namespace, "-6", "address", "add", "fd42:214::1/64", "dev", server_link)
         command("ip", "-n", server_namespace, "link", "add", peer_interface, "type", "wireguard")
         command("ip", "-n", server_namespace, "address", "add", "10.250.0.1/24", "dev", peer_interface)
         command("ip", "-n", server_namespace, "address", "add", "fd42:250::1/64", "dev", peer_interface)
@@ -194,6 +201,28 @@ def run_probe() -> None:
         )
         command("ip", "-n", server_namespace, "link", "set", peer_interface, "up")
         dns_responder = start_dns_responder(server_namespace)
+        # The existing IPv4 responder proves packet-level DNS. The IPv6
+        # responder supplies the same deterministic NXDOMAIN response for a
+        # real application-level DNS exchange over the second tunnel family.
+        dns6_script = r"""
+import socket
+sock = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM)
+sock.bind(('fd42:250::1', 53))
+print('READY', flush=True)
+while True:
+    query, peer = sock.recvfrom(4096)
+    if len(query) >= 12:
+        response = query[:2] + b'\x81\x83' + query[4:6] + b'\x00' * 6 + query[12:]
+        sock.sendto(response, peer)
+"""
+        dns_responder_v6 = subprocess.Popen(
+            ["ip", "netns", "exec", server_namespace, sys.executable, "-I", "-c", dns6_script],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        if dns_responder_v6.stdout is None or dns_responder_v6.stdout.readline().strip() != "READY":
+            raise AcceptanceError("IPv6 DNS responder did not become ready")
         policy_path = temporary / "policy.json"
         write(
             policy_path,
@@ -229,13 +258,61 @@ def run_probe() -> None:
         write(temporary / "startup.json", config)
         restore_boot_state(config)
         attach_underlay_to_peer(config, "alpha", bridge, "10.214.10.1/30")
+        # The second underlay family is deliberately available to the peer.
+        # A successful leak attempt must therefore be observable, not merely unroutable.
+        command("ip", "-n", server_namespace, "-6", "route", "get", "fd42:214::1")
         namespace, interface, underlay = owned_namespace(config)
+        # Provide a real connected IPv6 underlay route. Otherwise an IPv6
+        # bypass test could pass simply because no IPv6 path existed.
+        command("ip", "-n", namespace, "-6", "address", "add", "fd42:214::2/64", "dev", underlay)
         _verify_base_chains(namespace, NamespaceIsolationPolicy(interface, underlay, "10.214.10.1", 51820))
         resolver = NamespaceResolverPolicy(("10.250.0.1",))
         verify_resolver_file(namespace, resolver)
         verify_dns_routes(namespace, interface, resolver)
         verify_tunnel(namespace, interface, peer_public)
         verify_endpoint_port(namespace, server_namespace)
+        verify_application_dns(namespace, "10.250.0.1", family=4)
+        verify_application_dns(namespace, "fd42:250::1", family=6)
+        print("PASS: production-owned applications received valid IPv4 and IPv6 DNS replies")
+        for family, address in ((4, "10.214.10.1"), (6, "fd42:214::1")):
+            for protocol in ("udp", "tcp"):
+                verify_underlay_bypass(
+                    namespace,
+                    server_namespace,
+                    address,
+                    53053,
+                    family=family,
+                    protocol=protocol,
+                )
+        print("PASS: production-owned application UDP and TCP underlay bypass refused")
+        for family, address in ((4, "10.214.10.1"), (6, "fd42:214::1")):
+            for protocol in ("udp", "tcp"):
+                verify_underlay_bypass(
+                    namespace,
+                    server_namespace,
+                    address,
+                    53,
+                    family=family,
+                    protocol=protocol,
+                )
+        print("PASS: alternate underlay DNS destinations refused for both families and transports")
+        # The production firewall must retain the fail-closed property even
+        # when the tunnel is administratively unavailable. This is not the
+        # full restart/recovery lifecycle, which belongs to B3.
+        command("ip", "-n", namespace, "link", "set", interface, "down")
+        for family, address in ((4, "10.214.10.1"), (6, "fd42:214::1")):
+            for protocol in ("udp", "tcp"):
+                verify_underlay_bypass(
+                    namespace,
+                    server_namespace,
+                    address,
+                    53054,
+                    family=family,
+                    protocol=protocol,
+                )
+        verify_dns_unavailable(namespace, "10.250.0.1", family=4)
+        verify_dns_unavailable(namespace, "fd42:250::1", family=6)
+        print("PASS: tunnel shutdown refused application DNS and underlay fallback")
         result = plan_cleanup(
             config["journal"],
             config["bindings"],
@@ -255,6 +332,9 @@ def run_probe() -> None:
         dns_responder.terminate()
         dns_responder.wait(timeout=5)
         dns_responder = None
+        dns_responder_v6.terminate()
+        dns_responder_v6.wait(timeout=5)
+        dns_responder_v6 = None
         command("ip", "netns", "del", server_namespace)
         command("ip", "link", "del", bridge)
         verify_host(baseline, observe_host())
@@ -264,6 +344,9 @@ def run_probe() -> None:
         if dns_responder is not None:
             dns_responder.terminate()
             dns_responder.wait(timeout=5)
+        if dns_responder_v6 is not None:
+            dns_responder_v6.terminate()
+            dns_responder_v6.wait(timeout=5)
         subprocess.run(["ip", "netns", "del", server_namespace], capture_output=True, check=False)
         subprocess.run(["ip", "link", "del", bridge], capture_output=True, check=False)
         if succeeded:
