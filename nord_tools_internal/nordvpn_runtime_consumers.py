@@ -247,6 +247,16 @@ def assert_allocation_unreferenced(
             raise ConsumerReferenceError("allocation retains a durable runtime consumer lease")
 
 
+def _active_profile_resources(journal: dict, profile: str) -> list[dict]:
+    """Select one profile's active generation without adopting retired history."""
+    states = {item["allocation_id"]: item["state"] for item in journal["events"]}
+    return [
+        item
+        for item in journal["allocations"]["resources"]
+        if item["profile"] == profile and states.get(item["allocation_id"]) == "active"
+    ]
+
+
 def reserve_staged_consumer(
     path: str | Path,
     policy: dict,
@@ -286,7 +296,7 @@ def reserve_staged_consumer(
         bindings = read_private_json(bindings_path)
         intents = read_private_json(intent_path)
         preflight = preflight_ownership(journal, bindings, observe(), intents)
-        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == selected_kernel_profile]
+        resources = _active_profile_resources(journal, selected_kernel_profile)
         if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
             "interface",
             "interface",
@@ -294,13 +304,8 @@ def reserve_staged_consumer(
             "namespace",
         ]:
             raise ConsumerReferenceError("allocation does not have a complete provisioned resource set")
-        states = {item["allocation_id"]: item["state"] for item in journal["events"]}
         findings = {item["allocation_id"]: item for item in preflight["resources"]}
-        if any(
-            states.get(item["allocation_id"]) != "active"
-            or findings.get(item["allocation_id"], {}).get("finding") != "verified_current"
-            for item in resources
-        ):
+        if any(findings.get(item["allocation_id"], {}).get("finding") != "verified_current" for item in resources):
             raise ConsumerReferenceError("allocation resources are not active and independently verified")
         owned_namespace = next(item["identifier"] for item in resources if item["kind"] == "namespace")
         if namespace != owned_namespace:
@@ -371,7 +376,7 @@ def acquire_provisioned_consumer(
         intents = read_private_json(intent_path)
         observation = observe()
         preflight = preflight_ownership(journal, bindings, observation, intents)
-        resources = [item for item in journal["allocations"]["resources"] if item["profile"] == selected_kernel_profile]
+        resources = _active_profile_resources(journal, selected_kernel_profile)
         if len(resources) != 4 or sorted(item["kind"] for item in resources) != [
             "interface",
             "interface",
@@ -379,13 +384,8 @@ def acquire_provisioned_consumer(
             "namespace",
         ]:
             raise ConsumerReferenceError("allocation does not have a complete provisioned resource set")
-        states = {item["allocation_id"]: item["state"] for item in journal["events"]}
         findings = {item["allocation_id"]: item for item in preflight["resources"]}
-        if any(
-            states.get(item["allocation_id"]) != "active"
-            or findings.get(item["allocation_id"], {}).get("finding") != "verified_current"
-            for item in resources
-        ):
+        if any(findings.get(item["allocation_id"], {}).get("finding") != "verified_current" for item in resources):
             raise ConsumerReferenceError("allocation resources are not active and independently verified")
         document = _read(path, checked)
         if document["version"] != 2:

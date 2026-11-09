@@ -71,10 +71,11 @@ def launch_direct_application(policy: dict, application: str, arguments: tuple[s
 
 def _namespace_for_profile(journal_path: str, profile: str) -> str:
     journal = validate_journal(read_private_json(journal_path))
+    states = {event["allocation_id"]: event["state"] for event in journal["events"]}
     candidates = [
         item["identifier"]
         for item in journal["allocations"]["resources"]
-        if item["profile"] == profile and item["kind"] == "namespace"
+        if item["profile"] == profile and item["kind"] == "namespace" and states.get(item["allocation_id"]) == "active"
     ]
     if len(candidates) != 1:
         raise ConsumerReferenceError("application allocation has no unique namespace")

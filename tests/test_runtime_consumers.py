@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError
 from nord_tools_internal.nordvpn_runtime_consumers import (
+    _active_profile_resources,
     acquire_runtime_consumer,
     initialise_runtime_consumers,
     read_runtime_consumers,
@@ -28,6 +29,26 @@ class RuntimeConsumerTests(unittest.TestCase):
     def test_initialisation_refuses_overwrite(self):
         with self.assertRaisesRegex(ConsumerReferenceError, "already exists"):
             initialise_runtime_consumers(self.path, POLICY)
+
+    def test_active_profile_resources_exclude_retired_generation(self):
+        journal = {
+            "allocations": {
+                "resources": [
+                    {"allocation_id": "retired", "profile": "alpha", "kind": "namespace"},
+                    {"allocation_id": "active", "profile": "alpha", "kind": "namespace"},
+                    {"allocation_id": "other", "profile": "beta", "kind": "namespace"},
+                ]
+            },
+            "events": [
+                {"allocation_id": "retired", "state": "retired"},
+                {"allocation_id": "active", "state": "active"},
+                {"allocation_id": "other", "state": "active"},
+            ],
+        }
+        self.assertEqual(
+            _active_profile_resources(journal, "alpha"),
+            [{"allocation_id": "active", "profile": "alpha", "kind": "namespace"}],
+        )
 
     def test_acquire_live_and_release_only_after_exit(self):
         with patch(

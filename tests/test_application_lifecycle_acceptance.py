@@ -17,6 +17,12 @@ def test_preview_never_observes_host_or_runs_children(capsys):
     assert "DRY RUN" in capsys.readouterr().out
 
 
+def test_matrix_uses_complete_registered_packet_stage():
+    filenames = [filename for _, filename, _ in probe.STAGES]
+    assert "probe_registered_application_confinement.py" in filenames
+    assert "probe_application_network_confinement.py" not in filenames
+
+
 @pytest.mark.parametrize("uid,gid", [(0, 1000), (1000, 0), (-1, 1000)])
 def test_privileged_identity_must_be_nonroot(uid, gid):
     with patch.object(probe.os, "geteuid", return_value=0), pytest.raises(SystemExit):

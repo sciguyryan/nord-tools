@@ -5,10 +5,64 @@ from unittest.mock import patch
 
 import pytest
 
+from nord_tools_internal import nordvpn_application_executor as executor
 from nord_tools_internal.nordvpn_application_executor import launch_provisioned_application
 from nord_tools_internal.nordvpn_consumer_reference_store import ConsumerReferenceError
 from nord_tools_internal.nordvpn_launch_gate import main as gate_main
 from tests.test_application_plan import POLICY
+
+
+def test_launcher_selects_active_namespace_without_retired_history():
+    journal = {
+        "allocations": {
+            "resources": [
+                {
+                    "allocation_id": "retired",
+                    "profile": "alpha",
+                    "kind": "namespace",
+                    "identifier": "nt-retired",
+                },
+                {
+                    "allocation_id": "active",
+                    "profile": "alpha",
+                    "kind": "namespace",
+                    "identifier": "nt-active",
+                },
+            ]
+        },
+        "events": [
+            {"allocation_id": "retired", "state": "retired"},
+            {"allocation_id": "active", "state": "active"},
+        ],
+    }
+    with (
+        patch.object(executor, "read_private_json", return_value=journal),
+        patch.object(executor, "validate_journal", return_value=journal),
+    ):
+        assert executor._namespace_for_profile("journal.json", "alpha") == "nt-active"
+
+
+def test_launcher_refuses_multiple_active_profile_namespaces():
+    journal = {
+        "allocations": {
+            "resources": [
+                {
+                    "allocation_id": allocation,
+                    "profile": "alpha",
+                    "kind": "namespace",
+                    "identifier": f"nt-{allocation}",
+                }
+                for allocation in ("one", "two")
+            ]
+        },
+        "events": [{"allocation_id": allocation, "state": "active"} for allocation in ("one", "two")],
+    }
+    with (
+        patch.object(executor, "read_private_json", return_value=journal),
+        patch.object(executor, "validate_journal", return_value=journal),
+        pytest.raises(ConsumerReferenceError, match="unique namespace"),
+    ):
+        executor._namespace_for_profile("journal.json", "alpha")
 
 
 def test_launcher_requires_root_and_non_root_target():

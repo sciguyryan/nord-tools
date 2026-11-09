@@ -3,8 +3,8 @@
 
 Each child probe owns its disposable resources. Host network configuration is
 checked before and after the entire matrix, including failed child stages.
-This does not claim desktop compatibility or a production VPN lease-gated
-packet exchange; those require separate real-world evidence.
+This does not claim desktop compatibility, which requires separate platform
+evidence.
 """
 
 from __future__ import annotations
@@ -23,7 +23,11 @@ STAGES = (
     ("registered direct routing and VPN fallback refusal", "probe_application_routing_modes.py", True),
     ("production registered VPN-bound launch gate", "probe_live_tunnel_replacement.py", True),
     ("concurrent shared, isolated and direct application lifecycle", "probe_concurrent_application_lifecycle.py", True),
-    ("concurrent application and real WireGuard confinement", "probe_application_network_confinement.py", True),
+    (
+        "concurrent registered application packet confinement",
+        "probe_registered_application_confinement.py",
+        True,
+    ),
     ("production provisioning and ownership lifecycle", "probe_provisioning_integration.py", False),
     ("interrupted provisioning and verified recovery", "probe_later_recovery.py", False),
     ("cooperating-process lifecycle lock refusal", "probe_lifecycle_lock_concurrency.py", False),

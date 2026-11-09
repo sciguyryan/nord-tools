@@ -11,7 +11,7 @@ evidence rather than deleting uncertain resources.
 from __future__ import annotations
 
 import argparse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 import os
 from pathlib import Path
 import secrets
@@ -20,6 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -60,6 +61,22 @@ from tools.probe_wireguard_host_integrity import verify as verify_host  # noqa: 
 
 class AcceptanceError(RuntimeError):
     """An observed production profile failed its integrated acceptance contract."""
+
+
+@dataclass(frozen=True)
+class ProductionConfinementContext:
+    """Live production fixture details exposed to a composed acceptance stage."""
+
+    temporary: Path
+    config: dict
+    namespace: str
+    interface: str
+    server_namespace: str
+    peer_interface: str
+    peer_public_key: str
+
+
+ApplicationExperiment = Callable[[ProductionConfinementContext], None]
 
 
 def owned_namespace(config: dict) -> tuple[str, str, str]:
@@ -286,7 +303,11 @@ sys.exit(3)
             receiver.stderr.close()
 
 
-def run_probe() -> None:
+def run_probe(
+    *,
+    applications: dict | None = None,
+    application_experiment: ApplicationExperiment | None = None,
+) -> None:
     token = secrets.token_hex(3)
     peer_interface = f"ntpr{token}"
     server_namespace = f"ntsrv{token}"
@@ -294,6 +315,8 @@ def run_probe() -> None:
     server_host = f"ntvh{token}"
     server_link = f"ntvs{token}"
     temporary = Path(tempfile.mkdtemp(prefix="nt-production-wg-"))
+    if applications:
+        temporary.chmod(0o755)
     baseline = observe_host()
     dns_responder: subprocess.Popen | None = None
     dns_responder_v6: subprocess.Popen | None = None
@@ -374,7 +397,7 @@ while True:
                 "version": 1,
                 "defaults": {"vpn": "alpha"},
                 "vpn_profiles": {"alpha": {"selection": {"mode": "pinned", "server": "uk715"}, "sharing": "shared"}},
-                "applications": {},
+                "applications": applications or {},
             },
         )
         config = {
@@ -440,6 +463,18 @@ while True:
         # its own is not evidence that the peer can return tunnel traffic.
         verify_tunnel(namespace, interface, peer_public)
         verify_endpoint_port(namespace, server_namespace)
+        if application_experiment is not None:
+            application_experiment(
+                ProductionConfinementContext(
+                    temporary=temporary,
+                    config=config,
+                    namespace=namespace,
+                    interface=interface,
+                    server_namespace=server_namespace,
+                    peer_interface=peer_interface,
+                    peer_public_key=peer_public,
+                )
+            )
         verify_application_dns(namespace, "10.250.0.1", family=4)
         verify_application_dns(namespace, "fd42:250::1", family=6)
         print("PASS: production-owned applications received valid IPv4 and IPv6 DNS replies")

@@ -95,28 +95,35 @@ def launch(
     uid: int,
     gid: int,
     arguments: tuple[str, ...],
+    *,
+    stderr_path: Path | None = None,
 ) -> subprocess.Popen:
-    return subprocess.Popen(
-        [
-            sys.executable,
-            str(ROOT / "nord_tools.py"),
-            "manage",
-            "launch-consumer",
-            "--config",
-            str(config),
-            "--runtime-consumers",
-            str(leases),
-            "--consumer",
-            application,
-            "--uid",
-            str(uid),
-            "--gid",
-            str(gid),
-            "--execute",
-            *arguments,
-        ],
-        stderr=subprocess.DEVNULL,
-    )
+    stderr = subprocess.DEVNULL if stderr_path is None else stderr_path.open("wb")
+    try:
+        return subprocess.Popen(
+            [
+                sys.executable,
+                str(ROOT / "nord_tools.py"),
+                "manage",
+                "launch-consumer",
+                "--config",
+                str(config),
+                "--runtime-consumers",
+                str(leases),
+                "--consumer",
+                application,
+                "--uid",
+                str(uid),
+                "--gid",
+                str(gid),
+                "--execute",
+                *arguments,
+            ],
+            stderr=stderr,
+        )
+    finally:
+        if stderr_path is not None:
+            stderr.close()
 
 
 def wait_for_report(path: Path, timeout: float = 15) -> dict:
