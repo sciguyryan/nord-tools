@@ -75,17 +75,27 @@ def read(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def wait_for_lease(path: Path, policy: dict, application: str, generation: str, timeout: float = 15) -> None:
+def wait_for_lease(path: Path, policy: dict, application: str, generation: str, timeout: float = 15) -> dict:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         leases = read_runtime_consumers(path, policy)["leases"]
-        if any(item["application"] == application and item["generation_id"] == generation for item in leases):
-            return
+        matches = [
+            item for item in leases if item["application"] == application and item["generation_id"] == generation
+        ]
+        if len(matches) == 1:
+            return matches[0]
         time.sleep(0.1)
     raise ProbeError(f"timed out waiting for {application} lease on {generation}")
 
 
-def launch(config: Path, leases: Path, application: str, uid: int, gid: int) -> subprocess.Popen:
+def launch(
+    config: Path,
+    leases: Path,
+    application: str,
+    uid: int,
+    gid: int,
+    arguments: tuple[str, ...],
+) -> subprocess.Popen:
     return subprocess.Popen(
         [
             sys.executable,
@@ -103,10 +113,111 @@ def launch(config: Path, leases: Path, application: str, uid: int, gid: int) -> 
             "--gid",
             str(gid),
             "--execute",
-            "120",
+            *arguments,
         ],
         stderr=subprocess.DEVNULL,
     )
+
+
+def wait_for_report(path: Path, timeout: float = 15) -> dict:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            return read(path)
+        except (FileNotFoundError, json.JSONDecodeError):
+            time.sleep(0.1)
+    raise ProbeError(f"timed out waiting for registered child report {path.name}")
+
+
+def verify_launch_evidence(
+    report: dict,
+    lease: dict,
+    *,
+    uid: int,
+    gid: int,
+    application: str,
+    generation: str,
+    allocation_key: str,
+    kernel_profile: str,
+    namespace_stat: os.stat_result,
+    executable: str,
+) -> None:
+    expected_report = {
+        "pid": lease["pid"],
+        "uid": uid,
+        "gid": gid,
+        "groups": [],
+        "namespace_device": namespace_stat.st_dev,
+        "namespace_inode": namespace_stat.st_ino,
+        "executable": executable,
+    }
+    if report != expected_report:
+        raise ProbeError("registered child identity or namespace did not match its verified launch gate")
+    expected_lease = {
+        "application": application,
+        "generation_id": generation,
+        "allocation_key": allocation_key,
+        "kernel_profile": kernel_profile,
+        "executable": executable,
+    }
+    if any(lease.get(key) != value for key, value in expected_lease.items()):
+        raise ProbeError("durable launch lease did not select the expected application allocation and generation")
+
+
+def verify_running_launch(
+    config: dict,
+    leases: Path,
+    policy: dict,
+    report_path: Path,
+    *,
+    uid: int,
+    gid: int,
+    application: str,
+    generation: str,
+    kernel_profile: str,
+    executable: str,
+) -> None:
+    lease = wait_for_lease(leases, policy, application, generation)
+    journal = read(Path(config["journal"]))
+    namespaces = [
+        item["identifier"]
+        for item in journal["allocations"]["resources"]
+        if item["profile"] == kernel_profile and item["kind"] == "namespace"
+    ]
+    if len(namespaces) != 1:
+        raise ProbeError("selected launch generation does not have one recorded namespace")
+    verify_launch_evidence(
+        wait_for_report(report_path),
+        lease,
+        uid=uid,
+        gid=gid,
+        application=application,
+        generation=generation,
+        allocation_key="profile:alpha",
+        kernel_profile=kernel_profile,
+        namespace_stat=os.stat(f"/run/netns/{namespaces[0]}"),
+        executable=executable,
+    )
+
+
+def finish_launch(
+    process: subprocess.Popen,
+    release_path: Path,
+    leases: Path,
+    policy: dict,
+    application: str,
+) -> None:
+    release_path.touch(mode=0o600)
+    try:
+        result = process.wait(timeout=10)
+    except subprocess.TimeoutExpired as exc:
+        process.kill()
+        process.wait()
+        raise ProbeError("registered application did not exit through its launch gate") from exc
+    if result != 0:
+        raise ProbeError(f"registered application launcher returned {result}")
+    if any(item["application"] == application for item in read_runtime_consumers(leases, policy)["leases"]):
+        raise ProbeError("registered application lease remained after verified process exit")
 
 
 def start_dns_responder(server_namespace: str) -> subprocess.Popen:
@@ -301,14 +412,44 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             # valid NordVPN server identity.
             "vpn_profiles": {"alpha": {"selection": {"mode": "pinned", "server": "uk715"}, "sharing": "shared"}},
             "applications": {
-                "consumer-a": {"executable": "/usr/bin/sleep", "vpn": "alpha"},
-                "consumer-b": {"executable": "/usr/bin/sleep", "vpn": "alpha"},
+                "consumer-a": {"executable": str(Path(sys.executable).resolve()), "vpn": "alpha"},
+                "consumer-b": {"executable": str(Path(sys.executable).resolve()), "vpn": "alpha"},
             },
         }
         policy_path = temporary / "policy.json"
         config_path = temporary / "startup.json"
         leases = temporary / "leases.json"
         handover = temporary / "handover.json"
+        child_state = temporary / "children"
+        child_state.mkdir(mode=0o700)
+        os.chown(child_state, uid, gid)
+        child_script = temporary / "inspect_child.py"
+        child_script.write_text(
+            "import json, os, pathlib, sys, time\n"
+            "report = pathlib.Path(sys.argv[1])\n"
+            "release = pathlib.Path(sys.argv[2])\n"
+            "namespace = os.stat('/proc/self/ns/net')\n"
+            "evidence = {\n"
+            "    'pid': os.getpid(),\n"
+            "    'uid': os.geteuid(),\n"
+            "    'gid': os.getegid(),\n"
+            "    'groups': os.getgroups(),\n"
+            "    'namespace_device': namespace.st_dev,\n"
+            "    'namespace_inode': namespace.st_ino,\n"
+            "    'executable': os.readlink('/proc/self/exe'),\n"
+            "}\n"
+            "with report.open('x', encoding='utf-8') as stream:\n"
+            "    json.dump(evidence, stream, sort_keys=True)\n"
+            "    stream.flush()\n"
+            "    os.fsync(stream.fileno())\n"
+            "deadline = time.monotonic() + 120\n"
+            "while not release.exists() and time.monotonic() < deadline:\n"
+            "    time.sleep(0.05)\n"
+            "raise SystemExit(0 if release.exists() else 124)\n",
+            encoding="utf-8",
+        )
+        child_script.chmod(0o644)
+        temporary.chmod(0o755)
         write(policy_path, policy_document)
         # Every durable fingerprint must use the same canonical policy shape
         # as production readers and launchers.
@@ -325,10 +466,33 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             "handovers": {"profile:alpha": str(handover)},
         }
         write(config_path, config)
+        initialise_runtime_consumers(leases, policy)
+        refused_report = child_state / "refused.json"
+        refused_release = temporary / "release-refused"
+        unprovisioned_config = temporary / "unprovisioned.json"
+        write(unprovisioned_config, {key: value for key, value in config.items() if key != "handovers"})
+        refused = launch(
+            unprovisioned_config,
+            leases,
+            "consumer-a",
+            uid,
+            gid,
+            (str(child_script), str(refused_report), str(refused_release)),
+        )
+        try:
+            refused_result = refused.wait(timeout=10)
+        except subprocess.TimeoutExpired as exc:
+            refused.kill()
+            refused.wait()
+            raise ProbeError("unprovisioned registered launch did not refuse promptly") from exc
+        if refused_result == 0 or refused_report.exists():
+            raise ProbeError("registered VPN-bound application executed without provisioned authority")
+        if read_runtime_consumers(leases, policy)["leases"]:
+            raise ProbeError("refused registered launch left a durable lease")
+        print("PASS: registered VPN-bound launch refused absent production authority", flush=True)
         # Restore A before publishing a handover selection.
         restore_boot_state({key: value for key, value in config.items() if key != "handovers"})
         attach_underlay_to_peer(config, "alpha", bridge, "10.214.10.1/30")
-        initialise_runtime_consumers(leases, policy)
         digest = policy_digest(policy)
         replacement_kernel = kernel_profile_for_generation("alpha", "profile:alpha", "generation-b")
         prepare_generation_handover(
@@ -337,9 +501,30 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             replacement=AllocationGeneration("alpha", "profile:alpha", "generation-b", replacement_kernel, digest),
             policy=policy,
         )
-        first = launch(config_path, leases, "consumer-a", uid, gid)
+        first_report = child_state / "consumer-a.json"
+        first_release = temporary / "release-consumer-a"
+        first = launch(
+            config_path,
+            leases,
+            "consumer-a",
+            uid,
+            gid,
+            (str(child_script), str(first_report), str(first_release)),
+        )
         launchers.append(first)
-        wait_for_lease(leases, policy, "consumer-a", "generation-a")
+        verify_running_launch(
+            config,
+            leases,
+            policy,
+            first_report,
+            uid=uid,
+            gid=gid,
+            application="consumer-a",
+            generation="generation-a",
+            kernel_profile="alpha",
+            executable=policy["applications"]["consumer-a"]["executable"],
+        )
+        print("PASS: generation A child matched its namespace, identity and durable lease", flush=True)
 
         config["tunnels"]["alpha"] = tunnel_plan("10.214.11.1", ("10.250.0.3/32",), 11, peer_public)
         config["credentials"]["alpha"] = str(key_b)
@@ -445,9 +630,30 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             leases,
             expected_disposition="draining_active_consumers",
         )
-        second = launch(config_path, leases, "consumer-b", uid, gid)
+        second_report = child_state / "consumer-b.json"
+        second_release = temporary / "release-consumer-b"
+        second = launch(
+            config_path,
+            leases,
+            "consumer-b",
+            uid,
+            gid,
+            (str(child_script), str(second_report), str(second_release)),
+        )
         launchers.append(second)
-        wait_for_lease(leases, policy, "consumer-b", "generation-b")
+        verify_running_launch(
+            config,
+            leases,
+            policy,
+            second_report,
+            uid=uid,
+            gid=gid,
+            application="consumer-b",
+            generation="generation-b",
+            kernel_profile=replacement_kernel,
+            executable=policy["applications"]["consumer-b"]["executable"],
+        )
+        print("PASS: generation B child matched its namespace, identity and durable lease", flush=True)
         status = replacement_status(
             config, handover_path=str(handover), runtime_consumers_path=str(leases), observe=discover
         )
@@ -465,7 +671,7 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             pass
         else:
             raise ProbeError("old generation retirement succeeded while its consumer was active")
-        stop_launch(first)
+        finish_launch(first, first_release, leases, policy, "consumer-a")
         launchers.remove(first)
         if inject_replacement_interruption:
             child = os.fork()
@@ -511,8 +717,9 @@ def run_probe(uid: int, gid: int, *, inject_replacement_interruption: bool = Fal
             leases,
             expected_disposition="old_generation_retired",
         )
-        stop_launch(second)
+        finish_launch(second, second_release, leases, policy, "consumer-b")
         launchers.remove(second)
+        print("PASS: registered child exits released their process-verified leases", flush=True)
         plan_cleanup(
             config["journal"],
             config["bindings"],
@@ -579,8 +786,8 @@ def main(argv: list[str] | None = None) -> int:
     if sys.platform != "linux" or os.geteuid() != 0 or not args.uid or not args.gid:
         parser.error("--run-privileged requires Linux root and explicit non-root --uid/--gid")
     missing = [name for name in ("ip", "wg", "nft", "ping") if shutil.which(name) is None]
-    if missing or not Path("/usr/bin/sleep").is_file():
-        parser.error("missing prerequisites: " + ", ".join(missing or ["/usr/bin/sleep"]))
+    if missing:
+        parser.error("missing prerequisites: " + ", ".join(missing))
     try:
         run_probe(args.uid, args.gid, inject_replacement_interruption=args.inject_replacement_interruption)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:

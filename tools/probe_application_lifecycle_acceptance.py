@@ -21,6 +21,7 @@ from tools.probe_wireguard_host_integrity import observe, verify  # noqa: E402
 
 STAGES = (
     ("registered direct routing and VPN fallback refusal", "probe_application_routing_modes.py", True),
+    ("production registered VPN-bound launch gate", "probe_live_tunnel_replacement.py", True),
     ("concurrent application and real WireGuard confinement", "probe_application_network_confinement.py", True),
     ("production provisioning and ownership lifecycle", "probe_provisioning_integration.py", False),
     ("interrupted provisioning and verified recovery", "probe_later_recovery.py", False),

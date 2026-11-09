@@ -1,12 +1,13 @@
-"""Adversarial read-only checks in the production replacement acceptance runner."""
+"""Acceptance assertions for the production replacement and launch runner."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 from nord_tools_internal.nordvpn_generation_handover import GenerationHandoverError
-from tools.probe_live_tunnel_replacement import ProbeError, verify_adversarial_recovery
+from tools.probe_live_tunnel_replacement import ProbeError, verify_adversarial_recovery, verify_launch_evidence
 
 
 def report(disposition="draining_active_consumers", *, selected="generation-b", packet=True):
@@ -25,6 +26,59 @@ def evidence(config, **kwargs):
     if kwargs.get("packet_verifier") is not None:
         return report("selected_generation_drift_fail_closed", packet=False)
     return report()
+
+
+def launch_evidence():
+    lease = {
+        "pid": 1234,
+        "application": "browser",
+        "generation_id": "generation-b",
+        "allocation_key": "profile:alpha",
+        "kernel_profile": "ntgen_b",
+        "executable": "/usr/bin/python",
+    }
+    child = {
+        "pid": 1234,
+        "uid": 1000,
+        "gid": 1000,
+        "groups": [],
+        "namespace_device": 5,
+        "namespace_inode": 10,
+        "executable": "/usr/bin/python",
+    }
+    arguments = {
+        "uid": 1000,
+        "gid": 1000,
+        "application": "browser",
+        "generation": "generation-b",
+        "allocation_key": "profile:alpha",
+        "kernel_profile": "ntgen_b",
+        "namespace_stat": SimpleNamespace(st_dev=5, st_ino=10),
+        "executable": "/usr/bin/python",
+    }
+    return child, lease, arguments
+
+
+def test_registered_launch_evidence_accepts_exact_child_and_lease():
+    child, lease, arguments = launch_evidence()
+    verify_launch_evidence(child, lease, **arguments)
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value", "message"),
+    [
+        ("child", "uid", 0, "identity or namespace"),
+        ("child", "groups", [10], "identity or namespace"),
+        ("child", "namespace_inode", 11, "identity or namespace"),
+        ("lease", "generation_id", "generation-a", "allocation and generation"),
+        ("lease", "kernel_profile", "alpha", "allocation and generation"),
+    ],
+)
+def test_registered_launch_evidence_rejects_identity_namespace_and_selection_drift(target, field, value, message):
+    child, lease, arguments = launch_evidence()
+    (child if target == "child" else lease)[field] = value
+    with pytest.raises(ProbeError, match=message):
+        verify_launch_evidence(child, lease, **arguments)
 
 
 def test_adversarial_acceptance_requires_repeatable_fail_closed_refusal():
