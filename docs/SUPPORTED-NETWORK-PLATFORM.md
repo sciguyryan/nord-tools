@@ -1,0 +1,63 @@
+# Supported production network platform
+
+Production network provisioning is accepted on one deliberately narrow Linux
+profile. Version checks are paired with read-only capability checks because a
+recognised version string does not prove that command output still has the
+shape required by the ownership and fail-closed readback code.
+
+## Accepted profile
+
+The following profile passed the complete disposable Arch Linux guest matrix
+on 9 November 2026:
+
+| Component | Accepted value | Package evidence |
+| --- | --- | --- |
+| Distribution | Arch Linux cloud image | Rolling image used by the acceptance manager |
+| Kernel | `7.2.x-arch1` | `linux 7.2.11.arch1-1` |
+| iproute2 | `7.3.0` | `iproute2 7.3.0-1` |
+| nftables | `1.1.7` | `nftables 1:1.1.7-3` |
+| WireGuard tools | `1.0.20260223` | `wireguard-tools 1.0.20260223-1` |
+
+Patch releases within the stated Arch kernel profile are admitted only when
+the live capability checks below pass. Different kernel series or tool
+versions are refused before restoration creates its state stores or calls a
+network mutation primitive. This is a conservative support boundary, not a
+claim that other Linux combinations are known to be incompatible.
+
+## Runtime capability contract
+
+`verify_supported_network_platform()` performs only read-only inspection. It
+requires:
+
+- the loopback link and both main route tables to use the accepted iproute2
+  JSON shapes;
+- `nft -j list ruleset` to return the recognised top-level nftables document;
+- safe WireGuard interface-field readback without requesting private-key dump
+  output; and
+- a root-owned, non-symlinked `/etc/netns` directory that is not writable by
+  group or other users.
+
+Production startup restoration runs this check before it creates the journal,
+binding, intent or run-record stores. Invalid JSON, unexpected document shapes,
+unrecognised versions, missing commands, timeouts and unsafe resolver storage
+all cause refusal without network changes. The later production profile checks
+still validate the exact nftables chains and rules, dual-stack routes,
+WireGuard peer fields and resolver file. The preflight does not replace those
+resource-specific checks.
+
+The namespace resolver uses `/etc/netns/<namespace>/resolv.conf`; it does not
+depend on a particular host `systemd-resolved` version. Host-domain resolver
+integration remains a separate Phase D requirement.
+
+## Expanding support
+
+A new kernel or tool version must not be added from version numbering alone.
+Its candidate tree must pass the platform probe, the complete local quality
+gates and both privileged disposable-guest matrices. The accepted values in
+the compatibility module and this table should then be updated together with
+the date and package evidence.
+
+This profile closes the Phase B platform requirement for the production-owned
+namespace path. It does not close the broader final platform matrix, desktop
+integration, host-domain protection or support for independently privileged
+network mutators.

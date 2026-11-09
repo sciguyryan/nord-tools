@@ -16,6 +16,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STAGES = (
+    ("supported network platform and readback contract", "probe_platform_compatibility.py", "--run-privileged"),
     ("production provisioning and restoration", "probe_provisioning_integration.py", "--run-privileged"),
     ("real WireGuard exchange, loss and host integrity", "probe_wireguard_host_integrity.py", "--execute"),
     ("dual-stack firewall and no-fallback packet policy", "probe_dual_stack_packet_policy.py", "--run-privileged"),

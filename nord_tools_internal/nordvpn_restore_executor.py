@@ -58,6 +58,7 @@ from nord_tools_internal.nordvpn_ownership_verify import (
     record_binding,
 )
 from nord_tools_internal.nordvpn_operation_store import initialise_intents
+from nord_tools_internal.nordvpn_platform_compat import verify_supported_network_platform
 from nord_tools_internal.nordvpn_provision_execution import (
     ProvisioningUncertainError,
     execute_recorded_creation,
@@ -783,6 +784,10 @@ def restore_boot_state(
         raise RegistryError("restoration requires durable operation intents in the startup configuration")
     if validated["tunnels"] and not validated["credentials"]:
         raise RegistryError("restoration requires one pinned credential input per tunnel plan")
+    if kernel is None:
+        # Refuse an unaccepted kernel or command-output contract before stores
+        # are created and before any network mutation callback can run.
+        verify_supported_network_platform()
     helpers = kernel or _real_kernel()
     boot_identity = boot_id or read_boot_id()
     restart_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")

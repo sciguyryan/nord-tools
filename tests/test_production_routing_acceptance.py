@@ -27,6 +27,14 @@ def test_stages_execute_in_order():
     ]
 
 
+def test_platform_contract_precedes_every_mutating_stage():
+    assert acceptance.STAGES[0] == (
+        "supported network platform and readback contract",
+        "probe_platform_compatibility.py",
+        "--run-privileged",
+    )
+
+
 def test_failure_stops_remaining_stages():
     with patch.object(acceptance.subprocess, "run", return_value=subprocess.CompletedProcess([], 1)) as runner:
         assert not acceptance.run_acceptance()

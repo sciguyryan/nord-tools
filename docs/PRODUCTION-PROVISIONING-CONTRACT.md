@@ -172,6 +172,12 @@ The routing runner's original real WireGuard experiment remains independent of t
 
 The real-WireGuard host-integrity probe compares nftables JSON structurally, ignoring only live packet and byte measurements inside counter expressions. Counter statements, rule handles, verdicts, policies and other firewall configuration remain part of the comparison. This prevents unrelated UFW traffic from causing a false host-configuration failure while continuing to reject firewall modifications.
 
+### Supported network-tooling contract
+
+Production startup restoration performs the [supported network platform](SUPPORTED-NETWORK-PLATFORM.md) preflight before it creates durable stores or constructs the real kernel helper surface. The accepted profile is Linux `7.2.x-arch1` with iproute2 `7.3.0`, nftables `1.1.7` and wireguard-tools `1.0.20260223`. The version match is followed by live read-only checks of iproute2 link and dual-stack route JSON, nftables ruleset JSON, safe WireGuard interface output and the root-owned `/etc/netns` directory.
+
+An unrecognised version, command failure, timeout, malformed output or unsafe resolver root aborts restoration without network mutation. The preflight does not infer compatibility from a higher version number. Extending the profile requires the exact candidate to pass `probe_platform_compatibility.py`, both privileged matrices and the local quality gates before the constants and support table are updated.
+
 ### DNS confinement acceptance
 
 A pinned `dns_servers` list causes authorised provisioning to install an exclusive namespace-local resolver only after the namespace firewall, dual-stack default routes and WireGuard peer have been configured. Before activation, DNS destination-specific routes, live peer AllowedIPs and exact resolver contents are checked. A DNS address outside the peer's AllowedIPs is rejected even when the kernel route points at WireGuard. Cleanup of namespace resolver files remains an explicit `--resolvers` operation, guarded by the existing namespace ownership checks. Existing deployments without a DNS list retain their previous behaviour.
