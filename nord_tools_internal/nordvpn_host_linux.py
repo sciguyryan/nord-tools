@@ -16,6 +16,7 @@ from typing import Any
 
 from nord_tools_internal.nordvpn_host_executor import HostKernel, HostProtectionError
 from nord_tools_internal.nordvpn_host_protection import HostProtectionPlan
+from nord_tools_internal.nordvpn_wireguard_readback import allowed_ips_match
 from nord_tools_internal.nordvpn_startup import read_boot_id
 
 
@@ -338,7 +339,7 @@ def _wireguard_observation(plan: HostProtectionPlan) -> tuple[str, dict | None]:
     if (
         peers != [plan.peer_public_key]
         or endpoints != [f"{plan.peer_public_key}\t{endpoint}"]
-        or allowed != [f"{plan.peer_public_key}\t{','.join(plan.peer_allowed_ips)}"]
+        or not allowed_ips_match("\n".join(allowed), plan.peer_public_key, plan.peer_allowed_ips)
         or mark != plan.fwmark
         or observed_addresses != expected_addresses
     ):

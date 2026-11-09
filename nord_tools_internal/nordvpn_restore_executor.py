@@ -42,6 +42,7 @@ from nord_tools_internal.nordvpn_dns_confinement import (
 )
 from nord_tools_internal.nordvpn_resolver_install import install_namespace_resolver, remove_namespace_resolver
 from nord_tools_internal.nordvpn_resolver_policy import NamespaceResolverPolicy
+from nord_tools_internal.nordvpn_wireguard_readback import allowed_ips_match
 from nord_tools_internal.nordvpn_failclosed_policy import NamespaceIsolationPolicy
 from nord_tools_internal.nordvpn_generation_handover import read_handover, selected_allocation
 from nord_tools_internal.nordvpn_identity import allocate_identity
@@ -194,7 +195,7 @@ def _real_kernel() -> RestoreKernel:
         )
         expected = (
             ("endpoints", f"{peer_public_key}\t{expected_endpoint}\n"),
-            ("allowed-ips", f"{peer_public_key}\t{' '.join(specification.peer_allowed_ips)}\n"),
+            ("allowed-ips", None),
             ("persistent-keepalive", f"{peer_public_key}\t{specification.persistent_keepalive_seconds or 'off'}\n"),
         )
         for field, value in expected:
@@ -207,7 +208,17 @@ def _real_kernel() -> RestoreKernel:
                 )
             except (OSError, subprocess.TimeoutExpired):
                 return False
-            if result.returncode or result.stdout != value.encode("ascii"):
+            if result.returncode:
+                return False
+            if value is None:
+                try:
+                    if not allowed_ips_match(
+                        result.stdout.decode("ascii"), peer_public_key, specification.peer_allowed_ips
+                    ):
+                        return False
+                except UnicodeDecodeError:
+                    return False
+            elif result.stdout != value.encode("ascii"):
                 return False
         return True
 
