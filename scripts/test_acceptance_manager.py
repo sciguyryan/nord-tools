@@ -411,3 +411,97 @@ def test_source_upload_skips_only_exact_verified_manifest(manager, monkeypatch, 
     )
     monkeypatch.setattr(manager, "ssh", lambda *a, **kw: (_ for _ in ()).throw(AssertionError("unnecessary transfer")))
     manager.upload_source()
+
+
+def test_d3_guest_agent_exec_uses_exact_guest_and_captures_output(manager, monkeypatch):
+    import base64
+
+    calls = []
+
+    def fake_virsh(*args, **kwargs):
+        calls.append(args)
+        request = json.loads(args[2])
+        if request["execute"] == "guest-exec":
+            assert request["arguments"]["path"] == "/usr/bin/cat"
+            assert request["arguments"]["arg"] == ["/proc/sys/kernel/random/boot_id"]
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"return": {"pid": 42}}), stderr="")
+        assert request["execute"] == "guest-exec-status"
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "return": {
+                        "exited": True,
+                        "exitcode": 0,
+                        "out-data": base64.b64encode(b"boot-two\n").decode(),
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(manager, "virsh", fake_virsh)
+    assert manager.qga_command("/usr/bin/cat", "/proc/sys/kernel/random/boot_id") == "boot-two\n"
+    assert all(args[1] == manager.VM for args in calls)
+
+
+def test_d3_guest_agent_rejects_failed_guest_command(manager, monkeypatch):
+    import base64
+
+    def fake_virsh(*args, **kwargs):
+        request = json.loads(args[2])
+        if request["execute"] == "guest-exec":
+            return SimpleNamespace(returncode=0, stdout='{"return":{"pid":9}}', stderr="")
+        return SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "return": {
+                        "exited": True,
+                        "exitcode": 1,
+                        "err-data": base64.b64encode(b"protected state unresolved").decode(),
+                    }
+                }
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(manager, "virsh", fake_virsh)
+    with pytest.raises(RuntimeError, match="protected state unresolved"):
+        manager.qga_command("/usr/bin/false")
+
+
+def test_d3_wait_for_reboot_rejects_same_boot(manager, monkeypatch):
+    monkeypatch.setattr(manager, "qga_command", lambda *a, **k: "same\n")
+    times = iter([0, 1, 3, 5])
+    monkeypatch.setattr(manager.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(manager.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError, match="different kernel boot ID"):
+        manager.wait_for_qga_boot("same", timeout=2)
+
+
+def test_d3_waits_for_ssh_after_verified_retirement(manager, monkeypatch):
+    attempts = iter(
+        [
+            SimpleNamespace(returncode=255, stdout="", stderr="Connection refused"),
+            SimpleNamespace(returncode=0, stdout='{"result":"passed"}\n', stderr=""),
+        ]
+    )
+    monkeypatch.setattr(manager, "ssh", lambda *a, **k: next(attempts))
+    monkeypatch.setattr(manager.time, "sleep", lambda _: None)
+
+    assert manager.wait_for_d3_result() == '{"result":"passed"}\n'
+
+
+def test_d3_ssh_wait_reports_bounded_failure(manager, monkeypatch):
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *a, **k: SimpleNamespace(returncode=255, stdout="", stderr="Connection refused"),
+    )
+    times = iter([0, 1, 3])
+    monkeypatch.setattr(manager.time, "monotonic", lambda: next(times))
+    monkeypatch.setattr(manager.time, "sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match=r"did not return within 2 seconds \(Connection refused\)"):
+        manager.wait_for_d3_result(timeout=2)

@@ -873,3 +873,9 @@ Live replacement preparation can be inspected without network changes using `pyt
 ## Generation replacement acceptance
 
 The [generation replacement and recovery acceptance contract](docs/GENERATION-REPLACEMENT-ACCEPTANCE.md) documents the production A/B handover, conservative drift recovery, repeatability and fail-closed checks, disposable real-peer privileged test commands, and the remaining limits of interruption coverage.
+
+D3 reboot preparation now checks the isolated, installed Python entry point before enabling the boot units. A missing transitive probe module aborts preparation rather than causing an avoidable emergency-mode boot. This preflight does not replace the required privileged real-reboot acceptance.
+
+### Disposable host-acceptance veth retirement
+
+The D1/D2 and D3 acceptance fixtures create a peer network namespace joined to an ephemeral host veth. Removing the namespace ordinarily destroys both veth endpoints. The acceptance probes therefore verify host-end disappearance using an enumerated link inventory rather than issuing a second name-based deletion. An interface with the same name but a different ifindex is treated as an identity conflict, not as permission to delete it. These checks apply to privileged disposable-guest acceptance only and do not relax production host barrier retirement or recovery requirements.

@@ -51,6 +51,9 @@ HOST_ACCEPTANCE_EVIDENCE = "/var/tmp/nord-tools-host-d1-evidence"
 HOST_FAILURE_UNIT = "nord-tools-host-d2.service"
 HOST_FAILURE_RESULT = "/var/tmp/nord-tools-host-d2-result.json"
 HOST_FAILURE_EVIDENCE = "/var/tmp/nord-tools-host-d2-evidence"
+HOST_REBOOT_RESULT = "/var/tmp/nord-tools-d3-result.json"
+HOST_REBOOT_PROBE = "/var/lib/nord-tools-d3/source/tools/probe_host_reboot_acceptance.py"
+HOST_REBOOT_PREPARE = f"{REMOTE_ROOT}/tools/probe_host_reboot_acceptance.py"
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -1043,6 +1046,142 @@ def wait_for_host_acceptance(
     )
 
 
+def qga_command(*arguments, timeout=180):
+    """Execute a bounded root command through the disposable guest serial agent.
+
+    This channel deliberately does not depend on SSH while the host deny
+    barrier is installed. It is restricted to the named libvirt guest.
+    """
+    import base64
+
+    request = json.dumps(
+        {
+            "execute": "guest-exec",
+            "arguments": {
+                "path": arguments[0],
+                "arg": list(arguments[1:]),
+                "capture-output": True,
+            },
+        }
+    )
+    started = virsh("qemu-agent-command", VM, request, check=False)
+    if started.returncode:
+        raise RuntimeError("D3 guest agent unavailable: " + started.stderr.strip())
+    payload = json.loads(started.stdout)
+    if "return" not in payload or "pid" not in payload["return"]:
+        raise RuntimeError("D3 guest agent rejected execution: " + started.stdout[:400])
+    pid = payload["return"]["pid"]
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        query = json.dumps({"execute": "guest-exec-status", "arguments": {"pid": pid}})
+        response = virsh("qemu-agent-command", VM, query, check=False)
+        if response.returncode:
+            raise RuntimeError("D3 guest agent lost command status: " + response.stderr.strip())
+        state = json.loads(response.stdout).get("return", {})
+        if state.get("exited"):
+            output = base64.b64decode(state.get("out-data", ""), validate=True).decode(errors="replace")
+            error = base64.b64decode(state.get("err-data", ""), validate=True).decode(errors="replace")
+            if state.get("exitcode") != 0:
+                raise RuntimeError(f"D3 guest command failed ({state.get('exitcode')}): {error or output}")
+            return output
+        time.sleep(1)
+    raise RuntimeError("D3 guest command timed out; host deny barrier remains in place")
+
+
+def wait_for_qga_boot(previous_boot, timeout=240):
+    """Require an observed new kernel boot, not merely a libvirt reboot reply."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            boot = qga_command("/usr/bin/cat", "/proc/sys/kernel/random/boot_id", timeout=10).strip()
+            if boot and boot != previous_boot:
+                return boot
+        except (RuntimeError, ValueError, subprocess.SubprocessError):
+            pass
+        time.sleep(3)
+    raise RuntimeError("D3 guest did not return with a different kernel boot ID; inspect serial console")
+
+
+def wait_for_d3_result(timeout=120):
+    """Wait for ordinary SSH to return after verified D3 retirement.
+
+    The guest can finish the protected lifecycle before sshd starts.  In the
+    Arch cloud image, sshd may wait for the initial system clock
+    synchronisation even though the normal interface and forwarding path have
+    already been restored.
+    """
+    deadline = time.monotonic() + timeout
+    last_error = "SSH is not reachable"
+    while time.monotonic() < deadline:
+        try:
+            report = ssh("sudo", "-n", "cat", HOST_REBOOT_RESULT, timeout=10)
+        except (OSError, subprocess.SubprocessError) as exc:
+            last_error = str(exc)
+        else:
+            if report.returncode == 0:
+                return report.stdout
+            detail = (report.stderr or report.stdout).strip()
+            last_error = detail[:400] or f"SSH exited with status {report.returncode}"
+        time.sleep(2)
+    raise RuntimeError(
+        f"D3 retired its verified barrier, but guest SSH did not return within {timeout} seconds ({last_error})"
+    )
+
+
+def run_host_reboot_acceptance():
+    """Exercise the installed boot units across an actual disposable VM reboot."""
+    prepared = ssh("sudo", "-n", "/usr/bin/python", HOST_REBOOT_PREPARE, "prepare", timeout=45)
+    if prepared.returncode:
+        raise RuntimeError("D3 boot fixture preparation failed: " + (prepared.stderr or prepared.stdout))
+    previous = qga_command("/usr/bin/cat", "/proc/sys/kernel/random/boot_id").strip()
+    progress("Rebooting the disposable guest for D3 startup-order acceptance...")
+    rebooted = virsh("reboot", VM, check=False)
+    if rebooted.returncode:
+        raise RuntimeError("D3 guest reboot request failed: " + rebooted.stderr.strip())
+    boot = wait_for_qga_boot(previous)
+    progress("Verifying D3 early barrier, network-online activation and dual-stack tunnel through guest agent...")
+    deadline = time.monotonic() + 180
+    last_error = "D3 boot units have not converged"
+    while time.monotonic() < deadline:
+        try:
+            qga_command("/usr/bin/python", HOST_REBOOT_PROBE, "inspect", timeout=25)
+            break
+        except RuntimeError as exc:
+            last_error = str(exc)
+            time.sleep(3)
+    else:
+        raise RuntimeError("D3 boot did not converge; retain guest for console recovery: " + last_error)
+    progress("Testing interrupted D3 retirement and explicit evidence-led recovery...")
+    qga_command("/usr/bin/python", HOST_REBOOT_PROBE, "retire", timeout=180)
+    document = json.loads(wait_for_d3_result())
+    if document.get("result") != "passed" or document.get("boot_id") != boot:
+        raise RuntimeError("D3 returned incomplete or mismatched reboot acceptance evidence")
+    document["source_manifest_sha256"] = hashlib.sha256(
+        json.dumps(source_manifest(SOURCE_ROOT), sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    return document
+
+
+def d3_failure_diagnostics():
+    """Best-effort read-only boot evidence without weakening guest protection."""
+    try:
+        return qga_command(
+            "/usr/bin/journalctl",
+            "-b",
+            "--no-pager",
+            "--lines=100",
+            "-u",
+            "nord-tools-d3-fixture.service",
+            "-u",
+            "nord-tools-host-barrier.service",
+            "-u",
+            "nord-tools-host-activate.service",
+            timeout=20,
+        )[-12000:]
+    except (RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        return f"Guest agent diagnostics unavailable: {exc}; inspect the libvirt serial console."
+
+
 def run_tests():
     """Upload this checkout, run quality gates, then run privileged acceptance."""
     ready = readiness()
@@ -1157,11 +1296,17 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
             result_path=HOST_FAILURE_RESULT,
             expected_scope="D2 host-domain failure and recovery acceptance",
         )
+        try:
+            reboot_report = run_host_reboot_acceptance()
+        except RuntimeError as exc:
+            raise RuntimeError(str(exc) + "\nD3 boot diagnostics:\n" + d3_failure_diagnostics()) from exc
         return (
             "Acceptance tests passed in the disposable guest, including "
             + host_report["scope"]
             + " and "
             + failure_report["scope"]
+            + " and "
+            + reboot_report["scope"]
             + "."
         )
     result = subprocess.run(
@@ -1183,9 +1328,13 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
         result_path=HOST_FAILURE_RESULT,
         expected_scope="D2 host-domain failure and recovery acceptance",
     )
+    try:
+        reboot_report = run_host_reboot_acceptance()
+    except RuntimeError as exc:
+        raise RuntimeError(str(exc) + "\nD3 boot diagnostics:\n" + d3_failure_diagnostics()) from exc
     return (
         "Acceptance tests passed in the disposable guest, including "
-        f"{host_report['scope']} and {failure_report['scope']}.\n{output}"
+        f"{host_report['scope']}, {failure_report['scope']} and {reboot_report['scope']}.\n{output}"
     )
 
 

@@ -544,6 +544,34 @@ def run_failure_recovery_lifecycle(
         stop_process(handshake_process)
 
 
+def verify_disposable_veth_retired(host_link: str, expected_ifindex: int, *, timeout: float = 2.0) -> None:
+    """Confirm namespace retirement removed its veth peer without a stale-name delete.
+
+    Removing a network namespace destroys its veth endpoint and ordinarily its
+    paired host endpoint. A second ``ip link del`` is both unnecessary and
+    unsafe: the name may already be absent or have been reused by another actor.
+    Require successful full-link enumeration and reject unexpected identity.
+    """
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            links = json.loads(command("ip", "-j", "link", "show"))
+        except (ValueError, TypeError) as exc:
+            raise HostAcceptanceError("cannot verify disposable host veth retirement") from exc
+        if not isinstance(links, list) or any(
+            not isinstance(link, dict) or not isinstance(link.get("ifname"), str) for link in links
+        ):
+            raise HostAcceptanceError("invalid host link inventory after namespace retirement")
+        matches = [link for link in links if link["ifname"] == host_link]
+        if not matches:
+            return
+        if len(matches) != 1 or matches[0].get("ifindex") != expected_ifindex:
+            raise HostAcceptanceError("disposable host veth identity changed; refusing deletion")
+        if time.monotonic() >= deadline:
+            raise HostAcceptanceError("disposable host veth still exists after namespace retirement")
+        time.sleep(0.1)
+
+
 def run_probe(evidence_dir: Path, *, phase: str = "d1") -> dict:
     if phase not in {"d1", "d2"}:
         raise ValueError("host acceptance phase must be d1 or d2")
@@ -702,7 +730,7 @@ def run_probe(evidence_dir: Path, *, phase: str = "d1") -> dict:
         stop_process(dns_process)
         dns_process = None
         command("ip", "netns", "del", namespace)
-        command("ip", "link", "del", host_link)
+        verify_disposable_veth_retired(host_link, egress_ifindex)
         verify_host(original, observe_host())
         final_links = json.loads(command("ip", "-j", "link", "show"))
         if without_runtime_values(original_links) != without_runtime_values(final_links):
@@ -720,8 +748,9 @@ def run_probe(evidence_dir: Path, *, phase: str = "d1") -> dict:
         stop_process(handshake_process)
         stop_process(dns_process)
         if retired:
+            # The normal path has already verified peer retirement. Never issue
+            # a second name-based link deletion from the finaliser.
             subprocess.run(["ip", "netns", "del", namespace], capture_output=True, check=False)
-            subprocess.run(["ip", "link", "del", host_link], capture_output=True, check=False)
         elif activated:
             print(
                 "FAIL: verified host protection remains active; use the guest console for evidence-led recovery",
@@ -729,8 +758,9 @@ def run_probe(evidence_dir: Path, *, phase: str = "d1") -> dict:
                 flush=True,
             )
         elif not store.exists():
+            # Only the namespace created by this probe is eligible for best-effort
+            # cleanup. Namespace deletion also retires the paired host veth.
             subprocess.run(["ip", "netns", "del", namespace], capture_output=True, check=False)
-            subprocess.run(["ip", "link", "del", host_link], capture_output=True, check=False)
 
 
 def validated_evidence_directory(value: str | None, *, phase: str = "d1") -> Path:

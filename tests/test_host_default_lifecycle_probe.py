@@ -102,3 +102,49 @@ def test_host_domain_static_underlay_disables_ipv6_address_generation():
     source = Path("tools/probe_host_domain_acceptance.py").read_text(encoding="utf-8")
     assert 'command("ip", "link", "set", host_link, "addrgenmode", "none")' in source
     assert 'command("ip", "-n", namespace, "link", "set", peer_link, "addrgenmode", "none")' in source
+
+
+def test_disposable_veth_retirement_accepts_automatic_peer_removal():
+    with patch.object(host_acceptance, "command", return_value=b'[{"ifname":"lo","ifindex":1}]') as cmd:
+        host_acceptance.verify_disposable_veth_retired("nthh123", 42)
+    cmd.assert_called_once_with("ip", "-j", "link", "show")
+
+
+def test_disposable_veth_retirement_refuses_reused_name():
+    import pytest
+
+    with (
+        patch.object(host_acceptance, "command", return_value=b'[{"ifname":"nthh123","ifindex":43}]'),
+        pytest.raises(host_acceptance.HostAcceptanceError, match="identity changed"),
+    ):
+        host_acceptance.verify_disposable_veth_retired("nthh123", 42)
+
+
+def test_disposable_veth_retirement_refuses_unverifiable_inventory():
+    import pytest
+
+    with (
+        patch.object(host_acceptance, "command", return_value=b'{"unexpected":true}'),
+        pytest.raises(host_acceptance.HostAcceptanceError, match="invalid host link inventory"),
+    ):
+        host_acceptance.verify_disposable_veth_retired("nthh123", 42)
+
+
+def test_disposable_veth_retirement_waits_for_kernel_peer_release():
+    observations = [b'[{"ifname":"nthh123","ifindex":42}]', b"[]"]
+    with (
+        patch.object(host_acceptance, "command", side_effect=observations) as cmd,
+        patch.object(host_acceptance.time, "sleep") as sleep,
+    ):
+        host_acceptance.verify_disposable_veth_retired("nthh123", 42)
+    assert cmd.call_count == 2
+    sleep.assert_called_once_with(0.1)
+
+
+def test_disposable_veth_retirement_never_deletes_by_stale_name():
+    source = Path("tools/probe_host_domain_acceptance.py").read_text(encoding="utf-8")
+    d3_source = Path("tools/probe_host_reboot_acceptance.py").read_text(encoding="utf-8")
+    assert 'command("ip", "link", "del", host_link)' not in source
+    assert '["ip", "link", "del", host_link]' not in source
+    assert "call('ip', 'link', 'del', HOST_LINK)" not in d3_source
+    assert "verify_disposable_veth_retired(HOST_LINK, expected_ifindex)" in d3_source
