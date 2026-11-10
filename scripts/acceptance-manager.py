@@ -75,8 +75,11 @@ REQUIRED_PACKAGES = (
 )
 _PRIVILEGE_PASSWORD = None
 _CLI_PROGRESS = False
+_COLOURBLIND = False
 _ANSI_GREEN = "\033[32m"
 _ANSI_RED = "\033[31m"
+_ANSI_BLUE = "\033[38;5;33m"
+_ANSI_ORANGE = "\033[38;5;208m"
 _ANSI_RESET = "\033[0m"
 
 if not 1024 <= SSH_PORT <= 65535:
@@ -93,11 +96,11 @@ def progress(message):
         print(message, flush=True)
 
 
-def colourise_acceptance_status(line, *, enabled):
+def colourise_acceptance_status(line, *, enabled, colourblind=False):
     """Colour PASS and FAIL markers without changing captured evidence."""
     if not enabled:
         return line
-    colours = {"PASS": _ANSI_GREEN, "FAIL": _ANSI_RED}
+    colours = {"PASS": _ANSI_BLUE, "FAIL": _ANSI_ORANGE} if colourblind else {"PASS": _ANSI_GREEN, "FAIL": _ANSI_RED}
     return re.sub(
         r"\b(PASS|FAIL)(?=:|\b)",
         lambda match: colours[match.group(1)] + match.group(1) + _ANSI_RESET,
@@ -1091,7 +1094,11 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
             if line is None:
                 break
             colour = sys.stdout.isatty() and os.environ.get("TERM") != "dumb" and "NO_COLOR" not in os.environ
-            print(colourise_acceptance_status(line, enabled=colour), end="", flush=True)
+            print(
+                colourise_acceptance_status(line, enabled=colour, colourblind=_COLOURBLIND),
+                end="",
+                flush=True,
+            )
             tail.append(line.rstrip())
             tail = tail[-30:]
         returncode = process.wait()
@@ -1280,7 +1287,7 @@ def gui():
 
 
 def main():
-    global _CLI_PROGRESS
+    global _CLI_PROGRESS, _COLOURBLIND
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "action",
@@ -1306,6 +1313,12 @@ def main():
     )
     parser.add_argument("--force", action="store_true", help="Always recreate the disposable VM with rebuild")
     parser.add_argument("--plan", action="store_true", help="Explain rebuild decisions without making changes")
+    parser.add_argument(
+        "--colourblind",
+        "--colorblind",
+        action="store_true",
+        help="use blue PASS and orange FAIL markers in colour-capable terminal output",
+    )
     args = parser.parse_args()
     if (args.force or args.plan) and args.action != "rebuild":
         parser.error("--force and --plan apply only to rebuild")
@@ -1329,6 +1342,7 @@ def main():
         if args.action == "gui":
             return gui()
         _CLI_PROGRESS = True
+        _COLOURBLIND = args.colourblind
         if args.action == "rebuild" and args.plan:
             reuse, reasons = rebuild_plan(force=args.force)
             print("Decision: " + ("reuse verified unused VM" if reuse else "clean rebuild"))

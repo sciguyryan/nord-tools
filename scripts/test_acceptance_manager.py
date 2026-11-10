@@ -2,6 +2,7 @@ import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -106,6 +107,22 @@ def test_acceptance_status_colour_is_terminal_opt_in(manager):
     assert manager.colourise_acceptance_status(line, enabled=True) == (
         "\033[32mPASS\033[0m: tunnel active; \033[31mFAIL\033[0m: bypass detected\n"
     )
+    assert manager.colourise_acceptance_status(line, enabled=True, colourblind=True) == (
+        "\033[38;5;33mPASS\033[0m: tunnel active; \033[38;5;208mFAIL\033[0m: bypass detected\n"
+    )
+
+
+def test_acceptance_manager_exposes_both_colourblind_spellings():
+    for flag in ("--colourblind", "--colorblind"):
+        result = subprocess.run(
+            [sys.executable, "scripts/acceptance-manager.py", flag, "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=15,
+        )
+        assert result.returncode == 0
+        assert "blue PASS and orange FAIL" in result.stdout
 
 
 def test_acceptance_key_is_generated_without_using_personal_key(manager, monkeypatch, tmp_path):
