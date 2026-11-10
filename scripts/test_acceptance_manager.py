@@ -1,5 +1,7 @@
+import json
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
+import subprocess
 from types import SimpleNamespace
 
 import pytest
@@ -98,6 +100,14 @@ def test_ssh_without_remote_command_remains_interactive(manager):
     assert command[-1] == f"arch@{manager.SSH_HOST}"
 
 
+def test_acceptance_status_colour_is_terminal_opt_in(manager):
+    line = "PASS: tunnel active; FAIL: bypass detected\n"
+    assert manager.colourise_acceptance_status(line, enabled=False) == line
+    assert manager.colourise_acceptance_status(line, enabled=True) == (
+        "\033[32mPASS\033[0m: tunnel active; \033[31mFAIL\033[0m: bypass detected\n"
+    )
+
+
 def test_acceptance_key_is_generated_without_using_personal_key(manager, monkeypatch, tmp_path):
     private = tmp_path / "id_ed25519"
     public = tmp_path / "id_ed25519.pub"
@@ -117,6 +127,7 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     assert "- [install, -d, -m, '0755', -o, root, -g, root, /etc/netns]" in source
     assert 'package_list = ", ".join(REQUIRED_PACKAGES)' in source
     assert "sudo -n python tools/probe_desktop_launch_acceptance.py" in source
+    assert "systemd-run --no-block --collect" in source
     assert "probe_host_domain_acceptance.py --run-privileged --startup-delay 5" in source
 
 
@@ -140,6 +151,30 @@ def test_host_acceptance_waits_for_reconnection_and_validates_scope(manager, mon
     assert report["result"] == "passed"
 
 
+def test_host_acceptance_treats_ssh_timeout_as_an_active_barrier(manager, monkeypatch):
+    responses = iter(
+        [
+            subprocess.TimeoutExpired(("ssh",), 10),
+            SimpleNamespace(
+                returncode=0,
+                stdout='{"result":"passed","scope":"D1 host-domain static-egress acceptance"}',
+                stderr="",
+            ),
+        ]
+    )
+
+    def ssh(*_args, **_kwargs):
+        response = next(responses)
+        if isinstance(response, BaseException):
+            raise response
+        return response
+
+    monkeypatch.setattr(manager, "ssh", ssh)
+    monkeypatch.setattr(manager.time, "sleep", lambda _seconds: None)
+
+    assert manager.wait_for_host_acceptance(timeout=10)["result"] == "passed"
+
+
 def test_host_acceptance_rejects_incomplete_success_report(manager, monkeypatch):
     monkeypatch.setattr(
         manager,
@@ -152,6 +187,28 @@ def test_host_acceptance_rejects_incomplete_success_report(manager, monkeypatch)
     )
 
     with pytest.raises(RuntimeError, match="complete accepted scope"):
+        manager.wait_for_host_acceptance(timeout=10)
+
+
+def test_host_acceptance_reports_durable_failure_evidence(manager, monkeypatch):
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "result": "failed",
+                    "scope": "D1 host-domain static-egress acceptance",
+                    "error": "route inspection failed",
+                    "evidence_dir": "/var/tmp/nord-tools-host-d1-evidence",
+                }
+            ),
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match=r"(?s)route inspection failed.*Evidence retained"):
         manager.wait_for_host_acceptance(timeout=10)
 
 

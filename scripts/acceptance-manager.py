@@ -75,6 +75,9 @@ REQUIRED_PACKAGES = (
 )
 _PRIVILEGE_PASSWORD = None
 _CLI_PROGRESS = False
+_ANSI_GREEN = "\033[32m"
+_ANSI_RED = "\033[31m"
+_ANSI_RESET = "\033[0m"
 
 if not 1024 <= SSH_PORT <= 65535:
     raise ValueError("NORD_TOOLS_ACCEPTANCE_SSH_PORT must be between 1024 and 65535.")
@@ -88,6 +91,18 @@ def run(*args, check=True, timeout=30):
 def progress(message):
     if _CLI_PROGRESS:
         print(message, flush=True)
+
+
+def colourise_acceptance_status(line, *, enabled):
+    """Colour PASS and FAIL markers without changing captured evidence."""
+    if not enabled:
+        return line
+    colours = {"PASS": _ANSI_GREEN, "FAIL": _ANSI_RED}
+    return re.sub(
+        r"\b(PASS|FAIL)(?=:|\b)",
+        lambda match: colours[match.group(1)] + match.group(1) + _ANSI_RESET,
+        line,
+    )
 
 
 def virsh(*args, check=True):
@@ -935,24 +950,38 @@ def wait_for_host_acceptance(timeout=180):
     deadline = time.monotonic() + timeout
     last_status = "guest SSH unavailable while the host deny barrier is active"
     while time.monotonic() < deadline:
-        result = ssh("sudo", "-n", "cat", HOST_ACCEPTANCE_RESULT, timeout=10)
+        try:
+            result = ssh("sudo", "-n", "cat", HOST_ACCEPTANCE_RESULT, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            time.sleep(1)
+            continue
         if result.returncode == 0:
             try:
                 report = json.loads(result.stdout)
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("D1 host acceptance returned malformed result JSON") from exc
-            if report.get("result") != "passed" or report.get("scope") != "D1 host-domain static-egress acceptance":
+            if report.get("scope") != "D1 host-domain static-egress acceptance":
                 raise RuntimeError("D1 host acceptance did not report its complete accepted scope")
+            if report.get("result") == "failed":
+                detail = report.get("error", "unknown failure")
+                evidence = report.get("evidence_dir", "no evidence directory reported")
+                raise RuntimeError(f"D1 host acceptance failed: {detail}\nEvidence retained: {evidence}")
+            if report.get("result") != "passed":
+                raise RuntimeError("D1 host acceptance returned an unknown result state")
             return report
-        status = ssh(
-            "sudo",
-            "-n",
-            "systemctl",
-            "show",
-            HOST_ACCEPTANCE_UNIT,
-            "--property=ActiveState,Result",
-            timeout=10,
-        )
+        try:
+            status = ssh(
+                "sudo",
+                "-n",
+                "systemctl",
+                "show",
+                HOST_ACCEPTANCE_UNIT,
+                "--property=ActiveState,Result",
+                timeout=10,
+            )
+        except (OSError, subprocess.SubprocessError):
+            time.sleep(1)
+            continue
         if status.returncode == 0:
             last_status = status.stdout.strip() or last_status
             if "ActiveState=failed" in status.stdout or "Result=failed" in status.stdout:
@@ -1021,7 +1050,7 @@ sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged 
 echo "RUN: registered desktop session integration"
 sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
 echo "RUN: detached D1 host-domain acceptance"
-sudo -n systemd-run --unit={HOST_ACCEPTANCE_UNIT.removesuffix(".service")} --property=Type=oneshot --property=TimeoutStartSec=180 \
+sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuffix(".service")} --property=Type=oneshot --property=TimeoutStartSec=180 \
   /usr/bin/python {REMOTE_ROOT}/tools/probe_host_domain_acceptance.py --run-privileged --startup-delay 5 \
   --evidence-dir {HOST_ACCEPTANCE_EVIDENCE} --result {HOST_ACCEPTANCE_RESULT}
 """
@@ -1061,7 +1090,8 @@ sudo -n systemd-run --unit={HOST_ACCEPTANCE_UNIT.removesuffix(".service")} --pro
                 continue
             if line is None:
                 break
-            print(line, end="", flush=True)
+            colour = sys.stdout.isatty() and os.environ.get("TERM") != "dumb" and "NO_COLOR" not in os.environ
+            print(colourise_acceptance_status(line, enabled=colour), end="", flush=True)
             tail.append(line.rstrip())
             tail = tail[-30:]
         returncode = process.wait()

@@ -87,19 +87,32 @@ while True:
 
 UNDERLAY_LISTENER = r"""
 import socket
+import struct
 import sys
+import time
 
 interface, address, port = sys.argv[1], sys.argv[2], int(sys.argv[3])
-with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, interface.encode() + b'\x00')
-    sock.bind((address, port))
+with socket.socket(socket.AF_PACKET, socket.SOCK_RAW, socket.htons(0x0800)) as sock:
+    sock.bind((interface, 0))
     sock.settimeout(3)
     print('READY', flush=True)
-    try:
-        sock.recvfrom(128)
-    except socket.timeout:
-        sys.exit(0)
-    sys.exit(3)
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        try:
+            frame = sock.recv(65535)
+        except socket.timeout:
+            break
+        if len(frame) < 42 or frame[12:14] != b'\x08\x00' or frame[23] != socket.IPPROTO_UDP:
+            continue
+        header_length = (frame[14] & 0x0f) * 4
+        udp = 14 + header_length
+        if len(frame) < udp + 4:
+            continue
+        destination = socket.inet_ntoa(frame[30:34])
+        destination_port = struct.unpack('!H', frame[udp + 2:udp + 4])[0]
+        if destination == address and destination_port == port:
+            sys.exit(3)
+    sys.exit(0)
 """
 
 
@@ -221,8 +234,9 @@ def dns_event_count(path: Path) -> int:
 
 def verify_resolved_packet_path(log: Path, token: str) -> None:
     before = dns_event_count(log)
+    query_name = f"{token}.d1.nordtools"
     result = subprocess.run(
-        ["resolvectl", "query", "--type=A", f"{token}.nordhost.invalid"],
+        ["resolvectl", "query", "--type=A", query_name],
         capture_output=True,
         text=True,
         check=False,
@@ -318,6 +332,8 @@ def run_probe(evidence_dir: Path) -> dict:
         command("ip", "netns", "add", namespace)
         command("ip", "link", "add", host_link, "type", "veth", "peer", "name", peer_link)
         command("ip", "link", "set", peer_link, "netns", namespace)
+        command("ip", "link", "set", host_link, "addrgenmode", "none")
+        command("ip", "-n", namespace, "link", "set", peer_link, "addrgenmode", "none")
         command("ip", "address", "add", "192.0.2.2/29", "dev", host_link)
         command("ip", "link", "set", host_link, "up")
         command("ip", "-n", namespace, "link", "set", "lo", "up")
@@ -443,6 +459,9 @@ def run_probe(evidence_dir: Path) -> dict:
                 file=sys.stderr,
                 flush=True,
             )
+        elif not store.exists():
+            subprocess.run(["ip", "netns", "del", namespace], capture_output=True, check=False)
+            subprocess.run(["ip", "link", "del", host_link], capture_output=True, check=False)
 
 
 def validated_evidence_directory(value: str | None) -> Path:
@@ -485,6 +504,16 @@ def main(argv: list[str] | None = None) -> int:
             write_json(Path(args.result), report)
         print(json.dumps(report, indent=2, sort_keys=True), flush=True)
     except (OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
+        if args.result:
+            write_json(
+                Path(args.result),
+                {
+                    "result": "failed",
+                    "scope": "D1 host-domain static-egress acceptance",
+                    "error": str(exc),
+                    "evidence_dir": str(evidence_dir) if evidence_dir is not None else None,
+                },
+            )
         print(f"FAIL: {exc}", file=sys.stderr, flush=True)
         if evidence_dir is not None:
             print(f"FAILED RUN EVIDENCE RETAINED: {evidence_dir}", file=sys.stderr, flush=True)

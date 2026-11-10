@@ -82,7 +82,7 @@ def _service_active(name: str) -> bool:
 
 
 def _links() -> list[dict]:
-    data = _json(["ip", "-j", "link", "show"])
+    data = _json(["ip", "-j", "-d", "link", "show"])
     if not isinstance(data, list):
         raise HostProtectionError("host link inventory is malformed")
     result = []
@@ -251,7 +251,20 @@ def _rule_rows(family: int) -> list[dict]:
 
 
 def _route_rows(family: int, table: int) -> list[dict]:
-    data = _json(["ip", f"-{family}", "-j", "route", "show", "table", str(table)])
+    argv = ["ip", f"-{family}", "-j", "route", "show", "table", str(table)]
+    try:
+        result = subprocess.run(argv, capture_output=True, text=True, check=False, timeout=_TIMEOUT)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HostProtectionError("host command 'ip' could not complete") from exc
+    missing_table = f"Error: ipv{family}: FIB table does not exist.\nDump terminated\n"
+    if result.returncode and not (
+        result.returncode == 2 and result.stdout.strip() == "[]" and result.stderr == missing_table
+    ):
+        raise HostProtectionError(f"host command 'ip' failed (exit {result.returncode})")
+    try:
+        data = json.loads(result.stdout)
+    except (ValueError, TypeError) as exc:
+        raise HostProtectionError("host command 'ip' returned malformed JSON") from exc
     if not isinstance(data, list) or any(not isinstance(item, dict) for item in data):
         raise HostProtectionError("host route readback is malformed")
     return data
@@ -389,11 +402,11 @@ def _resolver_state(plan: HostProtectionPlan) -> str:
     addresses = set(dns_output.partition(":")[2].split())
     domains = set(domain_output.partition(":")[2].split())
     default_route = route_output.partition(":")[2].strip().lower()
-    return (
-        "present"
-        if addresses == set(plan.dns_servers) and domains == {"~."} and default_route == "yes"
-        else "ambiguous"
-    )
+    if addresses == set(plan.dns_servers) and domains == {"~."} and default_route == "yes":
+        return "present"
+    if not addresses and not domains and default_route == "no":
+        return "absent"
+    return "ambiguous"
 
 
 def _resource_state(name: str, evidence: dict, plan: HostProtectionPlan) -> str:
