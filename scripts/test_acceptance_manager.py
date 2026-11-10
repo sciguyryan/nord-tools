@@ -146,6 +146,7 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     assert "sudo -n python tools/probe_desktop_launch_acceptance.py" in source
     assert "systemd-run --no-block --collect" in source
     assert "probe_host_domain_acceptance.py --run-privileged --startup-delay 5" in source
+    assert 'probe="probe_host_failure_recovery_acceptance.py"' in source
 
 
 def test_host_acceptance_waits_for_reconnection_and_validates_scope(manager, monkeypatch):
@@ -203,7 +204,7 @@ def test_host_acceptance_rejects_incomplete_success_report(manager, monkeypatch)
         ),
     )
 
-    with pytest.raises(RuntimeError, match="complete accepted scope"):
+    with pytest.raises(RuntimeError, match="complete expected scope"):
         manager.wait_for_host_acceptance(timeout=10)
 
 
@@ -227,6 +228,28 @@ def test_host_acceptance_reports_durable_failure_evidence(manager, monkeypatch):
 
     with pytest.raises(RuntimeError, match=r"(?s)route inspection failed.*Evidence retained"):
         manager.wait_for_host_acceptance(timeout=10)
+
+
+def test_detached_host_stage_uses_distinct_unit_probe_and_evidence(manager, monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *args, **kwargs: calls.append((args, kwargs)) or SimpleNamespace(returncode=0, stdout="", stderr=""),
+    )
+
+    manager.start_detached_host_acceptance(
+        unit="nord-tools-host-d2.service",
+        probe="probe_host_failure_recovery_acceptance.py",
+        evidence="/var/tmp/d2-evidence",
+        result_path="/var/tmp/d2-result.json",
+    )
+
+    arguments = calls[0][0]
+    assert "--unit=nord-tools-host-d2" in arguments
+    assert f"{manager.REMOTE_ROOT}/tools/probe_host_failure_recovery_acceptance.py" in arguments
+    assert "/var/tmp/d2-evidence" in arguments
+    assert "/var/tmp/d2-result.json" in arguments
 
 
 @pytest.mark.parametrize(

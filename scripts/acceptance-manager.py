@@ -48,6 +48,9 @@ PROVISION_REVISION = "4"
 HOST_ACCEPTANCE_UNIT = "nord-tools-host-d1.service"
 HOST_ACCEPTANCE_RESULT = "/var/tmp/nord-tools-host-d1-result.json"
 HOST_ACCEPTANCE_EVIDENCE = "/var/tmp/nord-tools-host-d1-evidence"
+HOST_FAILURE_UNIT = "nord-tools-host-d2.service"
+HOST_FAILURE_RESULT = "/var/tmp/nord-tools-host-d2-result.json"
+HOST_FAILURE_EVIDENCE = "/var/tmp/nord-tools-host-d2-evidence"
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -948,13 +951,45 @@ def export_failure_evidence(output):
         return f"Evidence export failed (original acceptance failure preserved): {exc}"
 
 
-def wait_for_host_acceptance(timeout=180):
-    """Wait for D1 to restore SSH, then require its durable success report."""
+def start_detached_host_acceptance(*, unit, probe, evidence, result_path):
+    """Launch one host-mutating guest stage without waiting through its barrier."""
+    started = ssh(
+        "sudo",
+        "-n",
+        "systemd-run",
+        "--no-block",
+        "--collect",
+        "--unit=" + unit.removesuffix(".service"),
+        "--property=Type=oneshot",
+        "--property=TimeoutStartSec=180",
+        "/usr/bin/python",
+        f"{REMOTE_ROOT}/tools/{probe}",
+        "--run-privileged",
+        "--startup-delay",
+        "5",
+        "--evidence-dir",
+        evidence,
+        "--result",
+        result_path,
+        timeout=15,
+    )
+    if started.returncode:
+        raise RuntimeError(f"Could not start {unit}: " + (started.stderr.strip() or started.stdout.strip()))
+
+
+def wait_for_host_acceptance(
+    timeout=180,
+    *,
+    unit=HOST_ACCEPTANCE_UNIT,
+    result_path=HOST_ACCEPTANCE_RESULT,
+    expected_scope="D1 host-domain static-egress acceptance",
+):
+    """Wait for a host stage to restore SSH, then require its durable report."""
     deadline = time.monotonic() + timeout
     last_status = "guest SSH unavailable while the host deny barrier is active"
     while time.monotonic() < deadline:
         try:
-            result = ssh("sudo", "-n", "cat", HOST_ACCEPTANCE_RESULT, timeout=10)
+            result = ssh("sudo", "-n", "cat", result_path, timeout=10)
         except (OSError, subprocess.SubprocessError):
             time.sleep(1)
             continue
@@ -963,14 +998,14 @@ def wait_for_host_acceptance(timeout=180):
                 report = json.loads(result.stdout)
             except (TypeError, ValueError) as exc:
                 raise RuntimeError("D1 host acceptance returned malformed result JSON") from exc
-            if report.get("scope") != "D1 host-domain static-egress acceptance":
-                raise RuntimeError("D1 host acceptance did not report its complete accepted scope")
+            if report.get("scope") != expected_scope:
+                raise RuntimeError("Host acceptance did not report its complete expected scope")
             if report.get("result") == "failed":
                 detail = report.get("error", "unknown failure")
                 evidence = report.get("evidence_dir", "no evidence directory reported")
-                raise RuntimeError(f"D1 host acceptance failed: {detail}\nEvidence retained: {evidence}")
+                raise RuntimeError(f"{expected_scope} failed: {detail}\nEvidence retained: {evidence}")
             if report.get("result") != "passed":
-                raise RuntimeError("D1 host acceptance returned an unknown result state")
+                raise RuntimeError("Host acceptance returned an unknown result state")
             return report
         try:
             status = ssh(
@@ -978,7 +1013,7 @@ def wait_for_host_acceptance(timeout=180):
                 "-n",
                 "systemctl",
                 "show",
-                HOST_ACCEPTANCE_UNIT,
+                unit,
                 "--property=ActiveState,Result",
                 timeout=10,
             )
@@ -993,18 +1028,18 @@ def wait_for_host_acceptance(timeout=180):
                     "-n",
                     "journalctl",
                     "--unit",
-                    HOST_ACCEPTANCE_UNIT,
+                    unit,
                     "--no-pager",
                     "--lines=80",
                     timeout=15,
                 )
                 detail = journal.stdout.strip() or journal.stderr.strip() or last_status
-                raise RuntimeError("D1 host acceptance failed before restoring remote access:\n" + detail)
+                raise RuntimeError(f"{expected_scope} failed before restoring remote access:\n" + detail)
         time.sleep(1)
     raise RuntimeError(
-        "D1 host acceptance did not restore remote access within "
+        f"{expected_scope} did not restore remote access within "
         f"{timeout} seconds ({last_status}). Use the serial console to inspect "
-        f"{HOST_ACCEPTANCE_UNIT}, then rebuild the disposable guest; do not weaken the retained barrier blindly."
+        f"{unit}, then rebuild the disposable guest; do not weaken the retained barrier blindly."
     )
 
 
@@ -1109,7 +1144,26 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
             )
         progress("Waiting for D1 to retire its deny barrier and restore guest SSH...")
         host_report = wait_for_host_acceptance()
-        return "Acceptance tests passed in the disposable guest, including " + host_report["scope"] + "."
+        progress("Starting D2 host failure and recovery acceptance...")
+        start_detached_host_acceptance(
+            unit=HOST_FAILURE_UNIT,
+            probe="probe_host_failure_recovery_acceptance.py",
+            evidence=HOST_FAILURE_EVIDENCE,
+            result_path=HOST_FAILURE_RESULT,
+        )
+        progress("Waiting for D2 to complete barrier-last recovery and restore guest SSH...")
+        failure_report = wait_for_host_acceptance(
+            unit=HOST_FAILURE_UNIT,
+            result_path=HOST_FAILURE_RESULT,
+            expected_scope="D2 host-domain failure and recovery acceptance",
+        )
+        return (
+            "Acceptance tests passed in the disposable guest, including "
+            + host_report["scope"]
+            + " and "
+            + failure_report["scope"]
+            + "."
+        )
     result = subprocess.run(
         ssh_args("bash", "-s"), input=command, text=True, capture_output=True, check=False, timeout=7200
     )
@@ -1118,7 +1172,21 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
         evidence = export_failure_evidence(output)
         raise RuntimeError(f"Acceptance tests failed with exit {result.returncode}:\n{output}\n{evidence}")
     host_report = wait_for_host_acceptance()
-    return f"Acceptance tests passed in the disposable guest, including {host_report['scope']}.\n{output}"
+    start_detached_host_acceptance(
+        unit=HOST_FAILURE_UNIT,
+        probe="probe_host_failure_recovery_acceptance.py",
+        evidence=HOST_FAILURE_EVIDENCE,
+        result_path=HOST_FAILURE_RESULT,
+    )
+    failure_report = wait_for_host_acceptance(
+        unit=HOST_FAILURE_UNIT,
+        result_path=HOST_FAILURE_RESULT,
+        expected_scope="D2 host-domain failure and recovery acceptance",
+    )
+    return (
+        "Acceptance tests passed in the disposable guest, including "
+        f"{host_report['scope']} and {failure_report['scope']}.\n{output}"
+    )
 
 
 def remove():

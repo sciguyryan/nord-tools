@@ -69,6 +69,19 @@ def test_host_domain_acceptance_defaults_to_a_non_mutating_preview():
     assert "interrupts remote guest management" in result.stdout
 
 
+def test_host_failure_recovery_acceptance_defaults_to_a_non_mutating_preview():
+    result = subprocess.run(
+        [sys.executable, str(Path("tools/probe_host_failure_recovery_acceptance.py"))],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "DRY RUN: D2 host-domain failure" in result.stdout
+    assert "interrupts remote guest management" in result.stdout
+
+
 def test_host_domain_resolver_check_uses_a_non_special_query_name(tmp_path):
     response = subprocess.CompletedProcess(["resolvectl"], 1, "", "not found")
     with (
