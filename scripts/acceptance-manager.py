@@ -45,6 +45,9 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1]
 REMOTE_ROOT = "/home/arch/nord-tools"
 GUEST_ATTESTATION = "/etc/nord-tools-acceptance-spec"
 PROVISION_REVISION = "4"
+HOST_ACCEPTANCE_UNIT = "nord-tools-host-d1.service"
+HOST_ACCEPTANCE_RESULT = "/var/tmp/nord-tools-host-d1-result.json"
+HOST_ACCEPTANCE_EVIDENCE = "/var/tmp/nord-tools-host-d1-evidence"
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -927,6 +930,52 @@ def export_failure_evidence(output):
         return f"Evidence export failed (original acceptance failure preserved): {exc}"
 
 
+def wait_for_host_acceptance(timeout=180):
+    """Wait for D1 to restore SSH, then require its durable success report."""
+    deadline = time.monotonic() + timeout
+    last_status = "guest SSH unavailable while the host deny barrier is active"
+    while time.monotonic() < deadline:
+        result = ssh("sudo", "-n", "cat", HOST_ACCEPTANCE_RESULT, timeout=10)
+        if result.returncode == 0:
+            try:
+                report = json.loads(result.stdout)
+            except (TypeError, ValueError) as exc:
+                raise RuntimeError("D1 host acceptance returned malformed result JSON") from exc
+            if report.get("result") != "passed" or report.get("scope") != "D1 host-domain static-egress acceptance":
+                raise RuntimeError("D1 host acceptance did not report its complete accepted scope")
+            return report
+        status = ssh(
+            "sudo",
+            "-n",
+            "systemctl",
+            "show",
+            HOST_ACCEPTANCE_UNIT,
+            "--property=ActiveState,Result",
+            timeout=10,
+        )
+        if status.returncode == 0:
+            last_status = status.stdout.strip() or last_status
+            if "ActiveState=failed" in status.stdout or "Result=failed" in status.stdout:
+                journal = ssh(
+                    "sudo",
+                    "-n",
+                    "journalctl",
+                    "--unit",
+                    HOST_ACCEPTANCE_UNIT,
+                    "--no-pager",
+                    "--lines=80",
+                    timeout=15,
+                )
+                detail = journal.stdout.strip() or journal.stderr.strip() or last_status
+                raise RuntimeError("D1 host acceptance failed before restoring remote access:\n" + detail)
+        time.sleep(1)
+    raise RuntimeError(
+        "D1 host acceptance did not restore remote access within "
+        f"{timeout} seconds ({last_status}). Use the serial console to inspect "
+        f"{HOST_ACCEPTANCE_UNIT}, then rebuild the disposable guest; do not weaken the retained barrier blindly."
+    )
+
+
 def run_tests():
     """Upload this checkout, run quality gates, then run privileged acceptance."""
     ready = readiness()
@@ -971,6 +1020,10 @@ echo "RUN: privileged application lifecycle acceptance"
 sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
 echo "RUN: registered desktop session integration"
 sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
+echo "RUN: detached D1 host-domain acceptance"
+sudo -n systemd-run --unit={HOST_ACCEPTANCE_UNIT.removesuffix(".service")} --property=Type=oneshot --property=TimeoutStartSec=180 \
+  /usr/bin/python {REMOTE_ROOT}/tools/probe_host_domain_acceptance.py --run-privileged --startup-delay 5 \
+  --evidence-dir {HOST_ACCEPTANCE_EVIDENCE} --result {HOST_ACCEPTANCE_RESULT}
 """
     progress("Starting guest quality gates and privileged acceptance matrices...")
     if _CLI_PROGRESS:
@@ -1017,7 +1070,9 @@ sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "
             raise RuntimeError(
                 f"Acceptance tests failed with exit {returncode}. Last output:\n" + "\n".join(tail) + "\n" + evidence
             )
-        return "Acceptance tests passed in the disposable guest."
+        progress("Waiting for D1 to retire its deny barrier and restore guest SSH...")
+        host_report = wait_for_host_acceptance()
+        return "Acceptance tests passed in the disposable guest, including " + host_report["scope"] + "."
     result = subprocess.run(
         ssh_args("bash", "-s"), input=command, text=True, capture_output=True, check=False, timeout=7200
     )
@@ -1025,7 +1080,8 @@ sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "
     if result.returncode:
         evidence = export_failure_evidence(output)
         raise RuntimeError(f"Acceptance tests failed with exit {result.returncode}:\n{output}\n{evidence}")
-    return f"Acceptance tests passed in the disposable guest.\n{output}"
+    host_report = wait_for_host_acceptance()
+    return f"Acceptance tests passed in the disposable guest, including {host_report['scope']}.\n{output}"
 
 
 def remove():

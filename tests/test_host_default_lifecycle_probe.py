@@ -52,3 +52,16 @@ def test_host_lifecycle_probe_reports_missing_plan_without_traceback(tmp_path):
     assert result.returncode == 2
     assert "cannot read a valid host plan" in result.stderr
     assert "Traceback" not in result.stderr
+
+
+def test_host_domain_acceptance_defaults_to_a_non_mutating_preview():
+    result = subprocess.run(
+        [sys.executable, str(Path("tools/probe_host_domain_acceptance.py"))],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "DRY RUN: D1 host-domain" in result.stdout
+    assert "interrupts remote guest management" in result.stdout

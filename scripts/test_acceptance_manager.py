@@ -117,6 +117,42 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     assert "- [install, -d, -m, '0755', -o, root, -g, root, /etc/netns]" in source
     assert 'package_list = ", ".join(REQUIRED_PACKAGES)' in source
     assert "sudo -n python tools/probe_desktop_launch_acceptance.py" in source
+    assert "probe_host_domain_acceptance.py --run-privileged --startup-delay 5" in source
+
+
+def test_host_acceptance_waits_for_reconnection_and_validates_scope(manager, monkeypatch):
+    responses = iter(
+        [
+            SimpleNamespace(returncode=255, stdout="", stderr="connection refused"),
+            SimpleNamespace(returncode=255, stdout="", stderr="connection refused"),
+            SimpleNamespace(
+                returncode=0,
+                stdout='{"result":"passed","scope":"D1 host-domain static-egress acceptance"}',
+                stderr="",
+            ),
+        ]
+    )
+    monkeypatch.setattr(manager, "ssh", lambda *args, **kwargs: next(responses))
+    monkeypatch.setattr(manager.time, "sleep", lambda _seconds: None)
+
+    report = manager.wait_for_host_acceptance(timeout=10)
+
+    assert report["result"] == "passed"
+
+
+def test_host_acceptance_rejects_incomplete_success_report(manager, monkeypatch):
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='{"result":"passed","scope":"component-only"}',
+            stderr="",
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="complete accepted scope"):
+        manager.wait_for_host_acceptance(timeout=10)
 
 
 @pytest.mark.parametrize(

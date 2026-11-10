@@ -12,7 +12,7 @@ from nord_tools_internal.nordvpn_host_executor import (
     activate_host_protection,
     recover_host_protection,
 )
-from nord_tools_internal.nordvpn_host_linux import _optional_json, _resolver_state
+from nord_tools_internal.nordvpn_host_linux import _optional_json, _resolver_state, _verify_ready
 from nord_tools_internal.nordvpn_host_protection import HostProtectionPlan
 from nord_tools_internal.nordvpn_host_store import read_host_store
 from test_host_executor import BOOT, PLAN, FakeHost
@@ -50,6 +50,30 @@ def test_resolver_missing_interface_is_absent():
     plan = HostProtectionPlan.from_mapping(PLAN)
     with patch("nord_tools_internal.nordvpn_host_linux._links", return_value=[]):
         assert _resolver_state(plan) == "absent"
+
+
+def test_host_readiness_waits_for_a_fresh_handshake():
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    with (
+        patch("nord_tools_internal.nordvpn_host_linux._resource_state", return_value="present"),
+        patch("nord_tools_internal.nordvpn_host_linux._recent_handshake", side_effect=[False, False, True]) as check,
+        patch("nord_tools_internal.nordvpn_host_linux.time.monotonic", side_effect=[10.0, 10.1, 10.2]),
+        patch("nord_tools_internal.nordvpn_host_linux.time.sleep") as sleep,
+    ):
+        assert _verify_ready(plan)["handshake"] is True
+    assert check.call_count == 3
+    assert sleep.call_count == 2
+
+
+def test_host_readiness_does_not_wait_when_structural_state_is_incomplete():
+    plan = HostProtectionPlan.from_mapping(PLAN)
+    with (
+        patch("nord_tools_internal.nordvpn_host_linux._resource_state", return_value="absent"),
+        patch("nord_tools_internal.nordvpn_host_linux._recent_handshake") as check,
+    ):
+        report = _verify_ready(plan)
+    assert report["handshake"] is False
+    check.assert_not_called()
 
 
 def test_recovery_does_not_adopt_matching_foreign_creation(tmp_path):

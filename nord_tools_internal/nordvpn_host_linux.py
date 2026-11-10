@@ -12,6 +12,7 @@ import datetime
 import ipaddress
 import json
 import subprocess
+import time
 from typing import Any
 
 from nord_tools_internal.nordvpn_host_executor import HostKernel, HostProtectionError
@@ -21,6 +22,8 @@ from nord_tools_internal.nordvpn_startup import read_boot_id
 
 
 _TIMEOUT = 15
+_HANDSHAKE_TIMEOUT = 15.0
+_HANDSHAKE_POLL_INTERVAL = 0.1
 
 
 def _run(argv: list[str], *, input_text: str | None = None, pass_fds: tuple[int, ...] = ()) -> str:
@@ -621,21 +624,35 @@ def _install_resolver(plan: HostProtectionPlan) -> dict:
     }
 
 
-def _verify_ready(plan: HostProtectionPlan) -> dict:
+def _recent_handshake(plan: HostProtectionPlan) -> bool:
     latest = _run(["wg", "show", plan.interface, "latest-handshakes"]).strip().split()
-    handshake = False
-    if len(latest) >= 2:
-        try:
-            timestamp = int(latest[-1])
-            now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
-            handshake = 0 < now - timestamp <= 180
-        except ValueError:
-            handshake = False
-    return {
+    if len(latest) < 2:
+        return False
+    try:
+        timestamp = int(latest[-1])
+    except ValueError:
+        return False
+    now = int(datetime.datetime.now(datetime.timezone.utc).timestamp())
+    return 0 < now - timestamp <= 180
+
+
+def _verify_ready(plan: HostProtectionPlan) -> dict:
+    states = {
         "barrier": _resource_state("barrier", {}, plan) == "present",
         "wireguard": _resource_state("wireguard", {}, plan) == "present",
         "routes": _resource_state("routes", {}, plan) == "present",
         "resolver": _resource_state("resolver", {}, plan) == "present",
+    }
+    handshake = False
+    if all(states.values()):
+        deadline = time.monotonic() + _HANDSHAKE_TIMEOUT
+        while True:
+            handshake = _recent_handshake(plan)
+            if handshake or time.monotonic() >= deadline:
+                break
+            time.sleep(_HANDSHAKE_POLL_INTERVAL)
+    return {
+        **states,
         "handshake": handshake,
     }
 

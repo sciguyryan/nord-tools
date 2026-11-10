@@ -640,7 +640,7 @@ Previewing a plan performs no inventory or mutation:
 python nordvpn_manage.py host-plan --host-plan examples/host-protection-plan.json --host-store /var/lib/nord-tools/host-protection.json
 ```
 
-The host firewall confines established inbound traffic to the tunnel interface and permits pinned inbound WireGuard transport packets separately. Its physical-output exception also requires the configured WireGuard socket mark, in addition to the endpoint, port, source and interface restrictions. A sufficiently privileged process could forge that mark; the policy does not claim to authenticate the originating process. Pre-existing non-VPN underlay sessions may be interrupted. Privileged packet and DNS leak acceptance is still required.
+The host firewall confines established inbound traffic to the tunnel interface and permits pinned inbound WireGuard transport packets separately. Its physical-output exception also requires the configured WireGuard socket mark, in addition to the endpoint, port, source and interface restrictions. A sufficiently privileged process could forge that mark; the policy does not claim to authenticate the originating process. Pre-existing non-VPN underlay sessions may be interrupted. The D1 guest runner now covers the ordinary live packet and resolver path, but that scope remains unaccepted until a disposable guest run has been recorded. Failure, reboot and broader host compatibility remain separate requirements.
 
 Activation requires root, a private store directory and a root-readable WireGuard private-key file. It records intent before every mutation, installs and reads back the deny barrier first, then adds the endpoint-only physical path, WireGuard interface, dual-stack routing and `systemd-resolved` link state. A current handshake is required for `active_verified`; without it the state remains `protected_tunnel_unavailable`, with the deny barrier retained.
 
@@ -696,6 +696,14 @@ sudo python tools/probe_host_default_lifecycle.py \
 ```
 
 The probe captures links, routes, rules, nftables and resolver-file evidence before activation and after retirement. If activation cannot reach `active_verified`, it retains the deny barrier and stops; use `host-status` and `host-recovery` from the console rather than performing broad cleanup. Passing this lifecycle probe does not cover process death, a real reboot, packet capture or application-level encrypted DNS, so it is one input to the required host matrix rather than final acceptance.
+
+The D1 acceptance runner supplies its own static veth underlay, real WireGuard peer and dual-stack DNS responders. It invokes the production host executor, requires live IPv4 and IPv6 tunnel traffic, confirms `systemd-resolved` sends a query through the tunnel, and checks that marked packets for the wrong endpoint or port do not reach the physical test link. Verified retirement must restore the complete fixture baseline before the peer is removed. Its ordinary invocation is a mutation-free preview:
+
+```bash
+python tools/probe_host_domain_acceptance.py
+```
+
+Privileged execution deliberately interrupts ordinary remote access while the host barrier is active. The acceptance manager therefore starts it as the final detached guest stage, waits for SSH to return after retirement, and validates its durable result. Run it through `python scripts/acceptance-manager.py test` on the disposable guest rather than directly on a workstation. A failed or timed-out stage may retain the deny barrier and must be inspected through the guest console.
 
 ## WireGuard credential input boundary
 
