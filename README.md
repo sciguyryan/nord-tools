@@ -705,6 +705,8 @@ python tools/probe_host_domain_acceptance.py
 
 Privileged execution deliberately interrupts ordinary remote access while the host barrier is active. The acceptance manager therefore starts it as the final detached guest stage, waits for SSH to return after retirement, and validates its durable result. Run it through `python scripts/acceptance-manager.py test` on the disposable guest rather than directly on a workstation. A failed or timed-out stage may retain the deny barrier and must be inspected through the guest console.
 
+The default development run fingerprints each pytest file and privileged scenario against its relevant source, configuration and guest environment. An unchanged unit may reuse a prior development pass; `--explain-selection` prints the reason for every execution or reuse decision. This cache is an iteration aid, not release evidence. After `rebuild --force`, run `python scripts/acceptance-manager.py test --mode final` to ignore reusable results and execute the complete quality and privileged matrix on the clean guest. See [`scripts/README.md`](scripts/README.md) for targeted scenarios and cache controls.
+
 ## WireGuard credential input boundary
 
 The internal provisioning foundation accepts a WireGuard private key only from an already-open file descriptor referring to a pipe or a regular file with private permissions. It validates canonical key encoding and overwrites its temporary input buffer on exit. The descriptor remains the caller's responsibility. This is not secure-memory storage, a credential broker, or an operational tunnel executor. Never place private keys in command-line arguments, logs or provisioning plans.

@@ -74,6 +74,35 @@ def test_readiness_keeps_waiting_for_ssh(manager, monkeypatch):
     assert manager.readiness().startswith("SSH or cloud-init unavailable:")
 
 
+def test_readiness_labels_cloud_init_boot_relative_update_time(manager, monkeypatch):
+    monkeypatch.setattr(manager, "status", lambda: "running")
+    monkeypatch.setattr(manager, "python_health", lambda: None)
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *args, **kwargs: SimpleNamespace(
+            stdout=(
+                "status: done\n"
+                "last_update: Thu, 01 Jan 1970 00:01:00 +0000\n"
+                "detail: DataSourceNoCloud [seed=/dev/sr0]\n"
+            ),
+            stderr="",
+            returncode=0,
+        ),
+    )
+
+    result = manager.readiness()
+
+    assert "completion_offset: 60 seconds after boot" in result
+    assert "01 Jan 1970" not in result
+
+
+def test_cloud_init_wall_clock_update_time_is_preserved(manager):
+    output = "last_update: Tue, 10 Nov 2026 15:18:51 +0000"
+
+    assert manager.normalise_cloud_init_status(output) == output
+
+
 def test_ssh_uses_loopback_forward_and_dedicated_identity(manager):
     command = manager.ssh_args("true")
 
@@ -144,8 +173,9 @@ def test_cloud_init_prepares_trusted_network_namespace_config_parent():
     assert "- [install, -d, -m, '0755', -o, root, -g, root, /etc/netns]" in source
     assert 'package_list = ", ".join(REQUIRED_PACKAGES)' in source
     assert "sudo -n python tools/probe_desktop_launch_acceptance.py" in source
-    assert "systemd-run --no-block --collect" in source
-    assert "probe_host_domain_acceptance.py --run-privileged --startup-delay 5" in source
+    assert "def start_detached_host_acceptance" in source
+    assert 'probe="probe_host_domain_acceptance.py"' in source
+    assert '"--startup-delay"' in source
     assert 'probe="probe_host_failure_recovery_acceptance.py"' in source
 
 
@@ -505,3 +535,325 @@ def test_d3_ssh_wait_reports_bounded_failure(manager, monkeypatch):
 
     with pytest.raises(RuntimeError, match=r"did not return within 2 seconds \(Connection refused\)"):
         manager.wait_for_d3_result(timeout=2)
+
+
+def test_local_dependency_closure_follows_imports_and_file_references(manager, monkeypatch, tmp_path):
+    (tmp_path / "product.py").write_text("VALUE = 1\n")
+    (tmp_path / "helper.py").write_text("from product import VALUE\n")
+    (tmp_path / "runner.py").write_text('TARGET = "extra.py"\n')
+    (tmp_path / "extra.py").write_text("EXTRA = True\n")
+    (tmp_path / "fixture.json").write_text("{}\n")
+    (tmp_path / "test_product.py").write_text('import helper\nimport runner\nDATA = "fixture.json"\n')
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+
+    assert manager.local_python_dependencies("test_product.py") == [
+        "extra.py",
+        "fixture.json",
+        "helper.py",
+        "product.py",
+        "runner.py",
+        "test_product.py",
+    ]
+
+
+def test_local_dependency_closure_resolves_unique_probe_filename(manager):
+    dependencies = manager.local_python_dependencies("tests/test_wireguard_session_probe.py")
+
+    assert "tools/probe_wireguard_session.py" in dependencies
+
+
+def test_development_plan_reuses_only_equivalent_test_units(manager, monkeypatch, tmp_path):
+    (tmp_path / "product.py").write_text("VALUE = 1\n")
+    (tmp_path / "other.py").write_text("OTHER = 1\n")
+    (tmp_path / "fixture.json").write_text('{"value": 1}\n')
+    (tmp_path / "test_product.py").write_text('import product\nDATA = "fixture.json"\n')
+    (tmp_path / "test_other.py").write_text("import other\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+    environment = {"python": "3.13", "pytest": "9", "platform": "test", "ruff": "1", "node": "2", "npm": "3"}
+    first = manager.build_execution_plan(
+        mode="development",
+        selected=("quality",),
+        environment=environment,
+        cache=manager._empty_result_cache(),
+    )
+    cache = manager._empty_result_cache()
+    cache["entries"] = {unit["id"]: {"fingerprint": unit["fingerprint"], "result": "passed"} for unit in first}
+
+    equivalent = manager.build_execution_plan(
+        mode="development", selected=("quality",), environment=environment, cache=cache
+    )
+    assert all(not unit["execute"] for unit in equivalent)
+
+    (tmp_path / "fixture.json").write_text('{"value": 2}\n')
+    fixture_changed = manager.build_execution_plan(
+        mode="development", selected=("quality",), environment=environment, cache=cache
+    )
+    fixture_decisions = {unit["id"]: unit["execute"] for unit in fixture_changed}
+    assert fixture_decisions["pytest:test_product.py"] is True
+    assert fixture_decisions["pytest:test_other.py"] is False
+
+    (tmp_path / "fixture.json").write_text('{"value": 1}\n')
+    (tmp_path / "product.py").write_text("VALUE = 2\n")
+    changed = manager.build_execution_plan(
+        mode="development", selected=("quality",), environment=environment, cache=cache
+    )
+    decisions = {unit["id"]: unit["execute"] for unit in changed}
+    assert decisions["pytest:test_product.py"] is True
+    assert decisions["pytest:test_other.py"] is False
+    assert decisions["quality:ruff"] is True
+    assert decisions["quality:markdown"] is False
+
+    (tmp_path / "product.py").write_text("VALUE = 1\n")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n")
+    configured = manager.build_execution_plan(
+        mode="development", selected=("quality",), environment=environment, cache=cache
+    )
+    configured_decisions = {unit["id"]: unit["execute"] for unit in configured}
+    assert configured_decisions["pytest:test_product.py"] is True
+    assert configured_decisions["pytest:test_other.py"] is True
+
+
+def test_final_plan_forces_complete_execution_and_rejects_partial_scope(manager):
+    environment = {"python": "3.13"}
+    plan = manager.build_execution_plan(
+        mode="final",
+        selected=("all",),
+        environment=environment,
+        cache=manager._empty_result_cache(),
+    )
+    assert plan
+    assert all(unit["execute"] for unit in plan)
+
+    with pytest.raises(ValueError, match="Final mode requires"):
+        manager.build_execution_plan(
+            mode="final",
+            selected=("d3",),
+            environment=environment,
+            cache=manager._empty_result_cache(),
+        )
+
+
+def test_host_protection_code_invalidates_each_host_scenario(manager):
+    environment = {"python": "3.13", "kernel": "test"}
+    plan = manager.build_execution_plan(
+        mode="development",
+        selected=("d1", "d2", "d3"),
+        environment=environment,
+        cache=manager._empty_result_cache(),
+    )
+
+    assert {unit["id"] for unit in plan} == {"scenario:d1", "scenario:d2", "scenario:d3"}
+    for unit in plan:
+        assert "nord_tools_internal/nordvpn_host_protection.py" in unit["paths"]
+
+
+def test_scenario_environment_ignores_unrelated_lint_tool_changes(manager):
+    environment = {
+        "python": "3.13",
+        "kernel": "test",
+        "ruff": "old",
+        "packages": {"nftables": "1", "wireguard-tools": "1"},
+    }
+    first = manager.build_execution_plan(
+        mode="development",
+        selected=("d1",),
+        environment=environment,
+        cache=manager._empty_result_cache(),
+    )
+    cache = manager._empty_result_cache()
+    cache["entries"] = {first[0]["id"]: {"fingerprint": first[0]["fingerprint"], "result": "passed"}}
+
+    lint_changed = manager.build_execution_plan(
+        mode="development",
+        selected=("d1",),
+        environment={**environment, "ruff": "new"},
+        cache=cache,
+    )
+    assert lint_changed[0]["execute"] is False
+
+    network_changed = manager.build_execution_plan(
+        mode="development",
+        selected=("d1",),
+        environment={**environment, "packages": {"nftables": "2", "wireguard-tools": "1"}},
+        cache=cache,
+    )
+    assert network_changed[0]["execute"] is True
+
+
+def test_guest_environment_identity_probe_is_valid_python(manager, monkeypatch):
+    scripts = []
+
+    def guest_command(script, **_kwargs):
+        scripts.append(script)
+        return SimpleNamespace(returncode=0, stdout='{"python":"3.13"}\n', stderr="")
+
+    monkeypatch.setattr(manager, "guest_command", guest_command)
+
+    assert manager.guest_environment_identity() == {"python": "3.13"}
+    compile(scripts[0], "<guest-environment-identity>", "exec")
+
+
+def test_result_cache_round_trip_is_private_and_workspace_bound(manager, monkeypatch, tmp_path):
+    cache = tmp_path / "results.json"
+    lock = tmp_path / "results.lock"
+    monkeypatch.setattr(manager, "RESULT_CACHE", cache)
+    monkeypatch.setattr(manager, "RESULT_CACHE_LOCK", lock)
+    unit = {"id": "pytest:test_one.py", "fingerprint": "abc"}
+
+    manager.publish_result_cache([unit], "run-one")
+    document, status = manager.load_result_cache()
+
+    assert status == "validated prior development result cache"
+    assert document["entries"][unit["id"]]["result"] == "passed"
+    assert cache.stat().st_mode & 0o777 == 0o600
+
+
+def test_result_cache_rejects_unsafe_permissions(manager, monkeypatch, tmp_path):
+    cache = tmp_path / "results.json"
+    cache.write_text(json.dumps(manager._empty_result_cache()))
+    cache.chmod(0o666)
+    monkeypatch.setattr(manager, "RESULT_CACHE", cache)
+
+    document, status = manager.load_result_cache()
+
+    assert document["entries"] == {}
+    assert "permissions are unsafe" in status
+
+
+def test_cli_rejects_partial_final_acceptance_scope():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "scripts/acceptance-manager.py",
+            "test",
+            "--mode",
+            "final",
+            "--scenario",
+            "d3",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+
+    assert result.returncode == 2
+    assert "final mode requires --scenario all" in result.stderr
+
+
+def test_guest_used_probe_fails_closed_on_transport_error(manager, monkeypatch):
+    monkeypatch.setattr(
+        manager,
+        "ssh",
+        lambda *a, **k: SimpleNamespace(returncode=255, stdout="", stderr="connection refused"),
+    )
+
+    with pytest.raises(RuntimeError, match="Unable to verify whether"):
+        manager._guest_was_used()
+
+
+def test_test_only_mode_option_is_rejected_for_status():
+    result = subprocess.run(
+        [sys.executable, "scripts/acceptance-manager.py", "status", "--mode", "development"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=15,
+    )
+
+    assert result.returncode == 2
+    assert "apply only to test" in result.stderr
+
+
+def test_run_tests_does_not_execute_equivalent_reused_units(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: test")
+    monkeypatch.setattr(manager, "guest_provisioning_issues", lambda: [])
+    monkeypatch.setattr(manager, "upload_source", lambda: None)
+    monkeypatch.setattr(manager, "guest_environment_identity", lambda: {"python": "test"})
+    monkeypatch.setattr(manager, "load_result_cache", lambda: (manager._empty_result_cache(), "test cache"))
+    monkeypatch.setattr(
+        manager,
+        "build_execution_plan",
+        lambda **kwargs: [
+            {
+                "id": "pytest:tests/test_one.py",
+                "kind": "pytest",
+                "fingerprint": "one",
+                "execute": False,
+                "reason": "unchanged",
+            },
+            {
+                "id": "scenario:d3",
+                "kind": "scenario",
+                "fingerprint": "two",
+                "execute": False,
+                "reason": "unchanged",
+            },
+        ],
+    )
+    monkeypatch.setattr(
+        manager,
+        "_run_guest_script",
+        lambda command: pytest.fail("guest script ran despite complete result reuse"),
+    )
+    monkeypatch.setattr(
+        manager,
+        "_guest_was_used",
+        lambda: pytest.fail("guest taint checked despite no executable scenario"),
+    )
+
+    result = manager.run_tests()
+
+    assert "0 executed, 2 reused" in result
+
+
+@pytest.mark.parametrize("mode", ("development", "final"))
+def test_run_tests_executes_only_selected_pytest_files(manager, monkeypatch, mode):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: test")
+    monkeypatch.setattr(manager, "guest_provisioning_issues", lambda: [])
+    monkeypatch.setattr(manager, "upload_source", lambda: None)
+    monkeypatch.setattr(manager, "guest_environment_identity", lambda: {"python": "test"})
+    monkeypatch.setattr(manager, "load_result_cache", lambda: (manager._empty_result_cache(), "test cache"))
+    unit = {
+        "id": "pytest:tests/test_one.py",
+        "kind": "pytest",
+        "fingerprint": "one",
+        "execute": True,
+        "reason": "changed",
+    }
+    monkeypatch.setattr(manager, "build_execution_plan", lambda **kwargs: [unit])
+    scripts = []
+    monkeypatch.setattr(manager, "_run_guest_script", lambda command: scripts.append(command) or "passed")
+    published = []
+    monkeypatch.setattr(manager, "publish_result_cache", lambda units, run_id: published.extend(units))
+
+    result = manager.run_tests(mode=mode, selected=("quality",))
+
+    assert "python -m pytest -q tests/test_one.py" in scripts[0]
+    assert published == [unit]
+    assert "1 executed, 0 reused" in result
+
+
+def test_run_tests_refuses_changed_privileged_scenario_on_used_guest(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: test")
+    monkeypatch.setattr(manager, "guest_provisioning_issues", lambda: [])
+    monkeypatch.setattr(manager, "upload_source", lambda: None)
+    monkeypatch.setattr(manager, "guest_environment_identity", lambda: {"python": "test"})
+    monkeypatch.setattr(manager, "load_result_cache", lambda: (manager._empty_result_cache(), "test cache"))
+    monkeypatch.setattr(
+        manager,
+        "build_execution_plan",
+        lambda **kwargs: [
+            {
+                "id": "scenario:d3",
+                "kind": "scenario",
+                "fingerprint": "d3",
+                "execute": True,
+                "reason": "changed",
+            }
+        ],
+    )
+    monkeypatch.setattr(manager, "_guest_was_used", lambda: True)
+
+    with pytest.raises(RuntimeError, match=r"require a clean disposable guest \(d3\)"):
+        manager.run_tests(selected=("d3",))

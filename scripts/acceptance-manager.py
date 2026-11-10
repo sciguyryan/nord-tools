@@ -6,7 +6,11 @@ The GUI delegates blocking operations to workers so that its event loop remains 
 """
 
 import argparse
+import ast
 import base64
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+import fcntl
 import hashlib
 import io
 import ipaddress
@@ -25,6 +29,7 @@ import tempfile
 import threading
 import time
 import urllib.request
+import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -54,6 +59,17 @@ HOST_FAILURE_EVIDENCE = "/var/tmp/nord-tools-host-d2-evidence"
 HOST_REBOOT_RESULT = "/var/tmp/nord-tools-d3-result.json"
 HOST_REBOOT_PROBE = "/var/lib/nord-tools-d3/source/tools/probe_host_reboot_acceptance.py"
 HOST_REBOOT_PREPARE = f"{REMOTE_ROOT}/tools/probe_host_reboot_acceptance.py"
+RESULT_CACHE_SCHEMA = 1
+RESULT_CACHE = CACHE.parent / "development-results-v1.json"
+RESULT_CACHE_LOCK = CACHE.parent / "development-results-v1.lock"
+SCENARIO_PROBES = {
+    "network": "tools/probe_network_isolation_adversarial_acceptance.py",
+    "application": "tools/probe_application_lifecycle_acceptance.py",
+    "desktop": "tools/probe_desktop_launch_acceptance.py",
+    "d1": "tools/probe_host_domain_acceptance.py",
+    "d2": "tools/probe_host_failure_recovery_acceptance.py",
+    "d3": "tools/probe_host_reboot_acceptance.py",
+}
 REQUIRED_PACKAGES = (
     "git",
     "python",
@@ -265,7 +281,9 @@ def readiness():
         result = ssh("sudo", "-n", "cloud-init", "status", "--long")
     except (subprocess.SubprocessError, OSError) as exc:
         return f"SSH or cloud-init unavailable: {exc}"
-    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    output = normalise_cloud_init_status(
+        "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    )
     if result.returncode == 255:
         return "SSH or cloud-init unavailable: " + (output or "SSH exited with status 255")
     health = python_health()
@@ -281,6 +299,28 @@ def readiness():
         # status is available or the overall readiness deadline expires.
         return "Cloud-init status temporarily unavailable: " + (output or f"exit status {result.returncode}")
     return "Provisioning in progress:\n" + (output or "No status returned")
+
+
+def normalise_cloud_init_status(output):
+    """Label cloud-init boot-relative timestamps without presenting them as 1970 dates."""
+    lines = []
+    for line in output.splitlines():
+        prefix = "last_update: "
+        if not line.startswith(prefix):
+            lines.append(line)
+            continue
+        value = line.removeprefix(prefix)
+        try:
+            timestamp = parsedate_to_datetime(value)
+        except (TypeError, ValueError):
+            lines.append(line)
+            continue
+        if timestamp.year != 1970:
+            lines.append(line)
+            continue
+        elapsed = max(0, round(timestamp.timestamp()))
+        lines.append(f"completion_offset: {elapsed} seconds after boot")
+    return "\n".join(lines)
 
 
 def wait_ready(timeout=360, interval=5):
@@ -1182,56 +1222,395 @@ def d3_failure_diagnostics():
         return f"Guest agent diagnostics unavailable: {exc}; inspect the libvirt serial console."
 
 
-def run_tests():
-    """Upload this checkout, run quality gates, then run privileged acceptance."""
-    ready = readiness()
-    if not ready.startswith("Ready:"):
-        message = "Guest is not ready for testing: " + ready
-        if ready == "Guest is not running":
-            message += (
-                "\nHint: Run 'python scripts/acceptance-manager.py rebuild' "
-                "to create and start a fresh disposable guest, then retry 'test'."
-            )
-        raise RuntimeError(message)
-    provisioning_issues = guest_provisioning_issues()
-    if provisioning_issues:
-        raise RuntimeError(
-            "Guest provisioning contract is incomplete: "
-            + "; ".join(provisioning_issues)
-            + "\nHint: Run 'python scripts/acceptance-manager.py rebuild' before retrying 'test'."
-        )
-    upload_source()
-    command = f"""set -euo pipefail
-cd {REMOTE_ROOT}
-echo "RUN: pytest"
-python -m pytest -q
-echo "RUN: Ruff lint"
-ruff check .
-echo "RUN: Ruff format check"
-ruff format --check .
-echo "RUN: Markdown lint"
-npm_state="$(sha256sum package-lock.json | cut -d' ' -f1):$(node --version):$(npm --version)"
-if [ -f node_modules/.nt-install-state ] && [ "$(cat node_modules/.nt-install-state)" = "$npm_state" ] && npm ls --depth=0 --offline >/dev/null 2>&1; then
-  echo "Reusing verified Node dependencies"
-else
-  npm ci --ignore-scripts --no-audit --no-fund
-  npm ls --depth=0 --offline >/dev/null
-  printf '%s' "$npm_state" > node_modules/.nt-install-state
-fi
-npm run lint:markdown
-sudo -n touch /var/tmp/nord-tools-acceptance-used
-echo "RUN: privileged network isolation acceptance"
-sudo -n python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged
-echo "RUN: privileged application lifecycle acceptance"
-sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
-echo "RUN: registered desktop session integration"
-sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"
-echo "RUN: detached D1 host-domain acceptance"
-sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuffix(".service")} --property=Type=oneshot --property=TimeoutStartSec=180 \
-  /usr/bin/python {REMOTE_ROOT}/tools/probe_host_domain_acceptance.py --run-privileged --startup-delay 5 \
-  --evidence-dir {HOST_ACCEPTANCE_EVIDENCE} --result {HOST_ACCEPTANCE_RESULT}
+def _source_paths(*, suffix=None):
+    """Return regular source paths covered by the deployment manifest."""
+    paths = []
+    for path in sorted(SOURCE_ROOT.rglob("*")):
+        relative = path.relative_to(SOURCE_ROOT)
+        if any(part in SOURCE_EXCLUDES for part in relative.parts):
+            continue
+        if path.is_symlink():
+            raise RuntimeError(f"Source symlinks are not accepted: {relative}")
+        if path.is_dir():
+            continue
+        if not path.is_file():
+            raise RuntimeError(f"Unsupported source entry: {relative}")
+        name = relative.as_posix()
+        if suffix is None or name.endswith(suffix):
+            paths.append(name)
+    return paths
+
+
+def _python_module_index(python_paths=None):
+    """Map import names and unambiguous short names to local Python files."""
+    index = {}
+    short_names = {}
+    for relative in python_paths or _source_paths(suffix=".py"):
+        path = Path(relative)
+        parts = list(path.with_suffix("").parts)
+        if parts[-1] == "__init__":
+            parts.pop()
+        if parts:
+            index[".".join(parts)] = relative
+        short_names.setdefault(path.stem, []).append(relative)
+    for name, matches in short_names.items():
+        if len(matches) == 1:
+            index.setdefault(name, matches[0])
+    return index
+
+
+def _resolve_local_import(module, current, level, index):
+    if level:
+        package = list(Path(current).with_suffix("").parts[:-1])
+        keep = len(package) - level + 1
+        package = package[: max(0, keep)]
+        module = ".".join([*package, *module.split(".")]) if module else ".".join(package)
+    candidates = []
+    name = module
+    while name:
+        if name in index:
+            candidates.append(index[name])
+            break
+        name = name.rpartition(".")[0]
+    return candidates
+
+
+def _python_dependency_graph(python_paths, index, source_paths=None):
+    """Parse each local Python file once into a direct dependency graph."""
+    all_python = set(python_paths)
+    all_sources = set(source_paths or python_paths)
+    source_names = {}
+    for relative in all_sources:
+        source_names.setdefault(Path(relative).name, []).append(relative)
+    graph = {}
+    for relative in python_paths:
+        path = SOURCE_ROOT / relative
+        try:
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=relative)
+        except (OSError, SyntaxError, UnicodeError):
+            graph[relative] = set(all_python)
+            continue
+        dependencies = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    dependencies.update(_resolve_local_import(alias.name, relative, 0, index))
+            elif isinstance(node, ast.ImportFrom):
+                module = node.module or ""
+                dependencies.update(_resolve_local_import(module, relative, node.level, index))
+                for alias in node.names:
+                    child = ".".join(part for part in (module, alias.name) if part)
+                    dependencies.update(_resolve_local_import(child, relative, node.level, index))
+            elif isinstance(node, ast.Constant) and isinstance(node.value, str):
+                value = node.value
+                if value in index:
+                    dependencies.add(index[value])
+                if value in all_sources:
+                    dependencies.add(value)
+                named_sources = source_names.get(Path(value).name, [])
+                if len(named_sources) == 1:
+                    dependencies.add(named_sources[0])
+                if value.endswith(".py") and "\n" not in value:
+                    for candidate in (Path(relative).parent / value, Path(value)):
+                        normalised = candidate.as_posix()
+                        if normalised in all_python:
+                            dependencies.add(normalised)
+                    short_name = Path(value).stem
+                    if Path(value).name == value and short_name in index:
+                        dependencies.add(index[short_name])
+        graph[relative] = dependencies
+    return graph
+
+
+def local_python_dependencies(entry, *, graph=None, index=None, all_python=None):
+    """Find a conservative transitive closure of local Python dependencies."""
+    all_python = set(all_python or _source_paths(suffix=".py"))
+    if graph is None:
+        index = index or _python_module_index(all_python)
+        graph = _python_dependency_graph(sorted(all_python), index, _source_paths())
+    pending = [entry]
+    found = set()
+    while pending:
+        relative = pending.pop()
+        if relative in found:
+            continue
+        found.add(relative)
+        pending.extend(graph.get(relative, set()) - found)
+    return sorted(found)
+
+
+def _path_record(relative):
+    path = SOURCE_ROOT / relative
+    if not path.is_file() or path.is_symlink():
+        return ["missing", relative]
+    return [hashlib.sha256(path.read_bytes()).hexdigest(), stat.S_IMODE(path.stat().st_mode) & 0o777]
+
+
+def _fingerprint(kind, paths, environment):
+    records = {relative: _path_record(relative) for relative in sorted(set(paths))}
+    payload = {
+        "schema": RESULT_CACHE_SCHEMA,
+        "kind": kind,
+        "inputs": records,
+        "environment": environment,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def guest_environment_identity():
+    """Read the tool identities that can change acceptance behaviour."""
+    script = (
+        "packages = "
+        + repr(REQUIRED_PACKAGES)
+        + "\n"
+        + r"""
+import json, platform, subprocess, sys
+
+def version(*command):
+    result = subprocess.run(command, text=True, capture_output=True, check=False, timeout=10)
+    output = (result.stdout or result.stderr).strip().splitlines()
+    return output[0] if output else f"exit:{result.returncode}"
+
+package_result = subprocess.run(["pacman", "-Q", *packages], text=True, capture_output=True, check=False, timeout=20)
+if package_result.returncode:
+    raise SystemExit(package_result.stderr or "package identity unavailable")
+package_versions = {}
+for line in package_result.stdout.splitlines():
+    name, _, release = line.partition(" ")
+    package_versions[name] = release
+if set(package_versions) != set(packages):
+    raise SystemExit("package identity incomplete")
+
+print(json.dumps({
+    "python": sys.version,
+    "platform": platform.platform(),
+    "kernel": platform.release(),
+    "pytest": version("python", "-m", "pytest", "--version"),
+    "ruff": version("ruff", "--version"),
+    "node": version("node", "--version"),
+    "npm": version("npm", "--version"),
+    "ip": version("ip", "-Version"),
+    "nft": version("nft", "--version"),
+    "wg": version("wg", "--version"),
+    "systemd": version("systemctl", "--version"),
+    "packages": package_versions,
+}, sort_keys=True))
 """
-    progress("Starting guest quality gates and privileged acceptance matrices...")
+    )
+    result = guest_command(script, timeout=45)
+    if result.returncode:
+        raise RuntimeError("Unable to identify the guest test environment: " + result.stderr.strip())
+    try:
+        identity = json.loads(result.stdout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("Guest test environment identity is malformed") from exc
+    if not isinstance(identity, dict) or not all(isinstance(key, str) for key in identity):
+        raise RuntimeError("Guest test environment identity is incomplete")
+    return identity
+
+
+def _empty_result_cache():
+    return {
+        "schema": RESULT_CACHE_SCHEMA,
+        "workspace": str(SOURCE_ROOT),
+        "generation": 0,
+        "entries": {},
+    }
+
+
+def load_result_cache():
+    """Load only a private cache bound to this exact workspace."""
+    if not RESULT_CACHE.exists():
+        return _empty_result_cache(), "no prior development result cache"
+    try:
+        metadata = RESULT_CACHE.lstat()
+        if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
+            raise ValueError("cache is not a regular file")
+        if metadata.st_uid != os.getuid() or metadata.st_mode & 0o022:
+            raise ValueError("cache ownership or permissions are unsafe")
+        document = json.loads(RESULT_CACHE.read_text(encoding="utf-8"))
+        if (
+            not isinstance(document, dict)
+            or document.get("schema") != RESULT_CACHE_SCHEMA
+            or document.get("workspace") != str(SOURCE_ROOT)
+            or not isinstance(document.get("entries"), dict)
+            or not isinstance(document.get("generation"), int)
+        ):
+            raise ValueError("cache schema or workspace differs")
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return _empty_result_cache(), f"prior result cache rejected: {exc}"
+    return document, "validated prior development result cache"
+
+
+def publish_result_cache(units, run_id):
+    """Atomically publish validated unit passes under an exclusive lock."""
+    if not units:
+        return
+    RESULT_CACHE.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    lock_fd = os.open(RESULT_CACHE_LOCK, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        with os.fdopen(lock_fd, "r+", encoding="utf-8") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            document, _ = load_result_cache()
+            entries = document["entries"]
+            completed = datetime.now(timezone.utc).isoformat()
+            for unit in units:
+                entries[unit["id"]] = {
+                    "fingerprint": unit["fingerprint"],
+                    "result": "passed",
+                    "run_id": run_id,
+                    "completed_at": completed,
+                }
+            document["generation"] += 1
+            fd, temporary = tempfile.mkstemp(prefix=".development-results-", dir=RESULT_CACHE.parent)
+            try:
+                with os.fdopen(fd, "w", encoding="utf-8") as output:
+                    json.dump(document, output, indent=2, sort_keys=True)
+                    output.write("\n")
+                    output.flush()
+                    os.fsync(output.fileno())
+                os.chmod(temporary, 0o600)
+                os.replace(temporary, RESULT_CACHE)
+            finally:
+                if os.path.exists(temporary):
+                    os.unlink(temporary)
+    except OSError as exc:
+        raise RuntimeError(f"Unable to publish the development result cache: {exc}") from exc
+
+
+def _unit(unit_id, kind, paths, environment, cache, force, invalidated):
+    fingerprint = _fingerprint(kind, paths, environment)
+    prior = cache.get("entries", {}).get(unit_id)
+    reusable = (
+        not force
+        and unit_id not in invalidated
+        and isinstance(prior, dict)
+        and prior.get("result") == "passed"
+        and prior.get("fingerprint") == fingerprint
+    )
+    if force:
+        reason = "complete execution requested"
+    elif unit_id in invalidated:
+        reason = "explicitly invalidated"
+    elif not isinstance(prior, dict):
+        reason = "no prior pass"
+    elif prior.get("result") != "passed":
+        reason = "prior result was not a pass"
+    elif prior.get("fingerprint") != fingerprint:
+        reason = "inputs or environment changed"
+    else:
+        reason = "validated inputs and environment are unchanged"
+    return {
+        "id": unit_id,
+        "kind": kind,
+        "paths": sorted(set(paths)),
+        "fingerprint": fingerprint,
+        "execute": not reusable,
+        "reason": reason,
+    }
+
+
+def _scenario_environment(name, environment):
+    """Select only the guest capabilities relevant to one privileged scenario."""
+    common_packages = {"nftables", "wireguard-tools", "curl", "iproute2", "iputils", "bind"}
+    package_names = set(common_packages)
+    if name == "desktop":
+        package_names.update({"dbus", "weston", "wayland-utils", "xorg-server-xvfb", "xorg-xauth", "xorg-xdpyinfo"})
+    packages = environment.get("packages", {})
+    return {key: environment.get(key) for key in ("python", "platform", "kernel", "ip", "nft", "wg", "systemd")} | {
+        "packages": {key: packages.get(key) for key in sorted(package_names)}
+        if isinstance(packages, dict)
+        else packages
+    }
+
+
+def build_execution_plan(*, mode, selected, environment, cache, force=False, invalidated=()):
+    """Build a deterministic conservative development or final execution plan."""
+    selected = set(SCENARIO_PROBES) | {"quality"} if "all" in selected else set(selected)
+    unknown = selected - (set(SCENARIO_PROBES) | {"quality"})
+    if unknown:
+        raise ValueError("Unknown acceptance scenario: " + ", ".join(sorted(unknown)))
+    if mode == "final" and selected != set(SCENARIO_PROBES) | {"quality"}:
+        raise ValueError("Final mode requires the complete quality and acceptance scenario set")
+    force = force or mode == "final"
+    invalidated = set(invalidated)
+    units = []
+    source_paths = _source_paths()
+    python_paths = [path for path in source_paths if path.endswith(".py")]
+    module_index = _python_module_index(python_paths)
+    dependency_graph = _python_dependency_graph(python_paths, module_index, source_paths)
+    if "quality" in selected:
+        pytest_environment = {key: environment.get(key) for key in ("python", "pytest", "platform")}
+        pytest_shared = [path for path in python_paths if Path(path).name == "conftest.py"] + [
+            "pytest.ini",
+            "pyproject.toml",
+            "setup.cfg",
+            "tox.ini",
+        ]
+        for relative in sorted(path for path in _source_paths(suffix=".py") if Path(path).name.startswith("test")):
+            unit_id = "pytest:" + relative
+            units.append(
+                _unit(
+                    unit_id,
+                    "pytest",
+                    local_python_dependencies(relative, graph=dependency_graph, all_python=python_paths)
+                    + pytest_shared,
+                    pytest_environment,
+                    cache,
+                    force,
+                    invalidated,
+                )
+            )
+        ruff_inputs = python_paths + [name for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")]
+        units.append(
+            _unit(
+                "quality:ruff",
+                "ruff",
+                ruff_inputs,
+                {"ruff": environment.get("ruff")},
+                cache,
+                force,
+                invalidated,
+            )
+        )
+        markdown_paths = _source_paths(suffix=".md")
+        markdown_inputs = markdown_paths + [".markdownlint-cli2.jsonc", "package.json", "package-lock.json"]
+        units.append(
+            _unit(
+                "quality:markdown",
+                "markdown",
+                markdown_inputs,
+                {key: environment.get(key) for key in ("node", "npm")},
+                cache,
+                force,
+                invalidated,
+            )
+        )
+    manager_path = "scripts/acceptance-manager.py"
+    for name, probe in SCENARIO_PROBES.items():
+        if name not in selected:
+            continue
+        paths = set(local_python_dependencies(probe, graph=dependency_graph, all_python=python_paths))
+        paths.add(manager_path)
+        units.append(
+            _unit(
+                "scenario:" + name,
+                "scenario",
+                paths,
+                _scenario_environment(name, environment),
+                cache,
+                force,
+                invalidated,
+            )
+        )
+    unmatched = invalidated - {unit["id"] for unit in units}
+    if unmatched:
+        raise ValueError("Invalidation did not match the selected plan: " + ", ".join(sorted(unmatched)))
+    return units
+
+
+def _run_guest_script(command):
+    """Run a guest script with streamed CLI output and bounded diagnostics."""
     if _CLI_PROGRESS:
         process = subprocess.Popen(
             ssh_args("bash", "-s"),
@@ -1276,13 +1655,163 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
             tail.append(line.rstrip())
             tail = tail[-30:]
         returncode = process.wait()
-        if returncode:
-            evidence = export_failure_evidence("\n".join(tail))
-            raise RuntimeError(
-                f"Acceptance tests failed with exit {returncode}. Last output:\n" + "\n".join(tail) + "\n" + evidence
+        output = "\n".join(tail)
+    else:
+        result = subprocess.run(
+            ssh_args("bash", "-s"), input=command, text=True, capture_output=True, check=False, timeout=7200
+        )
+        returncode = result.returncode
+        output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
+    if returncode:
+        evidence = export_failure_evidence(output)
+        raise RuntimeError(f"Acceptance tests failed with exit {returncode}. Last output:\n{output}\n{evidence}")
+    return output
+
+
+def _guest_was_used():
+    result = ssh("sudo", "-n", "test", "-e", "/var/tmp/nord-tools-acceptance-used", timeout=10)
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError("Unable to verify whether the disposable guest has already run privileged acceptance")
+
+
+def run_tests(
+    *,
+    mode="development",
+    selected=("all",),
+    force_complete=False,
+    no_result_cache=False,
+    explain_selection=False,
+    invalidated=(),
+):
+    """Run only invalidated development units, or the complete final matrix."""
+    ready = readiness()
+    if not ready.startswith("Ready:"):
+        message = "Guest is not ready for testing: " + ready
+        if ready == "Guest is not running":
+            message += (
+                "\nHint: Run 'python scripts/acceptance-manager.py rebuild' "
+                "to create and start a fresh disposable guest, then retry 'test'."
             )
+        raise RuntimeError(message)
+    provisioning_issues = guest_provisioning_issues()
+    if provisioning_issues:
+        raise RuntimeError(
+            "Guest provisioning contract is incomplete: "
+            + "; ".join(provisioning_issues)
+            + "\nHint: Run 'python scripts/acceptance-manager.py rebuild' before retrying 'test'."
+        )
+    upload_source()
+    environment = guest_environment_identity()
+    cache, cache_status = _empty_result_cache(), "result reuse disabled"
+    if mode == "development" and not no_result_cache:
+        cache, cache_status = load_result_cache()
+    plan = build_execution_plan(
+        mode=mode,
+        selected=selected,
+        environment=environment,
+        cache=cache,
+        force=force_complete or no_result_cache,
+        invalidated=invalidated,
+    )
+    executed = [unit for unit in plan if unit["execute"]]
+    reused = [unit for unit in plan if not unit["execute"]]
+    if explain_selection:
+        progress(f"Selection cache: {cache_status}")
+        for unit in plan:
+            progress(f"{'RUN' if unit['execute'] else 'REUSED'}: {unit['id']} ({unit['reason']})")
+
+    scenario_units = {unit["id"].removeprefix("scenario:"): unit for unit in plan if unit["kind"] == "scenario"}
+    executable_scenarios = {name for name, unit in scenario_units.items() if unit["execute"]}
+    if executable_scenarios and _guest_was_used():
+        names = ", ".join(sorted(executable_scenarios))
+        raise RuntimeError(
+            f"The selected scenarios require a clean disposable guest ({names}). "
+            "Run 'python scripts/acceptance-manager.py rebuild' before retrying."
+        )
+
+    pytest_units = [unit for unit in executed if unit["kind"] == "pytest"]
+    ruff_unit = next((unit for unit in executed if unit["kind"] == "ruff"), None)
+    markdown_unit = next((unit for unit in executed if unit["kind"] == "markdown"), None)
+    commands = ["set -euo pipefail", f"cd {shlex.quote(REMOTE_ROOT)}"]
+    if pytest_units:
+        tests = [unit["id"].removeprefix("pytest:") for unit in pytest_units]
+        commands.extend(
+            (f'echo "RUN: pytest ({len(tests)} affected files)"', "python -m pytest -q " + shlex.join(tests))
+        )
+    if ruff_unit:
+        commands.extend(
+            ('echo "RUN: Ruff lint"', "ruff check .", 'echo "RUN: Ruff format check"', "ruff format --check .")
+        )
+    if markdown_unit:
+        commands.extend(
+            (
+                'echo "RUN: Markdown lint"',
+                "npm_state=\"$(sha256sum package-lock.json | cut -d' ' -f1):$(node --version):$(npm --version)\"",
+                'if [ -f node_modules/.nt-install-state ] && [ "$(cat node_modules/.nt-install-state)" = "$npm_state" ] && npm ls --depth=0 --offline >/dev/null 2>&1; then',
+                '  echo "Reusing verified Node dependencies"',
+                "else",
+                "  npm ci --ignore-scripts --no-audit --no-fund",
+                "  npm ls --depth=0 --offline >/dev/null",
+                "  printf '%s' \"$npm_state\" > node_modules/.nt-install-state",
+                "fi",
+                "npm run lint:markdown",
+            )
+        )
+    if executable_scenarios:
+        commands.append("sudo -n touch /var/tmp/nord-tools-acceptance-used")
+    if "network" in executable_scenarios:
+        commands.extend(
+            (
+                'echo "RUN: privileged network isolation acceptance"',
+                "sudo -n python tools/probe_network_isolation_adversarial_acceptance.py --run-privileged",
+            )
+        )
+    if "application" in executable_scenarios:
+        commands.extend(
+            (
+                'echo "RUN: privileged application lifecycle acceptance"',
+                'sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"',
+            )
+        )
+    if "desktop" in executable_scenarios:
+        commands.extend(
+            (
+                'echo "RUN: registered desktop session integration"',
+                'sudo -n python tools/probe_desktop_launch_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"',
+            )
+        )
+
+    run_id = str(uuid.uuid4())
+    immediate_units = [
+        unit
+        for unit in executed
+        if unit["kind"] != "scenario" or unit["id"].removeprefix("scenario:") in {"network", "application", "desktop"}
+    ]
+    output = ""
+    if len(commands) > 2:
+        progress("Starting selected guest quality and acceptance units...")
+        output = _run_guest_script("\n".join(commands) + "\n")
+        if not no_result_cache:
+            publish_result_cache(immediate_units, run_id)
+
+    completed_scopes = []
+    if "d1" in executable_scenarios:
+        progress("Starting D1 host-domain acceptance...")
+        start_detached_host_acceptance(
+            unit=HOST_ACCEPTANCE_UNIT,
+            probe="probe_host_domain_acceptance.py",
+            evidence=HOST_ACCEPTANCE_EVIDENCE,
+            result_path=HOST_ACCEPTANCE_RESULT,
+        )
         progress("Waiting for D1 to retire its deny barrier and restore guest SSH...")
-        host_report = wait_for_host_acceptance()
+        report = wait_for_host_acceptance()
+        completed_scopes.append(report["scope"])
+        if not no_result_cache:
+            publish_result_cache([scenario_units["d1"]], run_id)
+    if "d2" in executable_scenarios:
         progress("Starting D2 host failure and recovery acceptance...")
         start_detached_host_acceptance(
             unit=HOST_FAILURE_UNIT,
@@ -1291,51 +1820,32 @@ sudo -n systemd-run --no-block --collect --unit={HOST_ACCEPTANCE_UNIT.removesuff
             result_path=HOST_FAILURE_RESULT,
         )
         progress("Waiting for D2 to complete barrier-last recovery and restore guest SSH...")
-        failure_report = wait_for_host_acceptance(
+        report = wait_for_host_acceptance(
             unit=HOST_FAILURE_UNIT,
             result_path=HOST_FAILURE_RESULT,
             expected_scope="D2 host-domain failure and recovery acceptance",
         )
+        completed_scopes.append(report["scope"])
+        if not no_result_cache:
+            publish_result_cache([scenario_units["d2"]], run_id)
+    if "d3" in executable_scenarios:
         try:
-            reboot_report = run_host_reboot_acceptance()
+            report = run_host_reboot_acceptance()
         except RuntimeError as exc:
             raise RuntimeError(str(exc) + "\nD3 boot diagnostics:\n" + d3_failure_diagnostics()) from exc
-        return (
-            "Acceptance tests passed in the disposable guest, including "
-            + host_report["scope"]
-            + " and "
-            + failure_report["scope"]
-            + " and "
-            + reboot_report["scope"]
-            + "."
-        )
-    result = subprocess.run(
-        ssh_args("bash", "-s"), input=command, text=True, capture_output=True, check=False, timeout=7200
+        completed_scopes.append(report["scope"])
+        if not no_result_cache:
+            publish_result_cache([scenario_units["d3"]], run_id)
+
+    summary = (
+        f"Acceptance selection completed in {mode} mode: {len(executed)} executed, "
+        f"{len(reused)} reused from equivalent development evidence."
     )
-    output = "\n".join(part for part in (result.stdout.strip(), result.stderr.strip()) if part)
-    if result.returncode:
-        evidence = export_failure_evidence(output)
-        raise RuntimeError(f"Acceptance tests failed with exit {result.returncode}:\n{output}\n{evidence}")
-    host_report = wait_for_host_acceptance()
-    start_detached_host_acceptance(
-        unit=HOST_FAILURE_UNIT,
-        probe="probe_host_failure_recovery_acceptance.py",
-        evidence=HOST_FAILURE_EVIDENCE,
-        result_path=HOST_FAILURE_RESULT,
-    )
-    failure_report = wait_for_host_acceptance(
-        unit=HOST_FAILURE_UNIT,
-        result_path=HOST_FAILURE_RESULT,
-        expected_scope="D2 host-domain failure and recovery acceptance",
-    )
-    try:
-        reboot_report = run_host_reboot_acceptance()
-    except RuntimeError as exc:
-        raise RuntimeError(str(exc) + "\nD3 boot diagnostics:\n" + d3_failure_diagnostics()) from exc
-    return (
-        "Acceptance tests passed in the disposable guest, including "
-        f"{host_report['scope']}, {failure_report['scope']} and {reboot_report['scope']}.\n{output}"
-    )
+    if completed_scopes:
+        summary += " Completed " + "; ".join(completed_scopes) + "."
+    if output and not _CLI_PROGRESS:
+        summary += "\n" + output
+    return summary
 
 
 def remove():
@@ -1536,9 +2046,59 @@ def main():
         action="store_true",
         help="use blue PASS and orange FAIL markers in colour-capable terminal output",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("development", "final"),
+        default=None,
+        help="reuse equivalent development results or force complete final execution",
+    )
+    parser.add_argument(
+        "--scenario",
+        action="append",
+        choices=("all", "quality", *SCENARIO_PROBES),
+        help="select a development scenario; repeat to select several (default: all)",
+    )
+    parser.add_argument(
+        "--force-complete-run",
+        action="store_true",
+        help="execute every unit in the selected test scope without reusing passes",
+    )
+    parser.add_argument(
+        "--no-result-cache",
+        action="store_true",
+        help="execute the selected test scope without reading or writing reusable results",
+    )
+    parser.add_argument(
+        "--explain-selection",
+        action="store_true",
+        help="print the reason each selected test unit executes or is reused",
+    )
+    parser.add_argument(
+        "--invalidate",
+        action="append",
+        default=[],
+        metavar="UNIT",
+        help="force one selected execution-unit identifier to run",
+    )
     args = parser.parse_args()
     if (args.force or args.plan) and args.action != "rebuild":
         parser.error("--force and --plan apply only to rebuild")
+    test_options = (
+        args.mode is not None
+        or args.scenario is not None
+        or args.force_complete_run
+        or args.no_result_cache
+        or args.explain_selection
+        or args.invalidate
+    )
+    if test_options and args.action != "test":
+        parser.error("--mode, --scenario and result-selection options apply only to test")
+    mode = args.mode or "development"
+    selected = tuple(args.scenario or ("all",))
+    if "all" in selected and len(selected) != 1:
+        parser.error("--scenario all cannot be combined with another scenario")
+    if mode == "final" and selected != ("all",):
+        parser.error("final mode requires --scenario all")
     actions = {
         "status": status,
         "ready": readiness,
@@ -1549,7 +2109,6 @@ def main():
         "stop": stop,
         "console": console,
         "ssh": terminal,
-        "test": run_tests,
         "evidence": export_evidence,
         "remove": remove,
         "rebuild": rebuild,
@@ -1566,7 +2125,18 @@ def main():
             for reason in reasons:
                 print("Reason: " + reason)
             return 0
-        print(rebuild(force=args.force) if args.action == "rebuild" else actions[args.action]())
+        if args.action == "test":
+            result = run_tests(
+                mode=mode,
+                selected=selected,
+                force_complete=args.force_complete_run,
+                no_result_cache=args.no_result_cache,
+                explain_selection=args.explain_selection,
+                invalidated=tuple(args.invalidate),
+            )
+        else:
+            result = rebuild(force=args.force) if args.action == "rebuild" else actions[args.action]()
+        print(result)
         return 0
     except (OSError, RuntimeError, subprocess.SubprocessError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
