@@ -2,15 +2,136 @@
 
 import json
 from copy import deepcopy
+import datetime
+import os
 
 from nord_tools_internal.nordvpn_allocation_profiles import (
     expand_allocation_profiles,
     kernel_profile_for_allocation,
 )
-from test_restore_executor import RestoreTestBase
+from test_restore_executor import RestoreTestBase, _KEY
 
 
 class AllocationProfileTests(RestoreTestBase):
+    def test_provider_backed_default_shared_and_isolated_workflow(self):
+        policy = {
+            "version": 1,
+            "defaults": {"vpn": "primary"},
+            "vpn_profiles": {
+                "primary": {"selection": {"mode": "pinned", "server": "uk715"}, "sharing": "shared"},
+                "shared": {"selection": {"mode": "country", "country": "gb"}, "sharing": "shared"},
+                "isolated": {
+                    "selection": {"mode": "fastest", "filter": "country:gb&protocol:udp"},
+                    "sharing": "isolated",
+                },
+            },
+            "applications": {
+                "alpha": {"executable": "/bin/true", "vpn": "isolated"},
+                "beta": {"executable": "/bin/false", "vpn": "isolated"},
+            },
+        }
+        self.policy_path.write_text(json.dumps(policy), encoding="utf-8")
+        servers = []
+        for index, server in enumerate(
+            ("uk715.nordvpn.com", "gb123.nordvpn.com", "gb124.nordvpn.com", "gb125.nordvpn.com"), start=1
+        ):
+            credential = self.root / f"{server}.key"
+            credential.write_text(_KEY + "\n", encoding="ascii")
+            credential.chmod(0o600)
+            servers.append(
+                {
+                    "server": server,
+                    "country": "gb",
+                    "peer_public_key": _KEY,
+                    "client_public_key": _KEY,
+                    "endpoint_address": f"198.51.100.{index}",
+                    "endpoint_port": 51820,
+                    "persistent_keepalive_seconds": 25,
+                    "tunnel_addresses": ["10.5.0.2/32", "fd42:5::2/128"],
+                    "peer_allowed_ips": ["0.0.0.0/0", "::/0"],
+                    "dns_servers": ["10.5.0.1", "fd42:5::1"],
+                    "credential": str(credential),
+                }
+            )
+        catalogue = self.root / "provider-catalogue.json"
+        catalogue.write_text(json.dumps({"version": 1, "provider": "nordvpn", "servers": servers}))
+        catalogue.chmod(0o600)
+        benchmark = self.root / "benchmark.json"
+        benchmark.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "finished_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    "ranking": [
+                        {
+                            "server": "gb124.nordvpn.com",
+                            "protocol": "udp",
+                            "port": 51820,
+                            "received": 3,
+                            "loss_pct": 0,
+                            "median_ms": 4,
+                        },
+                        {
+                            "server": "gb123.nordvpn.com",
+                            "protocol": "udp",
+                            "port": 51820,
+                            "received": 3,
+                            "loss_pct": 0,
+                            "median_ms": 8,
+                        },
+                        {
+                            "server": "gb125.nordvpn.com",
+                            "protocol": "udp",
+                            "port": 51820,
+                            "received": 3,
+                            "loss_pct": 0,
+                            "median_ms": 6,
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        effective, sources = expand_allocation_profiles(policy)
+        self.config["provider"] = {
+            "catalogue": str(catalogue),
+            "benchmark_report": str(benchmark),
+            "max_report_age_seconds": 60,
+        }
+        self.config["credentials"] = {}
+        self.config["tunnels"] = {}
+        for index, name in enumerate(sorted(effective["vpn_profiles"]), start=1):
+            self.config["tunnels"][name] = {
+                "underlay": {
+                    "namespace_address": f"10.216.{index}.2/30",
+                    "host_address": f"10.216.{index}.1/30",
+                }
+            }
+        self.harness.public_key_from_fd = lambda fd: _KEY if os.read(fd, 46).strip() else ""
+        self.harness.verify_wireguard = lambda *args, **kwargs: True
+        self.harness.install_resolver = lambda namespace, dns_policy: (namespace, dns_policy)
+        self.harness.verify_dns = lambda namespace, interface, dns_policy: True
+        self.harness.remove_resolver = lambda installation: None
+        report = self.restore()
+        self.assertEqual(set(report["restored"]), set(effective["vpn_profiles"]))
+        self.assertEqual(
+            {name: value["server"] for name, value in report["provider_selections"].items()},
+            {
+                "primary": "uk715.nordvpn.com",
+                "shared": "gb123.nordvpn.com",
+                **{
+                    name: server
+                    for name, server in zip(
+                        sorted(name for name, source in sources.items() if source == "isolated"),
+                        ("gb124.nordvpn.com", "gb125.nordvpn.com"),
+                        strict=True,
+                    )
+                },
+            },
+        )
+        self.assertEqual(len(self.harness.namespaces), 4)
+        self.assertEqual(self.restore()["restored"], [])
+
     def test_isolated_consumers_get_independent_production_resources(self):
         policy = json.loads(self.policy_path.read_text(encoding="utf-8"))
         policy["vpn_profiles"]["isolated"] = {

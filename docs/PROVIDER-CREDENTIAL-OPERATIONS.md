@@ -38,8 +38,8 @@ A provider-backed startup configuration adds:
 }
 ```
 
-Pinned selection requires that exact imported server. Country selection chooses the lexically first imported server in the requested country, making repeated boots deterministic. Fastest selection uses only responsive, imported servers matching the saved policy filter in a version 1 benchmark report. It orders candidates by packet loss, median latency and server identity. A missing, future-dated, stale or malformed report is refused; no fallback server is guessed.
+Pinned selection requires that exact imported server. Country selection orders imported servers lexically, making repeated boots deterministic. Fastest selection uses only responsive, imported servers matching the saved policy filter in a version 1 benchmark report. It orders candidates by packet loss, median latency and server identity. Pinned profiles reserve first, followed by country and fastest profiles. Every concurrent shared or isolated allocation receives a distinct provider identity; an undersized catalogue is refused before mutation. A missing, future-dated, stale or malformed report is also refused, and no fallback outside the saved preference is guessed.
 
 The generated systemd unit loads every imported private key with `LoadCredential`. At runtime restoration reads the matching file from `$CREDENTIALS_DIRECTORY`, not the original source path. Before creating a namespace or recording a creation attempt, it derives the loaded key's public identity and compares it with the catalogue. Missing catalogue entries, unresolved preferences, unsafe data and identity mismatches fail the boot service closed. The report records only the selected server and catalogue digest.
 
-The catalogue and benchmark report are local operator inputs, not proof that a provider server is currently reachable. E2 owns live default, shared and isolated provider workflow acceptance.
+The catalogue and benchmark report are local operator inputs, not proof that a provider server is currently reachable. Live default, shared and isolated validation is defined in [Provider workflow acceptance](PROVIDER-WORKFLOW-ACCEPTANCE.md).

@@ -15,6 +15,7 @@ from unittest.mock import patch
 import nordvpn_manage
 from nord_tools_internal.nordvpn_provider import (
     ProviderError,
+    allocate_provider_servers,
     import_provider_configuration,
     parse_nordvpn_wireguard,
     read_provider_configuration,
@@ -163,6 +164,33 @@ class ProviderImportTests(unittest.TestCase):
 
 
 class ProviderSelectionTests(unittest.TestCase):
+    def test_concurrent_allocations_require_distinct_provider_identities(self):
+        allocation_policy = {
+            "version": 1,
+            "defaults": {"vpn": "primary"},
+            "vpn_profiles": {
+                "primary": {"selection": {"mode": "pinned", "server": "gb123"}},
+                "isolated": {"selection": {"mode": "country", "country": "gb"}, "sharing": "isolated"},
+            },
+            "applications": {
+                "alpha": {"executable": "/bin/true", "vpn": "isolated"},
+                "beta": {"executable": "/bin/false", "vpn": "isolated"},
+            },
+        }
+        sources = {"primary": "primary", "ntiso_alpha": "isolated", "ntiso_beta": "isolated"}
+        ranked = {
+            "primary": [{"server": "gb123.nordvpn.com"}],
+            "isolated": [{"server": "gb123.nordvpn.com"}, {"server": "gb124.nordvpn.com"}],
+        }
+        with self.assertRaisesRegex(ProviderError, "too few distinct"):
+            allocate_provider_servers(allocation_policy, sources, ranked)
+        ranked["isolated"].insert(1, {"server": "gb124.nordvpn.com"})
+        with self.assertRaisesRegex(ProviderError, "too few distinct"):
+            allocate_provider_servers(allocation_policy, sources, ranked)
+        ranked["isolated"].append({"server": "gb125.nordvpn.com"})
+        assigned = allocate_provider_servers(allocation_policy, sources, ranked)
+        self.assertEqual(len({entry["server"] for entry in assigned.values()}), 3)
+
     def catalogue(self):
         servers = []
         for server, endpoint in (("gb123.nordvpn.com", "203.0.113.7"), ("gb124.nordvpn.com", "203.0.113.8")):

@@ -67,10 +67,11 @@ from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
 from nord_tools_internal.nordvpn_production_contract import validate_executor_creation_contract
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_provider import (
+    allocate_provider_servers,
     catalogue_sha256,
     load_provider_catalogue,
     provider_credential_name,
-    select_provider_servers,
+    rank_provider_servers,
 )
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
@@ -444,7 +445,7 @@ def _resolve_provider(config: dict, policy: dict) -> tuple[dict, dict[str, dict]
         return runtime, {}
     catalogue = load_provider_catalogue(provider["catalogue"])
     report = _read_document(provider["benchmark_report"]) if provider.get("benchmark_report") else None
-    selected = select_provider_servers(
+    ranked = rank_provider_servers(
         policy,
         catalogue,
         report,
@@ -454,8 +455,11 @@ def _resolve_provider(config: dict, policy: dict) -> tuple[dict, dict[str, dict]
     credentials = {}
     selections = {}
     digest = catalogue_sha256(catalogue)
-    for name, entry in sorted(selected.items()):
-        template = config["tunnels"].get(name)
+    effective, sources = expand_allocation_profiles(policy)
+    assignments = allocate_provider_servers(policy, sources, ranked)
+    for name, source in sorted(sources.items()):
+        entry = assignments[name]
+        template = config["tunnels"].get(name, config["tunnels"].get(source))
         if not isinstance(template, dict) or "underlay" not in template:
             raise RegistryError(f"profile {name} has no provider underlay template")
         tunnels[name] = {
@@ -471,6 +475,8 @@ def _resolve_provider(config: dict, policy: dict) -> tuple[dict, dict[str, dict]
         }
         credentials[name] = _runtime_credential(entry["credential"], provider_credential_name(entry["server"]))
         selections[name] = {"server": entry["server"], "catalogue_sha256": digest}
+    if set(tunnels) != set(effective["vpn_profiles"]):
+        raise RegistryError("provider selection did not cover every effective allocation profile")
     runtime["tunnels"] = tunnels
     runtime["credentials"] = credentials
     _prevalidate_plans(runtime, policy)

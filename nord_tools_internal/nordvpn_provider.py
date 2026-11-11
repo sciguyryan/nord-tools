@@ -418,22 +418,21 @@ def _timestamp(value: object) -> datetime.datetime:
     return parsed.astimezone(datetime.timezone.utc)
 
 
-def select_provider_servers(
+def rank_provider_servers(
     policy: object,
     catalogue: object,
     report: object | None,
     *,
     max_report_age_seconds: int,
     now: datetime.datetime | None = None,
-) -> dict[str, dict]:
-    """Resolve every policy profile to one imported provider configuration."""
+) -> dict[str, list[dict]]:
+    """Return every eligible server per profile in deterministic preference order."""
     checked = validate_policy(policy)
     catalogue = validate_provider_catalogue(catalogue)
     servers = {item["server"]: item for item in catalogue["servers"]}
     now = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(datetime.timezone.utc)
     if type(max_report_age_seconds) is not int or not 0 <= max_report_age_seconds <= 31 * 24 * 3600:
         raise ProviderError("provider benchmark maximum age is invalid")
-    rankings = None
     resolved = {}
     for name, profile in sorted(checked["vpn_profiles"].items()):
         selection = profile["selection"]
@@ -442,7 +441,10 @@ def select_provider_servers(
         if mode == "pinned":
             candidates = [servers[selection["server"]]] if selection["server"] in servers else []
         elif mode == "country":
-            candidates = [item for item in candidates if item["country"] == selection["country"]]
+            candidates = sorted(
+                (item for item in candidates if item["country"] == selection["country"]),
+                key=lambda item: item["server"],
+            )
         elif mode == "fastest":
             if (
                 not isinstance(report, dict)
@@ -480,17 +482,85 @@ def select_provider_servers(
                     or not isinstance(loss, (int, float))
                     or not math.isfinite(loss)
                     or not 0 <= loss <= 100
+                    or type(row.get("received")) is not int
+                    or row["received"] < 0
                 ):
                     raise ProviderError("benchmark ranking entry is invalid")
                 endpoint = SimpleNamespace(name=server, protocol=protocol, port=port)
-                if row.get("received") and server in servers and predicate(endpoint):
+                if row["received"] and server in servers and predicate(endpoint):
                     rankings.append((float(loss), float(latency), server))
             rankings.sort()
-            candidates = [servers[rankings[0][2]]] if rankings else []
+            ordered = []
+            seen = set()
+            for _, _, server in rankings:
+                if server not in seen:
+                    ordered.append(servers[server])
+                    seen.add(server)
+            candidates = ordered
         if not candidates:
             raise ProviderError(f"profile {name} has no eligible imported provider server")
-        resolved[name] = dict(sorted(candidates, key=lambda item: item["server"])[0])
+        resolved[name] = [dict(item) for item in candidates]
     return resolved
+
+
+def select_provider_servers(
+    policy: object,
+    catalogue: object,
+    report: object | None,
+    *,
+    max_report_age_seconds: int,
+    now: datetime.datetime | None = None,
+) -> dict[str, dict]:
+    """Resolve every policy profile to its first eligible provider configuration."""
+    ranked = rank_provider_servers(
+        policy,
+        catalogue,
+        report,
+        max_report_age_seconds=max_report_age_seconds,
+        now=now,
+    )
+    return {name: candidates[0] for name, candidates in ranked.items()}
+
+
+def allocate_provider_servers(
+    policy: object, sources: dict[str, str], ranked: dict[str, list[dict]]
+) -> dict[str, dict]:
+    """Reserve one distinct eligible provider identity for every effective allocation."""
+    checked = validate_policy(policy)
+    if not isinstance(sources, dict) or not sources or set(sources.values()) - set(checked["vpn_profiles"]):
+        raise ProviderError("provider allocation sources are invalid")
+    grouped: dict[str, list[str]] = {}
+    for name, source in sorted(sources.items()):
+        if not isinstance(name, str) or not name:
+            raise ProviderError("provider allocation identity is invalid")
+        grouped.setdefault(source, []).append(name)
+    priority = {"pinned": 0, "country": 1, "fastest": 2}
+    source_order = sorted(
+        grouped,
+        key=lambda source: (priority[checked["vpn_profiles"][source]["selection"]["mode"]], source),
+    )
+    assignments = {}
+    used_servers = set()
+    for source in source_order:
+        candidates = ranked.get(source)
+        if not isinstance(candidates, list) or any(
+            not isinstance(entry, dict) or not isinstance(entry.get("server"), str) for entry in candidates
+        ):
+            raise ProviderError(f"profile {source} has invalid ranked provider candidates")
+        available = []
+        reserved = set(used_servers)
+        for entry in candidates:
+            if entry["server"] not in reserved:
+                available.append(entry)
+                reserved.add(entry["server"])
+        if len(available) < len(grouped[source]):
+            raise ProviderError(
+                f"profile {source} has too few distinct eligible provider configurations for its allocations"
+            )
+        for name, entry in zip(grouped[source], available[: len(grouped[source])], strict=True):
+            assignments[name] = dict(entry)
+            used_servers.add(entry["server"])
+    return assignments
 
 
 def catalogue_sha256(catalogue: object) -> str:
