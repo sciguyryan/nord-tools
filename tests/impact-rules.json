@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "rules": [
+    {
+      "id": "host-lifecycle",
+      "when_changed": ["nord_tools_internal/nordvpn_host_*.py", "nordvpn_manage.py"],
+      "invalidate": ["scenario:d1", "scenario:d2", "scenario:d3", "pytest:*host*", "pytest:*wireguard*"],
+      "reason": "Host protection, activation and recovery share runtime behaviour"
+    },
+    {
+      "id": "acceptance-fixtures",
+      "when_changed": ["tools/probe_*.py", "scripts/acceptance-manager.py"],
+      "invalidate": ["scenario:*", "pytest:tests/test_*probe*.py", "pytest:scripts/test_acceptance_manager.py"],
+      "reason": "Acceptance fixture and runner changes affect scenario setup and evidence"
+    },
+    {
+      "id": "shared-test-configuration",
+      "when_changed": ["pytest.ini", "pyproject.toml", "setup.cfg", "tox.ini", "tests/conftest.py", "scripts/conftest.py"],
+      "invalidate": ["pytest:*"],
+      "reason": "Shared collection and fixture configuration"
+    }
+  ]
+}

@@ -568,6 +568,8 @@ def test_development_plan_reuses_only_equivalent_test_units(manager, monkeypatch
     (tmp_path / "fixture.json").write_text('{"value": 1}\n')
     (tmp_path / "test_product.py").write_text('import product\nDATA = "fixture.json"\n')
     (tmp_path / "test_other.py").write_text("import other\n")
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/impact-rules.json").write_text('{"schema_version":1,"rules":[]}\n')
     monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
     environment = {"python": "3.13", "pytest": "9", "platform": "test", "ruff": "1", "node": "2", "npm": "3"}
     first = manager.build_execution_plan(
@@ -669,7 +671,7 @@ def test_scenario_environment_ignores_unrelated_lint_tool_changes(manager):
         environment={**environment, "ruff": "new"},
         cache=cache,
     )
-    assert lint_changed[0]["execute"] is False
+    assert lint_changed[0]["execute"] is True  # Privileged guest state cannot be certified from a cached fingerprint
 
     network_changed = manager.build_execution_plan(
         mode="development",
@@ -857,3 +859,68 @@ def test_run_tests_refuses_changed_privileged_scenario_on_used_guest(manager, mo
 
     with pytest.raises(RuntimeError, match=r"require a clean disposable guest \(d3\)"):
         manager.run_tests(selected=("d3",))
+
+
+def test_impact_policy_invalidation_is_additive_and_explainable(manager, monkeypatch, tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/impact-rules.json").write_text(
+        '{"schema_version":1,"rules":[{"id":"cross-cutting","when_changed":["runtime.json"],'
+        '"invalidate":["pytest:test_other.py"],"reason":"Runtime configuration"}]}\n'
+    )
+    (tmp_path / "runtime.json").write_text('{"enabled":true}\n')
+    (tmp_path / "test_other.py").write_text("def test_ok(): assert True\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+    environment = {"python": "3.13", "pytest": "8", "platform": "test"}
+    first = manager.build_execution_plan(
+        mode="development", selected=("quality",), environment=environment, cache=manager._empty_result_cache()
+    )
+    unit = next(unit for unit in first if unit["id"] == "pytest:test_other.py")
+    assert "runtime.json" in unit["paths"]
+    assert unit["impact_rules"][0]["id"] == "cross-cutting"
+    cache = manager._empty_result_cache()
+    cache["entries"] = {item["id"]: {"result": "passed", "fingerprint": item["fingerprint"]} for item in first}
+    assert not next(
+        item
+        for item in manager.build_execution_plan(
+            mode="development", selected=("quality",), environment=environment, cache=cache
+        )
+        if item["id"] == unit["id"]
+    )["execute"]
+    (tmp_path / "runtime.json").write_text('{"enabled":false}\n')
+    assert next(
+        item
+        for item in manager.build_execution_plan(
+            mode="development", selected=("quality",), environment=environment, cache=cache
+        )
+        if item["id"] == unit["id"]
+    )["execute"]
+
+
+def test_impact_policy_malformed_fails_closed(manager, monkeypatch, tmp_path):
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests/impact-rules.json").write_text('{"schema_version":1,"rules":[{"id":"bad"}]}')
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+    with pytest.raises(ValueError, match="Invalid test impact rule"):
+        manager.build_execution_plan(
+            mode="development", selected=("quality",), environment={}, cache=manager._empty_result_cache()
+        )
+
+
+def test_dynamic_import_falls_back_to_all_local_python(manager, monkeypatch, tmp_path):
+    (tmp_path / "test_dynamic.py").write_text('import importlib\nname = "computed"\nimportlib.import_module(name)\n')
+    (tmp_path / "unrelated.py").write_text("VALUE = 1\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+    assert "unrelated.py" in manager.local_python_dependencies("test_dynamic.py")
+
+
+def test_privileged_scenarios_never_reuse_prior_pass(manager):
+    first = manager.build_execution_plan(
+        mode="development", selected=("d1",), environment={"python": "3.13"}, cache=manager._empty_result_cache()
+    )
+    cache = manager._empty_result_cache()
+    cache["entries"] = {first[0]["id"]: {"result": "passed", "fingerprint": first[0]["fingerprint"]}}
+    again = manager.build_execution_plan(
+        mode="development", selected=("d1",), environment={"python": "3.13"}, cache=cache
+    )
+    assert again[0]["execute"]
+    assert "live execution" in again[0]["reason"]

@@ -11,6 +11,7 @@ import base64
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 import fcntl
+import fnmatch
 import hashlib
 import io
 import ipaddress
@@ -59,7 +60,8 @@ HOST_FAILURE_EVIDENCE = "/var/tmp/nord-tools-host-d2-evidence"
 HOST_REBOOT_RESULT = "/var/tmp/nord-tools-d3-result.json"
 HOST_REBOOT_PROBE = "/var/lib/nord-tools-d3/source/tools/probe_host_reboot_acceptance.py"
 HOST_REBOOT_PREPARE = f"{REMOTE_ROOT}/tools/probe_host_reboot_acceptance.py"
-RESULT_CACHE_SCHEMA = 1
+RESULT_CACHE_SCHEMA = 2
+IMPACT_POLICY = "tests/impact-rules.json"
 RESULT_CACHE = CACHE.parent / "development-results-v1.json"
 RESULT_CACHE_LOCK = CACHE.parent / "development-results-v1.lock"
 SCENARIO_PROBES = {
@@ -1275,6 +1277,68 @@ def _resolve_local_import(module, current, level, index):
     return candidates
 
 
+def _load_impact_policy(source_paths):
+    """Validate additive impact rules; malformed policies must never permit reuse."""
+    path = SOURCE_ROOT / IMPACT_POLICY
+    if not path.is_file() or path.is_symlink():
+        raise ValueError(f"Missing or unsafe test impact policy: {IMPACT_POLICY}")
+    try:
+        document = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError) as exc:
+        raise ValueError(f"Invalid test impact policy: {exc}") from exc
+    if (
+        not isinstance(document, dict)
+        or set(document) != {"schema_version", "rules"}
+        or document["schema_version"] != 1
+        or not isinstance(document["rules"], list)
+    ):
+        raise ValueError("Invalid test impact policy schema")
+    rules = []
+    identifiers = set()
+    for rule in document["rules"]:
+        if not isinstance(rule, dict) or set(rule) != {"id", "when_changed", "invalidate", "reason"}:
+            raise ValueError("Invalid test impact rule fields")
+        name, patterns, targets, reason = (rule[key] for key in ("id", "when_changed", "invalidate", "reason"))
+        if (
+            not isinstance(name, str)
+            or not name
+            or name in identifiers
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            raise ValueError("Invalid or duplicate test impact rule")
+        if (
+            not isinstance(patterns, list)
+            or not patterns
+            or not all(
+                isinstance(x, str) and x and not x.startswith("/") and ".." not in Path(x).parts for x in patterns
+            )
+        ):
+            raise ValueError(f"Invalid paths in impact rule {name}")
+        if (
+            not isinstance(targets, list)
+            or not targets
+            or not all(isinstance(x, str) and x.startswith(("pytest:", "scenario:", "quality:")) for x in targets)
+        ):
+            raise ValueError(f"Invalid targets in impact rule {name}")
+        identifiers.add(name)
+        rules.append((name, patterns, targets, reason))
+    return rules
+
+
+def _impact_paths(unit_id, source_paths, rules):
+    """Return additional inputs and the policy rules explaining their inclusion."""
+    paths = {IMPACT_POLICY}
+    matched = []
+    for name, patterns, targets, reason in rules:
+        if any(fnmatch.fnmatchcase(unit_id, target) for target in targets):
+            paths.update(
+                path for path in source_paths if any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+            )
+            matched.append({"id": name, "reason": reason, "patterns": patterns})
+    return paths, matched
+
+
 def _python_dependency_graph(python_paths, index, source_paths=None):
     """Parse each local Python file once into a direct dependency graph."""
     all_python = set(python_paths)
@@ -1292,6 +1356,29 @@ def _python_dependency_graph(python_paths, index, source_paths=None):
             continue
         dependencies = set()
         for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                dynamic_import = (isinstance(func, ast.Name) and func.id == "__import__") or (
+                    isinstance(func, ast.Attribute) and func.attr == "import_module"
+                )
+                if dynamic_import and (
+                    not node.args
+                    or not isinstance(node.args[0], ast.Constant)
+                    or not isinstance(node.args[0].value, str)
+                ):
+                    dependencies.update(all_python)
+                # Runtime subprocesses can invoke arbitrary repository tools.
+                if isinstance(func, ast.Attribute) and func.attr in {
+                    "run",
+                    "Popen",
+                    "check_call",
+                    "check_output",
+                    "call",
+                }:
+                    dependencies.update(
+                        path for path in all_sources if path.endswith((".py", ".sh", ".json", ".toml", ".yaml", ".yml"))
+                    )
+
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     dependencies.update(_resolve_local_import(alias.name, relative, 0, index))
@@ -1478,7 +1565,7 @@ def publish_result_cache(units, run_id):
         raise RuntimeError(f"Unable to publish the development result cache: {exc}") from exc
 
 
-def _unit(unit_id, kind, paths, environment, cache, force, invalidated):
+def _unit(unit_id, kind, paths, environment, cache, force, invalidated, impact_rules=()):
     fingerprint = _fingerprint(kind, paths, environment)
     prior = cache.get("entries", {}).get(unit_id)
     reusable = (
@@ -1507,6 +1594,7 @@ def _unit(unit_id, kind, paths, environment, cache, force, invalidated):
         "fingerprint": fingerprint,
         "execute": not reusable,
         "reason": reason,
+        "impact_rules": list(impact_rules),
     }
 
 
@@ -1539,6 +1627,19 @@ def build_execution_plan(*, mode, selected, environment, cache, force=False, inv
     python_paths = [path for path in source_paths if path.endswith(".py")]
     module_index = _python_module_index(python_paths)
     dependency_graph = _python_dependency_graph(python_paths, module_index, source_paths)
+    rules = _load_impact_policy(source_paths)
+
+    def impact(unit_id, paths):
+        additional, matching = _impact_paths(unit_id, source_paths, rules)
+        return sorted(set(paths) | additional), matching
+
+    # Non-Python test inputs are not reliably discoverable from static imports.
+    # Broadly invalidate pytest on fixture/configuration/script changes rather than
+    # risk reusing a stale pass. Documentation is handled by Markdown lint.
+    referenced_inputs = set().union(*dependency_graph.values()) if dependency_graph else set()
+    pytest_external = [
+        path for path in source_paths if not path.endswith((".py", ".md")) and path not in referenced_inputs
+    ]
     if "quality" in selected:
         pytest_environment = {key: environment.get(key) for key in ("python", "pytest", "platform")}
         pytest_shared = [path for path in python_paths if Path(path).name == "conftest.py"] + [
@@ -1549,41 +1650,31 @@ def build_execution_plan(*, mode, selected, environment, cache, force=False, inv
         ]
         for relative in sorted(path for path in _source_paths(suffix=".py") if Path(path).name.startswith("test")):
             unit_id = "pytest:" + relative
-            units.append(
-                _unit(
-                    unit_id,
-                    "pytest",
-                    local_python_dependencies(relative, graph=dependency_graph, all_python=python_paths)
-                    + pytest_shared,
-                    pytest_environment,
-                    cache,
-                    force,
-                    invalidated,
-                )
+            inputs, matched = impact(
+                unit_id,
+                local_python_dependencies(relative, graph=dependency_graph, all_python=python_paths)
+                + pytest_shared
+                + pytest_external,
             )
+            units.append(_unit(unit_id, "pytest", inputs, pytest_environment, cache, force, invalidated, matched))
         ruff_inputs = python_paths + [name for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")]
+        inputs, matched = impact("quality:ruff", ruff_inputs)
         units.append(
-            _unit(
-                "quality:ruff",
-                "ruff",
-                ruff_inputs,
-                {"ruff": environment.get("ruff")},
-                cache,
-                force,
-                invalidated,
-            )
+            _unit("quality:ruff", "ruff", inputs, {"ruff": environment.get("ruff")}, cache, force, invalidated, matched)
         )
         markdown_paths = _source_paths(suffix=".md")
         markdown_inputs = markdown_paths + [".markdownlint-cli2.jsonc", "package.json", "package-lock.json"]
+        inputs, matched = impact("quality:markdown", markdown_inputs)
         units.append(
             _unit(
                 "quality:markdown",
                 "markdown",
-                markdown_inputs,
+                inputs,
                 {key: environment.get(key) for key in ("node", "npm")},
                 cache,
                 force,
                 invalidated,
+                matched,
             )
         )
     manager_path = "scripts/acceptance-manager.py"
@@ -1592,17 +1683,16 @@ def build_execution_plan(*, mode, selected, environment, cache, force=False, inv
             continue
         paths = set(local_python_dependencies(probe, graph=dependency_graph, all_python=python_paths))
         paths.add(manager_path)
-        units.append(
-            _unit(
-                "scenario:" + name,
-                "scenario",
-                paths,
-                _scenario_environment(name, environment),
-                cache,
-                force,
-                invalidated,
-            )
+        unit_id = "scenario:" + name
+        inputs, matched = impact(unit_id, paths)
+        # Privileged acceptance depends on mutable guest state that static
+        # fingerprints cannot certify. Never substitute a cached pass.
+        scenario_unit = _unit(
+            unit_id, "scenario", inputs, _scenario_environment(name, environment), cache, True, invalidated, matched
         )
+        if not force:
+            scenario_unit["reason"] = "privileged scenario requires live execution"
+        units.append(scenario_unit)
     unmatched = invalidated - {unit["id"] for unit in units}
     if unmatched:
         raise ValueError("Invalidation did not match the selected plan: " + ", ".join(sorted(unmatched)))
@@ -1722,6 +1812,8 @@ def run_tests(
         progress(f"Selection cache: {cache_status}")
         for unit in plan:
             progress(f"{'RUN' if unit['execute'] else 'REUSED'}: {unit['id']} ({unit['reason']})")
+            for rule in unit.get("impact_rules", ()):
+                progress(f"  impact policy: {rule['id']} ({rule['reason']})")
 
     scenario_units = {unit["id"].removeprefix("scenario:"): unit for unit in plan if unit["kind"] == "scenario"}
     executable_scenarios = {name for name, unit in scenario_units.items() if unit["execute"]}
