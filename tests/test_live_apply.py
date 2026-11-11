@@ -92,6 +92,28 @@ def test_missing_intent_refused_before_observation():
         apply_live_state({**CONFIG, "intent": None}, observe=lambda: pytest.fail("unexpected observation"))
 
 
+def test_fresh_assessment_includes_immutable_update_policy():
+    from nord_tools_internal.nordvpn_live_apply import _assess
+
+    decisions = assessment(action="configuration_changed")
+    update = {"in_place_updates_supported": False, "updates": [{"strategy": "generation_replacement"}]}
+    with (
+        patch("nord_tools_internal.nordvpn_live_apply._read", side_effect=[{}, {}, {}, {}]),
+        patch("nord_tools_internal.nordvpn_live_apply.validate_policy", return_value={"vpn_profiles": {}}) as policy,
+        patch("nord_tools_internal.nordvpn_live_apply.expand_allocation_profiles", return_value=({}, {})),
+        patch("nord_tools_internal.nordvpn_live_apply.validate_journal", return_value={}),
+        patch("nord_tools_internal.nordvpn_live_apply.preflight_ownership", return_value={}),
+        patch("nord_tools_internal.nordvpn_live_apply.derive_actual_state", return_value={}),
+        patch("nord_tools_internal.nordvpn_live_apply.reconcile_desired", return_value=decisions),
+        patch("nord_tools_internal.nordvpn_live_apply.classify_live_updates", return_value=update) as classify,
+    ):
+        result = _assess({**CONFIG, "graph": None}, lambda: {})
+    policy.assert_called_once()
+    classify.assert_called_once_with({"vpn_profiles": {}}, decisions["decisions"])
+    assert result["update_policy"] == update
+    assert result["eligible_for_create_only_apply"] is False
+
+
 @pytest.mark.parametrize(
     "extra",
     [
@@ -113,6 +135,7 @@ def test_ownership_uncertainty_refuses_create(extra):
             return_value={"operator_review_required": extra.get("operator_review_required", False)},
         ),
         patch("nord_tools_internal.nordvpn_live_apply.derive_actual_state", return_value={}),
+        patch("nord_tools_internal.nordvpn_live_apply.classify_live_updates", return_value={}),
         patch("nord_tools_internal.nordvpn_live_apply.reconcile_desired", return_value=assessment(**extra)),
     ):
         result = _assess({**CONFIG, "graph": None}, lambda: {})

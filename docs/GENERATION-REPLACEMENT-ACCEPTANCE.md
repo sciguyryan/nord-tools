@@ -23,7 +23,7 @@ sudo python tools/probe_live_tunnel_replacement.py --run-privileged --inject-rep
 
 Use the actual non-root UID and GID of the disposable test account. Privileged runs modify networking resources and must be performed only on an appropriate disposable Linux test host with the documented prerequisites. Inspect retained evidence and ownership before authorising cleanup after a failed run. A probe's suggested cleanup command is not an instruction to execute it blindly.
 
-The interruption option covers three specific process-death checkpoints. It does not inject death after every individual namespace, interface, route, firewall, resolver or lease mutation. The existing broader recovery and isolation probes remain separate evidence. Passing this matrix does not establish safe general in-place live updates, default-host routing protection, official client coexistence, or comprehensive real-application DNS leak prevention. Those requirements remain open in `TODO.md`.
+The interruption option covers three specific process-death checkpoints. It does not inject death after every individual namespace, interface, route, firewall, resolver or lease mutation. The existing broader recovery and isolation probes remain separate evidence. Passing this matrix does not establish general in-place mutation, which the E3 policy deliberately excludes. It also does not establish default-host routing protection, official client coexistence or comprehensive real-application DNS leak prevention; those separate boundaries retain their own acceptance status.
 
 ## Acceptance decision
 

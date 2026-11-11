@@ -13,6 +13,7 @@ from nord_tools_internal.nordvpn_allocation_profiles import expand_allocation_pr
 from nord_tools_internal.nordvpn_discovery import discover
 from nord_tools_internal.nordvpn_execution_lock import lifecycle_execution_lock
 from nord_tools_internal.nordvpn_lifecycle import validate_journal
+from nord_tools_internal.nordvpn_live_update_policy import classify_live_updates
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
 from nord_tools_internal.nordvpn_profiles import validate_policy
 from nord_tools_internal.nordvpn_registry import RegistryError
@@ -40,6 +41,7 @@ def _assess(config: dict, observe) -> dict:
     graph = _read(config["graph"]) if config["graph"] else None
     result = reconcile_desired(desired, actual, graph)
     decisions = result["decisions"]
+    update_policy = classify_live_updates(policy, decisions)
     # A create-only pass must not proceed while any other profile is in an
     # ambiguous or non-converged state. This is a whole-operation refusal.
     allowed = {"converged", "create_pending"}
@@ -55,6 +57,7 @@ def _assess(config: dict, observe) -> dict:
         "refusals": unsafe,
         "unclaimed": result.get("unclaimed", []),
         "unresolved_intents": result.get("unresolved_intents", []),
+        "update_policy": update_policy,
     }
 
 
@@ -75,7 +78,9 @@ def apply_live_state(config: object, *, execute: bool = False, observe=None, res
     if not execute:
         return assessment
     if not assessment["eligible_for_create_only_apply"]:
-        raise RegistryError("live apply refused: disputed, changed or retired resources require explicit handling")
+        raise RegistryError(
+            "live apply refused: in-place updates are unsupported; use the reported replacement, retirement or review authority"
+        )
     # An injected restoration executor is for deterministic offline testing.
     # The real executor rechecks every authority boundary under its own lock.
     executor = restore or restore_boot_state
