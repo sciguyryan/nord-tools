@@ -24,7 +24,6 @@ STAGES = (
         "probe_production_routing_acceptance.py",
         "--run-privileged",
     ),
-    ("real WireGuard DNS and resolver confinement", "probe_wireguard_dns_acceptance.py", "--run-privileged"),
     ("late-stage interrupted provisioning and rollback", "probe_later_recovery.py", "--run-privileged"),
     ("cooperating-process lock and substitution refusal", "probe_lifecycle_lock_concurrency.py", "--run"),
 )

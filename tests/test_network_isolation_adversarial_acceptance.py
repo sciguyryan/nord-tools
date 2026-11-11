@@ -12,6 +12,10 @@ sys.path.insert(0, str(ROOT / "tools"))
 import probe_network_isolation_adversarial_acceptance as acceptance  # noqa: E402
 
 
+def test_matrix_does_not_repeat_dns_stage_nested_in_production_routing():
+    assert "probe_wireguard_dns_acceptance.py" not in [filename for _, filename, _ in acceptance.STAGES]
+
+
 def test_dry_run_has_no_observation_or_mutation(capsys):
     with (
         patch.object(acceptance, "observe") as observer,

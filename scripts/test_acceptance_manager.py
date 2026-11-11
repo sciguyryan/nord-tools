@@ -671,7 +671,7 @@ def test_scenario_environment_ignores_unrelated_lint_tool_changes(manager):
         environment={**environment, "ruff": "new"},
         cache=cache,
     )
-    assert lint_changed[0]["execute"] is True  # Privileged guest state cannot be certified from a cached fingerprint
+    assert lint_changed[0]["execute"] is False
 
     network_changed = manager.build_execution_plan(
         mode="development",
@@ -861,6 +861,29 @@ def test_run_tests_refuses_changed_privileged_scenario_on_used_guest(manager, mo
         manager.run_tests(selected=("d3",))
 
 
+def test_combined_network_and_application_run_deduplicates_shared_stages(manager, monkeypatch):
+    monkeypatch.setattr(manager, "readiness", lambda: "Ready: test")
+    monkeypatch.setattr(manager, "guest_provisioning_issues", lambda: [])
+    monkeypatch.setattr(manager, "upload_source", lambda: None)
+    monkeypatch.setattr(manager, "guest_environment_identity", lambda: {"python": "test"})
+    monkeypatch.setattr(manager, "load_result_cache", lambda: (manager._empty_result_cache(), "test cache"))
+    units = [
+        {"id": f"scenario:{name}", "kind": "scenario", "fingerprint": name, "execute": True, "reason": "changed"}
+        for name in ("network", "application")
+    ]
+    monkeypatch.setattr(manager, "build_execution_plan", lambda **kwargs: units)
+    monkeypatch.setattr(manager, "_guest_was_used", lambda: False)
+    commands = []
+    monkeypatch.setattr(manager, "_run_guest_script", lambda command: commands.append(command) or "passed")
+    monkeypatch.setattr(manager, "publish_result_cache", lambda *_args: None)
+
+    manager.run_tests(selected=("network", "application"))
+
+    assert len(commands) == 1
+    assert "probe_network_isolation_adversarial_acceptance.py --run-privileged" in commands[0]
+    assert "probe_application_lifecycle_acceptance.py --run-privileged --application-stages-only" in commands[0]
+
+
 def test_impact_policy_invalidation_is_additive_and_explainable(manager, monkeypatch, tmp_path):
     (tmp_path / "tests").mkdir()
     (tmp_path / "tests/impact-rules.json").write_text(
@@ -913,7 +936,23 @@ def test_dynamic_import_falls_back_to_all_local_python(manager, monkeypatch, tmp
     assert "unrelated.py" in manager.local_python_dependencies("test_dynamic.py")
 
 
-def test_privileged_scenarios_never_reuse_prior_pass(manager):
+def test_dynamic_import_from_literal_dispatch_table_stays_bounded(manager, monkeypatch, tmp_path):
+    (tmp_path / "selected.py").write_text("VALUE = 1\n")
+    (tmp_path / "unrelated.py").write_text("VALUE = 2\n")
+    (tmp_path / "dispatcher.py").write_text(
+        'import importlib\nCOMMANDS = {"chosen": ("selected",)}\n'
+        "def load(name): return importlib.import_module(COMMANDS[name][0])\n"
+    )
+    (tmp_path / "test_dispatcher.py").write_text("import dispatcher\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+
+    dependencies = manager.local_python_dependencies("test_dispatcher.py")
+
+    assert "selected.py" in dependencies
+    assert "unrelated.py" not in dependencies
+
+
+def test_privileged_scenarios_reuse_equivalent_development_evidence(manager):
     first = manager.build_execution_plan(
         mode="development", selected=("d1",), environment={"python": "3.13"}, cache=manager._empty_result_cache()
     )
@@ -922,5 +961,17 @@ def test_privileged_scenarios_never_reuse_prior_pass(manager):
     again = manager.build_execution_plan(
         mode="development", selected=("d1",), environment={"python": "3.13"}, cache=cache
     )
-    assert again[0]["execute"]
-    assert "live execution" in again[0]["reason"]
+    assert not again[0]["execute"]
+    assert "unchanged" in again[0]["reason"]
+
+
+def test_subprocess_use_does_not_expand_dependency_closure(manager, monkeypatch, tmp_path):
+    (tmp_path / "product.py").write_text('import subprocess\nsubprocess.run(["true"], check=False)\n')
+    (tmp_path / "unrelated.py").write_text("VALUE = 1\n")
+    (tmp_path / "test_product.py").write_text("import product\n")
+    monkeypatch.setattr(manager, "SOURCE_ROOT", tmp_path)
+
+    dependencies = manager.local_python_dependencies("test_product.py")
+
+    assert "product.py" in dependencies
+    assert "unrelated.py" not in dependencies

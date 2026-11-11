@@ -55,6 +55,20 @@ def test_complete_matrix_passes_and_preserves_host():
         assert ("--gid" in command) is needs_identity
 
 
+def test_combined_manager_run_executes_only_application_specific_stages(capsys):
+    with (
+        patch.object(probe, "observe", side_effect=["before", "after"]),
+        patch.object(probe, "verify"),
+        patch.object(probe.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run,
+    ):
+        assert probe.run_acceptance(1000, 1000, application_stages_only=True)
+
+    executed = [call.args[0][1].rsplit("/", 1)[-1] for call in run.call_args_list]
+    assert not probe.SHARED_STAGES.intersection(executed)
+    assert executed == [filename for _, filename, _ in probe.STAGES if filename not in probe.SHARED_STAGES]
+    assert "PASS: application-specific acceptance" in capsys.readouterr().out
+
+
 def test_failed_stage_stops_and_still_verifies_host():
     with (
         patch.object(probe, "observe", side_effect=["before", "after"]),

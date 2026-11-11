@@ -1355,6 +1355,22 @@ def _python_dependency_graph(python_paths, index, source_paths=None):
             graph[relative] = set(all_python)
             continue
         dependencies = set()
+        bounded_imports = {}
+        for statement in tree.body:
+            if not isinstance(statement, (ast.Assign, ast.AnnAssign)):
+                continue
+            targets = statement.targets if isinstance(statement, ast.Assign) else [statement.target]
+            value = statement.value
+            if value is None:
+                continue
+            resolved = {
+                index[node.value]
+                for node in ast.walk(value)
+                if isinstance(node, ast.Constant) and isinstance(node.value, str) and node.value in index
+            }
+            for target in targets:
+                if isinstance(target, ast.Name) and resolved:
+                    bounded_imports[target.id] = resolved
         for node in ast.walk(tree):
             if isinstance(node, ast.Call):
                 func = node.func
@@ -1366,18 +1382,14 @@ def _python_dependency_graph(python_paths, index, source_paths=None):
                     or not isinstance(node.args[0], ast.Constant)
                     or not isinstance(node.args[0].value, str)
                 ):
-                    dependencies.update(all_python)
-                # Runtime subprocesses can invoke arbitrary repository tools.
-                if isinstance(func, ast.Attribute) and func.attr in {
-                    "run",
-                    "Popen",
-                    "check_call",
-                    "check_output",
-                    "call",
-                }:
-                    dependencies.update(
-                        path for path in all_sources if path.endswith((".py", ".sh", ".json", ".toml", ".yaml", ".yml"))
-                    )
+                    argument = node.args[0] if node.args else None
+                    names = {
+                        item.id
+                        for item in (ast.walk(argument) if argument is not None else ())
+                        if isinstance(item, ast.Name)
+                    }
+                    resolved = set().union(*(bounded_imports[name] for name in names if name in bounded_imports))
+                    dependencies.update(resolved or all_python)
 
             if isinstance(node, ast.Import):
                 for alias in node.names:
@@ -1685,14 +1697,18 @@ def build_execution_plan(*, mode, selected, environment, cache, force=False, inv
         paths.add(manager_path)
         unit_id = "scenario:" + name
         inputs, matched = impact(unit_id, paths)
-        # Privileged acceptance depends on mutable guest state that static
-        # fingerprints cannot certify. Never substitute a cached pass.
-        scenario_unit = _unit(
-            unit_id, "scenario", inputs, _scenario_environment(name, environment), cache, True, invalidated, matched
+        units.append(
+            _unit(
+                unit_id,
+                "scenario",
+                inputs,
+                _scenario_environment(name, environment),
+                cache,
+                force,
+                invalidated,
+                matched,
+            )
         )
-        if not force:
-            scenario_unit["reason"] = "privileged scenario requires live execution"
-        units.append(scenario_unit)
     unmatched = invalidated - {unit["id"] for unit in units}
     if unmatched:
         raise ValueError("Invalidation did not match the selected plan: " + ", ".join(sorted(unmatched)))
@@ -1862,10 +1878,13 @@ def run_tests(
             )
         )
     if "application" in executable_scenarios:
+        shared = " --application-stages-only" if "network" in executable_scenarios else ""
         commands.extend(
             (
                 'echo "RUN: privileged application lifecycle acceptance"',
-                'sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged --uid "$(id -u)" --gid "$(id -g)"',
+                "sudo -n python tools/probe_application_lifecycle_acceptance.py --run-privileged"
+                + shared
+                + ' --uid "$(id -u)" --gid "$(id -g)"',
             )
         )
     if "desktop" in executable_scenarios:

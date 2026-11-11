@@ -32,10 +32,21 @@ STAGES = (
     ("interrupted provisioning and verified recovery", "probe_later_recovery.py", False),
     ("cooperating-process lifecycle lock refusal", "probe_lifecycle_lock_concurrency.py", False),
 )
+SHARED_STAGES = {
+    "probe_provisioning_integration.py",
+    "probe_later_recovery.py",
+    "probe_lifecycle_lock_concurrency.py",
+}
 
 
-def run_acceptance(uid: int, gid: int, *, python: str = sys.executable) -> bool:
-    """Run every required stage, refusing success on any failure or host drift."""
+def run_acceptance(
+    uid: int,
+    gid: int,
+    *,
+    python: str = sys.executable,
+    application_stages_only: bool = False,
+) -> bool:
+    """Run the requested stage set, refusing success on any failure or host drift."""
     try:
         before = observe()
     except (OSError, RuntimeError, ValueError) as exc:
@@ -44,6 +55,8 @@ def run_acceptance(uid: int, gid: int, *, python: str = sys.executable) -> bool:
     failure: str | None = None
     try:
         for label, filename, needs_identity in STAGES:
+            if application_stages_only and filename in SHARED_STAGES:
+                continue
             arguments = [python, str(ROOT / "tools" / filename)]
             arguments.append("--run" if filename == "probe_lifecycle_lock_concurrency.py" else "--run-privileged")
             if needs_identity:
@@ -67,19 +80,28 @@ def run_acceptance(uid: int, gid: int, *, python: str = sys.executable) -> bool:
     if failure:
         print(f"FAIL: {failure}; later stages not attempted", file=sys.stderr, flush=True)
         return False
-    print("PASS: application routing and lifecycle acceptance within documented boundaries", flush=True)
+    scope = "application-specific" if application_stages_only else "application routing and lifecycle"
+    print(f"PASS: {scope} acceptance within documented boundaries", flush=True)
     return True
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-privileged", action="store_true")
+    parser.add_argument(
+        "--application-stages-only",
+        action="store_true",
+        help="run only the application-specific subset for composition by the acceptance manager",
+    )
     parser.add_argument("--uid", type=int, help="UID of an existing non-root test account")
     parser.add_argument("--gid", type=int, help="GID of an existing non-root test account")
     args = parser.parse_args(argv)
     if not args.run_privileged:
-        print("DRY RUN: application routing and lifecycle acceptance")
+        scope = "application-specific" if args.application_stages_only else "application routing and lifecycle"
+        print(f"DRY RUN: {scope} acceptance")
         for label, filename, _ in STAGES:
+            if args.application_stages_only and filename in SHARED_STAGES:
+                continue
             print(f"  {label}: {filename}")
         return 0
     if (
@@ -91,7 +113,7 @@ def main(argv: list[str] | None = None) -> int:
         or args.gid <= 0
     ):
         parser.error("Linux root and explicit non-root --uid/--gid are required")
-    return 0 if run_acceptance(args.uid, args.gid) else 1
+    return 0 if run_acceptance(args.uid, args.gid, application_stages_only=args.application_stages_only) else 1
 
 
 if __name__ == "__main__":

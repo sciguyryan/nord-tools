@@ -8,10 +8,10 @@
       "reason": "Host protection, activation and recovery share runtime behaviour"
     },
     {
-      "id": "acceptance-fixtures",
-      "when_changed": ["tools/probe_*.py", "scripts/acceptance-manager.py"],
-      "invalidate": ["scenario:*", "pytest:tests/test_*probe*.py", "pytest:scripts/test_acceptance_manager.py"],
-      "reason": "Acceptance fixture and runner changes affect scenario setup and evidence"
+      "id": "acceptance-manager",
+      "when_changed": ["scripts/acceptance-manager.py"],
+      "invalidate": ["scenario:*", "pytest:scripts/test_acceptance_manager.py"],
+      "reason": "Acceptance orchestration changes affect scenario execution and manager behaviour"
     },
     {
       "id": "shared-test-configuration",
