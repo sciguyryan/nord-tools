@@ -122,6 +122,7 @@ def main(argv: list[str] | None = None) -> int:
         "cleanup-plan",
         "lifecycle",
         "ownership-preflight",
+        "operational-preflight",
         "reconcile-live",
         "apply-live",
         "replacement-readiness",
@@ -173,6 +174,14 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument(
                 "--intents", help="Optional operation intent store JSON (unresolved intents block verification)"
             )
+        if name == "operational-preflight":
+            command.add_argument(
+                "--mode",
+                required=True,
+                choices=("namespace", "host-default"),
+                help="Supported production operating mode to inspect",
+            )
+            command.add_argument("--host-plan", help="Host protection plan JSON required by host-default mode")
         if name == "apply-live":
             command.add_argument("--config", required=True, help="Pinned persistent startup configuration JSON")
             command.add_argument(
@@ -463,6 +472,23 @@ def main(argv: list[str] | None = None) -> int:
             bindings = read_json(args.bindings)
             intents = read_json(args.intents) if args.intents else None
             result = preflight_ownership(journal, bindings, discover(), intents)
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "operational-preflight":
+            from nord_tools_internal.nordvpn_operational_preflight import verify_operational_preflight
+
+            if args.mode == "host-default":
+                if not args.host_plan:
+                    raise ManagementError("host-default operational preflight requires --host-plan")
+                from nord_tools_internal.nordvpn_host_protection import HostProtectionPlan
+
+                host_plan = HostProtectionPlan.from_mapping(read_json(args.host_plan))
+            else:
+                if args.host_plan:
+                    raise ManagementError("--host-plan is valid only for host-default operational preflight")
+                host_plan = None
+            result = verify_operational_preflight(args.mode, host_plan=host_plan)
+            result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
             return 0
         if args.action == "apply-live":

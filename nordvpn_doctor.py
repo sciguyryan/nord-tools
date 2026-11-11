@@ -18,7 +18,7 @@ TOOLS = (
     ("nordvpn", "NordVPN CLI connection support", False),
     ("ip", "Linux namespace and route management", False),
     ("nft", "Linux nftables isolation", False),
-    ("wg", "Future WireGuard tunnel management", False),
+    ("wg", "WireGuard tunnel management and readback", False),
     ("systemctl", "Systemd startup unit installation and boot restoration", False),
 )
 

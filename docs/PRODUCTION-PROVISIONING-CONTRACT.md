@@ -180,6 +180,8 @@ Production startup restoration performs the [supported network platform](SUPPORT
 
 An unrecognised version, command failure, timeout, malformed output or unsafe resolver root aborts restoration without network mutation. The preflight does not infer compatibility from a higher version number. Extending the profile requires the exact candidate to pass `probe_platform_compatibility.py`, both privileged matrices and the local quality gates before the constants and support table are updated.
 
+The [operational preflight](OPERATIONAL-PREFLIGHT.md) combines that platform evidence with the required root identity and Python runtime. Cleanup and recovery use the same namespace-mode gate before executing. Host-default lifecycle mutation adds the D4 plan and live inventory checks. A successful report remains read-only evidence and never replaces the ownership checks performed at each mutation boundary.
+
 ### DNS confinement acceptance
 
 A pinned `dns_servers` list causes authorised provisioning to install an exclusive namespace-local resolver only after the namespace firewall, dual-stack default routes and WireGuard peer have been configured. Before activation, DNS destination-specific routes, live peer AllowedIPs and exact resolver contents are checked. A DNS address outside the peer's AllowedIPs is rejected even when the kernel route points at WireGuard. Cleanup of namespace resolver files remains an explicit `--resolvers` operation, guarded by the existing namespace ownership checks. Existing deployments without a DNS list retain their previous behaviour.

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
-import os
 from pathlib import Path
 from typing import Callable
 
 from nord_tools_internal.nordvpn_host_protection import HostProtectionPlan
+from nord_tools_internal.nordvpn_operational_preflight import (
+    verify_execution_runtime,
+    verify_operational_preflight,
+)
 from nord_tools_internal.nordvpn_host_store import (
     empty_host_store,
     locked_host_store,
@@ -186,9 +189,9 @@ def prepare_host_boot_barrier(
     """
     if not isinstance(plan, HostProtectionPlan):
         raise RegistryError("validated host protection plan required")
+    if kernel is None:
+        verify_operational_preflight("host-default", host_plan=plan, include_host_inventory=False)
     helpers = kernel or _kernel(plan)
-    if kernel is None and os.geteuid() != 0:
-        raise HostProtectionError("early host deny-barrier installation requires root")
     identity = boot_id or read_boot_id()
     target = Path(store_path).absolute()
     with locked_host_store(target):
@@ -271,14 +274,24 @@ def activate_host_protection(
         raise RegistryError("validated host protection plan required")
     if type(private_key_fd) is not int or private_key_fd < 0:
         raise RegistryError("host protection requires a private-key descriptor")
-    helpers = kernel or _kernel(plan)
-    if kernel is None and os.geteuid() != 0:
-        raise HostProtectionError("host protection activation requires root")
-    identity = boot_id or read_boot_id()
     target = Path(store_path).absolute()
+    full_admission_complete = False
+    if kernel is None:
+        verify_execution_runtime("host-default")
+        if not target.exists():
+            verify_operational_preflight("host-default", host_plan=plan, include_host_inventory=False)
+            full_admission_complete = True
+    identity = boot_id or read_boot_id()
     with locked_host_store(target):
         document = _load_or_empty(target)
         record = document["record"]
+        barrier = _step(document, "barrier")
+        if kernel is None and not full_admission_complete and not (barrier and barrier["state"] == "observed"):
+            # A new lifecycle receives full platform admission. Once its deny
+            # barrier is observed, retries must stay bounded inside that
+            # protected interval and rely on the locked inventory below.
+            verify_operational_preflight("host-default", host_plan=plan, include_host_inventory=False)
+        helpers = kernel or _kernel(plan)
         if record is None:
             inventory = _validate_inventory(helpers.inventory(), plan, allow_owned=False)
             if inventory["boot_id"] != identity:
@@ -423,9 +436,12 @@ def deactivate_host_protection(
     """Retire exact owned resources; barrier removal needs explicit authority."""
     if expose_host_egress is not True:
         raise HostProtectionError("deactivation requires explicit authority to expose ordinary host egress")
+    if kernel is None:
+        # Full platform admission already preceded creation of this owned host
+        # lifecycle. Keep retirement bounded inside the deny-barrier interval;
+        # the locked inventory below revalidates every operation-specific fact.
+        verify_execution_runtime("host-default")
     helpers = kernel or _kernel(plan)
-    if kernel is None and os.geteuid() != 0:
-        raise HostProtectionError("host protection deactivation requires root")
     target = Path(store_path).absolute()
     with locked_host_store(target):
         document = read_host_store(target)
@@ -506,6 +522,8 @@ def recover_host_protection(
     execute: bool = False,
 ) -> dict:
     """Classify interrupted steps, retaining the barrier and never exposing traffic."""
+    if execute and kernel is None:
+        verify_execution_runtime("host-default")
     helpers = kernel or _kernel(plan)
     target = Path(store_path).absolute()
     with locked_host_store(target):

@@ -39,6 +39,7 @@ from nord_tools_internal.nordvpn_lifecycle import record_transition, validate_jo
 from nord_tools_internal.nordvpn_drift_recovery_policy import classify_drift_recovery
 from nord_tools_internal.nordvpn_lifecycle_store import update_journal
 from nord_tools_internal.nordvpn_operation_store import update_intent, update_recovered_intent
+from nord_tools_internal.nordvpn_operational_preflight import verify_operational_preflight
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
@@ -103,6 +104,7 @@ def plan_recovery(
     kernel: CleanupKernel | None = None,
     recorded_at: str | None = None,
     already_locked: bool = False,
+    operational_preflight_complete: bool = False,
 ) -> dict:
     """Classify the uncertain evidence and, when executed, converge what is safe.
 
@@ -113,6 +115,8 @@ def plan_recovery(
     """
     if intent_path is None:
         raise RegistryError("recovery requires the operation intent store; recovery exists for exactly that evidence")
+    if execute and kernel is None and not operational_preflight_complete:
+        verify_operational_preflight("namespace")
     helpers = kernel or _cleanup_kernel()
     logged_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     with _execution_lock(journal_path) if not already_locked else nullcontext():

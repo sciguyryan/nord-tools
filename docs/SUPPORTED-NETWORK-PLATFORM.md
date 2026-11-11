@@ -30,6 +30,8 @@ Patch releases within the stated Arch kernel profile are admitted only when the 
 
 Production startup restoration runs this check before it creates the journal, binding, intent or run-record stores. Invalid JSON, unexpected document shapes, unrecognised versions, missing commands, timeouts and unsafe resolver storage all cause refusal without network changes. The later production profile checks still validate the exact nftables chains and rules, dual-stack routes, WireGuard peer fields and resolver file. The preflight does not replace those resource-specific checks.
 
+The combined [operational preflight](OPERATIONAL-PREFLIGHT.md) adds the required root execution identity and Python runtime. Namespace restoration, cleanup and recovery invoke it before executing against durable state. Host-default mode composes the same platform checks with the static-egress inventory below.
+
 The namespace resolver uses `/etc/netns/<namespace>/resolv.conf`; it does not depend on a particular host `systemd-resolved` version. Host-domain resolver integration remains a separate Phase D requirement.
 
 ## Expanding support

@@ -117,7 +117,7 @@ def test_real_restoration_refuses_platform_before_creating_stores(tmp_path):
     }
     with (
         patch(
-            "nord_tools_internal.nordvpn_restore_executor.verify_supported_network_platform",
+            "nord_tools_internal.nordvpn_restore_executor.verify_operational_preflight",
             side_effect=PlatformCompatibilityError("unsupported platform"),
         ) as preflight,
         patch("nord_tools_internal.nordvpn_restore_executor._real_kernel") as kernel,
@@ -125,7 +125,7 @@ def test_real_restoration_refuses_platform_before_creating_stores(tmp_path):
     ):
         restore_boot_state(config)
 
-    preflight.assert_called_once_with()
+    preflight.assert_called_once_with("namespace")
     kernel.assert_not_called()
     assert list(tmp_path.iterdir()) == []
 

@@ -133,6 +133,18 @@ python nord_tools.py doctor --json
 python nord_tools.py doctor --strict
 ```
 
+`doctor` is a broad feature inventory. Before a production network operation,
+run the stricter read-only preflight as root:
+
+```bash
+sudo python nord_tools.py manage operational-preflight --mode namespace
+sudo python nord_tools.py manage operational-preflight --mode host-default --host-plan /etc/nord-tools/host-protection.json
+```
+
+It verifies the accepted dependency, platform and privilege contract without
+creating state or changing networking. Real lifecycle executors repeat the same
+mode-specific checks before mutation. See [Operational preflight](docs/OPERATIONAL-PREFLIGHT.md).
+
 The check reports the platform and Python version, and whether `ping`, `nordvpn`, `ip`, `nft`, `wg` and `systemctl` are available. Only the platform and Python version are universal requirements. Other executables are feature-specific: `ping` is needed for ICMP benchmarks, `nordvpn` for CLI connection support, `ip`/`nft` for the privileged namespace and underlay work, and `systemctl` for installing and verifying the systemd restoration unit. The `wg` check still describes future tunnel paths. `--strict` fails if any listed tool is missing. This is a local executable-availability check, not a guarantee of kernel support, privileges, VPN credentials or working network connectivity.
 
 ## Quick start

@@ -40,6 +40,7 @@ from nord_tools_internal.nordvpn_lifecycle_store import update_journal
 from nord_tools_internal.nordvpn_startup import initialise_startup_runs, validate_startup_config
 from nord_tools_internal.nordvpn_namespace_ownership import OwnedNamespace, OwnershipError
 from nord_tools_internal.nordvpn_operation_store import initialise_intents, read_intents, update_intent
+from nord_tools_internal.nordvpn_operational_preflight import verify_operational_preflight
 from nord_tools_internal.nordvpn_ownership_verify import NETNS_MOUNT_DIR, initialise_bindings, preflight_ownership
 from nord_tools_internal.nordvpn_provision_execution import ProvisioningUncertainError
 from nord_tools_internal.nordvpn_registry import RegistryError
@@ -433,6 +434,8 @@ def plan_cleanup(
         raise RegistryError(
             "executing cleanup requires the operation intent store; unresolved prior attempts must stay visible"
         )
+    if execute and kernel is None:
+        verify_operational_preflight("namespace")
     helpers = kernel or _real_kernel()
     restart_at = recorded_at or datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
     execution_lock = nullcontext() if already_locked else _execution_lock(journal_path)
