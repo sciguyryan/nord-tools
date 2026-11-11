@@ -1,10 +1,13 @@
 """Reference-store lock coverage for cleanup and transition coordination."""
 
 from concurrent.futures import ThreadPoolExecutor
+import fcntl
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import threading
 import unittest
+from unittest.mock import patch
 
 from nord_tools_internal.nordvpn_consumer_reference_store import (
     ConsumerReferenceError,
@@ -54,3 +57,77 @@ class ReferenceLockTests(unittest.TestCase):
             (Path(directory) / "references.json.lock").symlink_to(Path(directory) / "target")
             with self.assertRaises(ConsumerReferenceError), locked_consumer_references(path):
                 self.fail("symlink lock was accepted")
+
+    def test_refuses_writable_parent_before_creating_lock(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            root.mkdir(mode=0o700)
+            root.chmod(0o770)
+            try:
+                path = root / "references.json"
+                with (
+                    self.assertRaisesRegex(ConsumerReferenceError, "unsafe reference transition directory"),
+                    locked_consumer_references(path),
+                ):
+                    self.fail("unsafe parent was accepted")
+                self.assertFalse((root / "references.json.lock").exists())
+            finally:
+                root.chmod(0o700)
+
+    def test_refuses_hardlinked_lock(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "references.json"
+            lock = Path(directory) / "references.json.lock"
+            lock.write_text("")
+            lock.chmod(0o600)
+            os.link(lock, Path(directory) / "other.lock")
+            with (
+                self.assertRaisesRegex(ConsumerReferenceError, "unsafe reference transition lock"),
+                locked_consumer_references(path),
+            ):
+                self.fail("hardlinked lock was accepted")
+
+    def test_refuses_lock_replacement_after_acquisition(self):
+        with TemporaryDirectory() as directory:
+            path = Path(directory) / "references.json"
+            lock = Path(directory) / "references.json.lock"
+            original_flock = fcntl.flock
+
+            def replace_lock(descriptor, operation):
+                original_flock(descriptor, operation)
+                lock.rename(Path(directory) / "old.lock")
+                lock.write_text("")
+                lock.chmod(0o600)
+
+            with (
+                patch(
+                    "nord_tools_internal.nordvpn_consumer_reference_store.fcntl.flock",
+                    side_effect=replace_lock,
+                ),
+                self.assertRaisesRegex(ConsumerReferenceError, "reference transition lock was replaced"),
+                locked_consumer_references(path),
+            ):
+                self.fail("replacement lock was accepted")
+
+    def test_refuses_parent_replacement_after_acquisition(self):
+        with TemporaryDirectory() as directory:
+            root = Path(directory) / "leases"
+            root.mkdir(mode=0o700)
+            path = root / "references.json"
+            moved = Path(directory) / "old-leases"
+            original_flock = fcntl.flock
+
+            def replace_parent(descriptor, operation):
+                original_flock(descriptor, operation)
+                root.rename(moved)
+                root.mkdir(mode=0o700)
+
+            with (
+                patch(
+                    "nord_tools_internal.nordvpn_consumer_reference_store.fcntl.flock",
+                    side_effect=replace_parent,
+                ),
+                self.assertRaisesRegex(ConsumerReferenceError, "reference transition directory was replaced"),
+                locked_consumer_references(path),
+            ):
+                self.fail("replacement directory was accepted")

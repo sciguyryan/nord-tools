@@ -693,3 +693,20 @@ class PersistedConsumerVetoTests(CleanupTestBase):
                 execute=True,
             )
         self.assertEqual(self.harness.deleted, [])
+
+    def test_declared_references_and_runtime_leases_cannot_share_one_lock(self):
+        consumer_policy = {
+            "version": 1,
+            "defaults": {"vpn": "alpha"},
+            "vpn_profiles": {"alpha": dict(CONFIG)},
+            "applications": {"browser": {"executable": "/usr/bin/browser"}},
+        }
+        shared = self.root / "consumers.json"
+        with self.assertRaisesRegex(RegistryError, "distinct stores and locks"):
+            self.cleanup(
+                selected_profiles=("alpha",),
+                consumer_policy=consumer_policy,
+                released_consumers=("browser",),
+                consumer_references_path=shared,
+                runtime_consumers_path=shared,
+            )

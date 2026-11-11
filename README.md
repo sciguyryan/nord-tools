@@ -859,6 +859,8 @@ The read-only authority-directory inspector now traverses path components using 
 
 Restoration, cleanup and recovery share a stable journal-specific execution lock. The lock is opened relative to the journal directory and checked for safe ownership, permissions and identity after acquisition. This prevents cooperating executors from interleaving their lifecycle operations; it does not authorise kernel mutations, make separate state stores atomic, or protect against a hostile actor with directory replacement privileges. The remaining authority and adversarial tests are tracked in TODO.md.
 
+Generation selection, registered launch and consumer-aware retirement acquire the consumer lock after the lifecycle lock. That lock now applies the same stable-parent and stable-inode checks. Startup evidence roles must use distinct canonical paths, and declared references cannot share a lock with runtime leases. The complete production-path review is recorded in [Cooperating-process race audit](docs/COOPERATING-PROCESS-RACE-AUDIT.md).
+
 ### kernel mutation authority namespace descriptor lifetime
 
 The production cleanup adapter now releases its opened namespace descriptor on both successful retirement and ownership-verification refusal. This prevents a failed retirement from retaining a privileged reference to a namespace. It does not solve the pathname replacement race between verification and the kernel deletion command, or establish independent authority over host interfaces. Those issues remain blockers for completion of 8.1.4 and adversarial acceptance.

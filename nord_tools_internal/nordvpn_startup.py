@@ -44,6 +44,8 @@ SERVICE_NAME = "nord-tools-restore"
 def _validate_path(value: object, field: str) -> str:
     if not isinstance(value, str) or not _PATH.fullmatch(value):
         raise RegistryError(f"{field} must be an absolute path using only /, letters, digits, ., _ and -: {value!r}")
+    if os.path.normpath(value) != value:
+        raise RegistryError(f"{field} must be a canonical absolute path without aliases: {value!r}")
     return value
 
 
@@ -208,6 +210,25 @@ def validate_startup_config(document: object) -> dict:
     if any(not isinstance(name, str) or not name or len(name) > 256 for name in handovers):
         raise RegistryError("startup handover keys must be non-empty allocation identities")
     handovers = {name: _validate_path(value, f"handover for {name}") for name, value in handovers.items()}
+    locations = {
+        **{f"state:{name}": value for name, value in paths.items()},
+        **{f"credential:{name}": value for name, value in credentials.items()},
+        **{f"handover:{name}": value for name, value in handovers.items()},
+    }
+    if provider is not None:
+        locations.update(
+            {f"provider:{name}": value for name, value in provider.items() if name != "max_report_age_seconds"}
+        )
+    by_path: dict[str, list[str]] = {}
+    for role, location in locations.items():
+        by_path.setdefault(location, []).append(role)
+    aliases = [
+        roles
+        for roles in by_path.values()
+        if len(roles) > 1 and not all(role.startswith("credential:") for role in roles)
+    ]
+    if aliases:
+        raise RegistryError("startup configuration paths must be distinct: " + ", ".join(sorted(aliases[0])))
     # Credential entries may outnumber plans (for example after retiring one);
     # a plan without its credential is refused when restoration begins.
     result = {

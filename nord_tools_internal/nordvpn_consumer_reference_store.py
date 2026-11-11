@@ -129,24 +129,48 @@ def locked_consumer_references(path: str | Path):
     cleanup executor has finished. Otherwise an acquisition can race between
     reference inspection and destructive kernel work.
     """
-    target = Path(path)
-    lock_path = target.with_name(target.name + ".lock")
+    target = Path(path).absolute()
+    for component in (target, *target.parents):
+        if component.is_symlink():
+            raise ConsumerReferenceError("refusing symlinked reference transition path")
+    parent_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
     try:
-        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW, 0o600)
+        parent_fd = os.open(target.parent, parent_flags)
     except OSError as exc:
-        raise ConsumerReferenceError(f"cannot open reference transition lock: {exc}") from exc
+        raise ConsumerReferenceError(f"cannot open reference transition directory: {exc}") from exc
     try:
-        metadata = os.fstat(descriptor)
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_mode & 0o077 or metadata.st_nlink != 1:
-            raise ConsumerReferenceError("unsafe reference transition lock")
-        fcntl.flock(descriptor, fcntl.LOCK_EX)
-        # Refuse a lock-file replacement while waiting for an existing writer.
-        current = os.stat(lock_path, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
-            raise ConsumerReferenceError("reference transition lock was replaced")
-        yield
+        parent = os.fstat(parent_fd)
+        if not stat.S_ISDIR(parent.st_mode) or parent.st_uid != os.geteuid() or parent.st_mode & 0o022:
+            raise ConsumerReferenceError("unsafe reference transition directory")
+        lock_name = target.name + ".lock"
+        flags = os.O_CREAT | os.O_RDWR | os.O_CLOEXEC | os.O_NOFOLLOW
+        try:
+            descriptor = os.open(lock_name, flags, 0o600, dir_fd=parent_fd)
+        except OSError as exc:
+            raise ConsumerReferenceError(f"cannot open reference transition lock: {exc}") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            if (
+                not stat.S_ISREG(metadata.st_mode)
+                or metadata.st_mode & 0o077
+                or metadata.st_nlink != 1
+                or metadata.st_uid != os.geteuid()
+            ):
+                raise ConsumerReferenceError("unsafe reference transition lock")
+            fcntl.flock(descriptor, fcntl.LOCK_EX)
+            # Recheck both identities after waiting. A cooperating contender
+            # must never continue in a replacement directory or lock domain.
+            current = os.stat(lock_name, dir_fd=parent_fd, follow_symlinks=False)
+            live_parent = os.stat(target.parent, follow_symlinks=False)
+            if (current.st_dev, current.st_ino) != (metadata.st_dev, metadata.st_ino):
+                raise ConsumerReferenceError("reference transition lock was replaced")
+            if (live_parent.st_dev, live_parent.st_ino) != (parent.st_dev, parent.st_ino):
+                raise ConsumerReferenceError("reference transition directory was replaced")
+            yield
+        finally:
+            os.close(descriptor)
     finally:
-        os.close(descriptor)
+        os.close(parent_fd)
 
 
 def transition_consumer_reference(

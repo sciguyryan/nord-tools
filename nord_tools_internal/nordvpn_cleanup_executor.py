@@ -400,6 +400,12 @@ def plan_cleanup(
         raise RegistryError("released consumers require a consumer policy")
     if consumer_policy is not None and released_consumers is None and runtime_consumers_path is None:
         raise RegistryError("consumer policy and released consumers must be supplied together")
+    if (
+        consumer_references_path is not None
+        and runtime_consumers_path is not None
+        and Path(consumer_references_path).absolute() == Path(runtime_consumers_path).absolute()
+    ):
+        raise RegistryError("declared consumer references and runtime leases require distinct stores and locks")
     if consumer_policy is not None and released_consumers is not None:
         if selected_profiles is None:
             raise RegistryError("consumer-aware retirement requires explicit selected profiles")

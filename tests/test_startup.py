@@ -130,6 +130,43 @@ class UnitRenderingTests(unittest.TestCase):
         spaces["policy"] = str(self.root / "policy two.json")
         with self.assertRaises(RegistryError):
             validate_startup_config(spaces)
+        aliased = config(self.root)
+        aliased["journal"] = str(self.root / "state" / ".." / "lifecycle.json")
+        with self.assertRaisesRegex(RegistryError, "canonical absolute path"):
+            validate_startup_config(aliased)
+
+    def test_state_provider_credential_and_handover_paths_must_be_distinct(self):
+        for first, second in (
+            ("journal", "bindings"),
+            ("journal", "credential:a"),
+            ("handover:a", "handover:b"),
+            ("provider:catalogue", "provider:benchmark_report"),
+        ):
+            with self.subTest(first=first, second=second):
+                cfg = config(self.root)
+                shared = str(self.root / "shared.json")
+                if first in cfg and not second.startswith("credential"):
+                    cfg[first] = shared
+                    cfg[second] = shared
+                elif second.startswith("credential"):
+                    cfg[first] = shared
+                    cfg["credentials"] = {"a": shared}
+                elif first.startswith("credential"):
+                    cfg["credentials"] = {"a": shared, "b": shared}
+                elif first.startswith("handover"):
+                    cfg["handovers"] = {"a": shared, "b": shared}
+                else:
+                    cfg["provider"] = {
+                        "catalogue": shared,
+                        "benchmark_report": shared,
+                    }
+                with self.assertRaisesRegex(RegistryError, "paths must be distinct"):
+                    validate_startup_config(cfg)
+
+        cfg = config(self.root)
+        shared = str(self.root / "shared.key")
+        cfg["credentials"] = {"a": shared, "b": shared}
+        self.assertEqual(validate_startup_config(cfg)["credentials"], cfg["credentials"])
 
     def test_tunnel_plans_and_credentials_must_align(self):
         cfg = config(self.root)
