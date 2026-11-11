@@ -50,9 +50,9 @@ def assess_drift(desired: object, observed: object, ownership: object) -> dict:
         elif wanted == found:
             state, obligation = "matching", "observe_only"
         elif wanted["allocation"] != found["allocation"]:
-            state, obligation = "allocation_drift", "stage_replacement_after_privileged_inspection"
+            state, obligation = "allocation_drift", "stage_immutable_replacement_after_verified_inspection"
         else:
-            state, obligation = "configuration_drift", "inspect_and_plan_repair"
+            state, obligation = "configuration_drift", "plan_immutable_replacement_after_verified_inspection"
         proof = ownership.get(profile, "unverified")
         if found is not None and proof != "independently_observed":
             obligation = "block_and_investigate_ownership"

@@ -28,14 +28,14 @@ from nord_tools_internal.nordvpn_drift_assessment import DriftAssessmentError, a
             {"a": {"allocation": "n2", "fingerprint": "f1"}},
             {"a": "independently_observed"},
             "allocation_drift",
-            "stage_replacement_after_privileged_inspection",
+            "stage_immutable_replacement_after_verified_inspection",
         ),
         (
             {"a": {"allocation": "n1", "fingerprint": "f1"}},
             {"a": {"allocation": "n1", "fingerprint": "f2"}},
             {"a": "independently_observed"},
             "configuration_drift",
-            "inspect_and_plan_repair",
+            "plan_immutable_replacement_after_verified_inspection",
         ),
         (
             {"a": {"allocation": "n1", "fingerprint": "f1"}},

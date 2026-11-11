@@ -36,6 +36,7 @@ from nord_tools_internal.nordvpn_cleanup_executor import (
 )
 
 from nord_tools_internal.nordvpn_lifecycle import record_transition, validate_journal
+from nord_tools_internal.nordvpn_drift_recovery_policy import classify_drift_recovery
 from nord_tools_internal.nordvpn_lifecycle_store import update_journal
 from nord_tools_internal.nordvpn_operation_store import update_intent, update_recovered_intent
 from nord_tools_internal.nordvpn_ownership_verify import preflight_ownership
@@ -125,7 +126,7 @@ def plan_recovery(
             operation for operation in intents.get("operations", []) if operation["outcome"] in {"pending", "uncertain"}
         ]
         items = _classify(journal, intents, helpers, bindings_by_token, preflight)
-        reviewed = [item for item in items if item["disposition"] == _REVIEW]
+        reviewed = [item for item in items if item["disposition"] == _REVIEW and item.get("profile_quarantined", True)]
         report = {
             "version": 1,
             "mode": "startup_recovery_report",
@@ -139,6 +140,7 @@ def plan_recovery(
             "review_required": reviewed,
             "unclaimed": preflight["unclaimed"],
             "actions": [],
+            "drift_policy": classify_drift_recovery(items),
             "recorded_at": logged_at,
             "limitations": (
                 "This recovery resolves only what recorded creation-time bindings and fresh observations certify. "
@@ -164,7 +166,10 @@ def plan_recovery(
             preflight_ownership(final_journal, final_bindings, helpers.observe(), final_intents),
         )
         report["items"] = final_items
-        reviewed = [item for item in final_items if item["disposition"] == _REVIEW]
+        report["drift_policy"] = classify_drift_recovery(final_items)
+        reviewed = [
+            item for item in final_items if item["disposition"] == _REVIEW and item.get("profile_quarantined", True)
+        ]
         report["review_required"] = reviewed
         report["operator_review_required"] = bool(reviewed) or any(
             operation["outcome"] == "uncertain" for operation in final_intents.get("operations", [])
@@ -503,18 +508,45 @@ def _classify(
             item["reason"] = f"the interrupted state {state} cannot be converged from {finding}"
         items.append(item)
 
-    # A lookalike inside a generation puts the whole profile under review, so
-    # no executable item shares evidence with a same-name stranger. Unbound
-    # claims in a pending generation are resolved by that generation's own
-    # rollback or completion, which the boot gate exempts.
+    # An absent, never-bound dependent from a half-built creation is resolved
+    # only by the identity-bound namespace rollback. The same applies to an
+    # unbound interface observed solely inside that verified namespace: it is
+    # removed by deleting the namespace, never by claiming the interface name.
+    # Every other review item quarantines the whole profile.
+    rollback_profiles = {item["profile"] for item in items if item["disposition"] == "rollback_creation"}
+    rollback_namespaces = {
+        item["profile"]: item["identifier"]
+        for item in items
+        if item["disposition"] == "rollback_creation" and item["kind"] == "namespace"
+    }
+    subordinate = set()
+    for item in items:
+        allocation = allocations[item["allocation_id"]]
+        if (
+            item["disposition"] != _REVIEW
+            or item["profile"] not in rollback_profiles
+            or item["lifecycle_state"] != "creating"
+            or allocation["kind"] != "interface"
+        ):
+            continue
+        entry = bindings_by_token.get(item["allocation_id"])
+        if entry is None:
+            live_scopes = {scope for scope, name in links if name == allocation["identifier"]}
+            certified = not live_scopes or live_scopes == {rollback_namespaces[item["profile"]]}
+        else:
+            binding = entry["binding"]
+            certified = links.get((binding["scope"], allocation["identifier"])) == binding["ifindex"]
+        if certified:
+            subordinate.add(item["allocation_id"])
     disputed_profiles = {
-        item["profile"] for item in items if item["disposition"] == _REVIEW and "lookalike" in item.get("reason", "")
+        item["profile"] for item in items if item["disposition"] == _REVIEW and item["allocation_id"] not in subordinate
     }
     for item in items:
         if item["disposition"] != _REVIEW and item["profile"] in disputed_profiles:
             item["disposition"] = _REVIEW
             item["authority"] = OPERATOR
-            item["reason"] = "the profile holds other disputed evidence; review before any action"
+            item["reason"] = "the profile is quarantined by other disputed evidence; review before any action"
+        item["profile_quarantined"] = item["profile"] in disputed_profiles
     return items
 
 

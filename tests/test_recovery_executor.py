@@ -331,7 +331,53 @@ class HalfBuiltCreationTests(RecoveryTestBase):
             self.mark_uncertain(fixture)
         # The half-built namespace holds no interface yet: the crash preceded them.
         self.harness.namespaces["nt-alpha00000"]["interfaces"] = {}
+        self.harness.host_links.clear()
         return fixture
+
+    def test_unbound_live_dependent_quarantines_the_complete_profile(self):
+        fixture = self.half_built()
+        self.harness.host_links["nthlalpha000"] = 40
+        report = self.recover(fixture)
+        self.assertEqual(report["drift_policy"]["quarantined_profiles"], ["alpha"])
+        self.assertTrue(all(item["profile_quarantined"] for item in report["items"]))
+        executed = self.recover(fixture, execute=True)
+        self.assertEqual(executed["actions"], [])
+        self.assertIn("nt-alpha00000", self.harness.namespaces)
+        self.assertEqual(self.harness.deleted, [])
+
+    def test_identity_bound_underlay_checkpoint_remains_recoverable(self):
+        journal, bindings, tokens = ecosystem(
+            "alpha", "nt-alpha00000", "ntwgalpha000", "ntlualpha000", "nthlalpha000", states="creating"
+        )
+        bindings["bindings"] = [entry for entry in bindings["bindings"] if entry["identifier"] != "ntwgalpha000"]
+        fixture = self.make_fixture(
+            journal,
+            bindings,
+            namespace_name="nt-alpha00000",
+            wg_name="ntwgalpha000",
+            ul_name="ntlualpha000",
+            host_name="nthlalpha000",
+        )
+        self.harness.namespaces["nt-alpha00000"]["interfaces"].pop("ntwgalpha000")
+        self.pending_create_intent(fixture, tokens["nt-alpha00000"])
+
+        report = self.recover(fixture)
+        self.assertEqual(report["drift_policy"]["quarantined_profiles"], [])
+        self.assertEqual(report["drift_policy"]["recoverable_profiles"], ["alpha"])
+        self.recover(fixture, boot=True, execute=True)
+        self.assertNotIn("nt-alpha00000", self.harness.namespaces)
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
+
+    def test_unbound_interface_inside_verified_namespace_remains_recoverable(self):
+        fixture = self.half_built()
+        self.harness.namespaces["nt-alpha00000"]["interfaces"]["ntwgalpha000"] = 7
+
+        report = self.recover(fixture)
+
+        self.assertEqual(report["drift_policy"]["quarantined_profiles"], [])
+        self.recover(fixture, boot=True, execute=True)
+        self.assertNotIn("nt-alpha00000", self.harness.namespaces)
+        self.assertEqual(set(self.journal_states(fixture).values()), {"retired"})
 
     def test_a_pending_half_built_creation_rolls_back_and_closes_records(self):
         fixture = self.half_built()
