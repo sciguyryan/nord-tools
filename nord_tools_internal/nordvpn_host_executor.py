@@ -81,7 +81,7 @@ def _step(document: dict, name: str) -> dict | None:
 def _validate_inventory(inventory: object, plan: HostProtectionPlan, *, allow_owned: bool) -> dict:
     if not isinstance(inventory, dict):
         raise HostProtectionError("host inventory is malformed")
-    required = {"boot_id", "links", "resolver_manager", "conflicts", "owned_resources"}
+    required = {"boot_id", "links", "underlay_manager", "resolver_manager", "conflicts", "owned_resources"}
     if set(inventory) != required:
         raise HostProtectionError("host inventory is incomplete or has unknown fields")
     if not isinstance(inventory["links"], list) or not isinstance(inventory["conflicts"], list):
@@ -95,6 +95,8 @@ def _validate_inventory(inventory: object, plan: HostProtectionPlan, *, allow_ow
     ]
     if len(matches) != 1:
         raise HostProtectionError("the pinned physical egress interface identity is absent or replaced")
+    if inventory["underlay_manager"] != "systemd-networkd":
+        raise HostProtectionError("the supported host profile requires systemd-networkd")
     if inventory["resolver_manager"] != "systemd-resolved":
         raise HostProtectionError("the supported host profile requires systemd-resolved")
     if inventory["conflicts"]:
@@ -104,6 +106,28 @@ def _validate_inventory(inventory: object, plan: HostProtectionPlan, *, allow_ow
     if inventory["owned_resources"] and not allow_owned:
         raise HostProtectionError("pre-existing host protection objects have no matching durable ownership record")
     return copy.deepcopy(inventory)
+
+
+def inspect_host_compatibility(
+    plan: HostProtectionPlan,
+    *,
+    kernel: HostKernel | None = None,
+) -> dict:
+    """Inspect the narrow host deployment profile without creating durable or kernel state."""
+    if not isinstance(plan, HostProtectionPlan):
+        raise RegistryError("validated host protection plan required")
+    inventory = _validate_inventory((kernel or _kernel(plan)).inventory(), plan, allow_owned=False)
+    return {
+        "version": 1,
+        "mode": "host_platform_compatibility",
+        "supported": True,
+        "network_changes_applied": False,
+        "underlay_manager": inventory["underlay_manager"],
+        "resolver_manager": inventory["resolver_manager"],
+        "egress_interface": plan.egress_interface,
+        "egress_ifindex": plan.egress_ifindex,
+        "conflicts": [],
+    }
 
 
 def preview_host_protection(plan: HostProtectionPlan) -> dict:

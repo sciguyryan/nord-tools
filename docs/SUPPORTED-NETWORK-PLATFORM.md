@@ -36,4 +36,19 @@ The namespace resolver uses `/etc/netns/<namespace>/resolv.conf`; it does not de
 
 A new kernel or tool version must not be added from version numbering alone. Its candidate tree must pass the platform probe, the complete local quality gates and both privileged disposable-guest matrices. The accepted values in the compatibility module and this table should then be updated together with the date and package evidence.
 
-This profile closes the Phase B platform requirement for the production-owned namespace path. It does not close the broader final platform matrix, desktop integration, host-domain protection or support for independently privileged network mutators.
+## Host-default deployment profile
+
+Host-default protection has a separate, narrower compatibility boundary. D1-D3 passed with a statically addressed IPv4 physical egress managed by `systemd-networkd`, `systemd-resolved`, one pinned numeric IPv4 WireGuard endpoint and dual-stack tunnel addresses. The physical interface name and ifindex, source address and endpoint route must continue to match the validated plan.
+
+The production inventory refuses activation when `systemd-networkd` or `systemd-resolved` is unavailable, service inspection is indeterminate, the endpoint path differs, a recognised competing manager is active, another tunnel link exists, or host-protection objects already exist without matching durable evidence. Recognised competing services include NetworkManager, firewalld, UFW, Tailscale, OpenVPN and strongSwan. WireGuard, TUN/TAP, XFRM, IP-in-IP, SIT, GRE and VTI links other than the planned Nord Tools interface are also refused.
+
+This is the complete D4 support decision. DHCP or otherwise changing egress, IPv6 physical endpoints, multiple uplinks, competing VPN and firewall managers, and other network-management arrangements are unsupported. They are not necessarily incompatible, but they require an explicit support decision and the same capability, D1-D3 and restoration evidence before admission.
+
+The read-only host check can be run before any lifecycle store or network object exists:
+
+```bash
+sudo python tools/probe_host_platform_compatibility.py \
+  --plan /etc/nord-tools/host-protection.json --run-privileged
+```
+
+This profile closes the Phase B namespace-platform and Phase D host-deployment requirements for their documented Arch guest scopes. It does not close the broader final platform matrix, desktop integration or support for independently privileged network mutators.

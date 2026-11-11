@@ -60,6 +60,7 @@ class FakeHost:
         return {
             "boot_id": BOOT,
             "links": [{"name": "eth0", "index": 2, "kind": "ether"}],
+            "underlay_manager": "systemd-networkd",
             "resolver_manager": "systemd-resolved",
             "conflicts": self.conflicts,
             "owned_resources": [{"kind": name, "state": "present"} for name in sorted(self.present)],

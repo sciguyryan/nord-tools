@@ -24,6 +24,19 @@ from nord_tools_internal.nordvpn_startup import read_boot_id
 _TIMEOUT = 15
 _HANDSHAKE_TIMEOUT = 15.0
 _HANDSHAKE_POLL_INTERVAL = 0.1
+_CONFLICTING_SERVICES = (
+    "NetworkManager.service",
+    "firewalld.service",
+    "ufw.service",
+    "tailscaled.service",
+    "openvpn.service",
+    "strongswan.service",
+    "strongswan-starter.service",
+    "charon-systemd.service",
+)
+_CONFLICTING_TUNNEL_KINDS = frozenset(
+    {"wireguard", "tun", "tap", "xfrm", "ipip", "sit", "gre", "gretap", "vti", "vti6"}
+)
 
 
 def _run(argv: list[str], *, input_text: str | None = None, pass_fds: tuple[int, ...] = ()) -> str:
@@ -76,9 +89,13 @@ def _service_active(name: str) -> bool:
         result = subprocess.run(
             ["systemctl", "is-active", "--quiet", name], capture_output=True, check=False, timeout=5
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise HostProtectionError(f"host service state for {name!r} could not be inspected") from exc
+    if result.returncode == 0:
+        return True
+    if result.returncode in {3, 4}:
         return False
-    return result.returncode == 0
+    raise HostProtectionError(f"host service state for {name!r} is indeterminate (exit {result.returncode})")
 
 
 def _links() -> list[dict]:
@@ -465,9 +482,11 @@ def _observe_resource(name: str, plan: HostProtectionPlan) -> tuple[str, dict | 
 
 def _inventory(plan: HostProtectionPlan) -> dict:
     links = _links()
-    conflicts = [name for name in ("NetworkManager", "firewalld", "ufw") if _service_active(name)]
-    other_wireguard = [item["name"] for item in links if item["kind"] == "wireguard" and item["name"] != plan.interface]
-    conflicts.extend(f"wireguard:{name}" for name in other_wireguard)
+    conflicts = [name.removesuffix(".service") for name in _CONFLICTING_SERVICES if _service_active(name)]
+    other_tunnels = [
+        item for item in links if item["kind"] in _CONFLICTING_TUNNEL_KINDS and item["name"] != plan.interface
+    ]
+    conflicts.extend(f"tunnel:{item['kind']}:{item['name']}" for item in other_tunnels)
     endpoint_family = ipaddress.ip_address(plan.endpoint_address).version
     path = _json(
         [
@@ -496,7 +515,8 @@ def _inventory(plan: HostProtectionPlan) -> dict:
     return {
         "boot_id": read_boot_id(),
         "links": links,
-        "resolver_manager": "systemd-resolved" if _service_active("systemd-resolved") else "unsupported",
+        "underlay_manager": "systemd-networkd" if _service_active("systemd-networkd.service") else "unsupported",
+        "resolver_manager": "systemd-resolved" if _service_active("systemd-resolved.service") else "unsupported",
         "conflicts": sorted(conflicts),
         "owned_resources": owned,
     }
