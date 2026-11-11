@@ -436,6 +436,22 @@ class FailureInjectionTests(RestoreTestBase):
 
 
 class RefusalTests(RestoreTestBase):
+    def test_imported_client_identity_mismatch_refuses_before_network_mutation(self):
+        self.config["tunnels"]["primary"]["client_public_key"] = "unexpected"
+        with self.assertRaisesRegex(RegistryError, "does not match"):
+            self.restore()
+        self.assertEqual(self.harness.namespaces, {})
+        self.assertEqual(self.load("lifecycle.json")["allocations"]["resources"], [])
+
+    def test_systemd_runtime_credential_is_used_instead_of_source_path(self):
+        credential_directory = self.root / "credentials"
+        credential_directory.mkdir()
+        (credential_directory / "ntwg-primary").write_bytes(_KEY.encode("ascii"))
+        self.credential_path.unlink()
+        with patch.dict(os.environ, {"CREDENTIALS_DIRECTORY": str(credential_directory)}):
+            report = self.restore()
+        self.assertEqual(report["restored"], ["primary"])
+
     def test_desired_profile_without_a_pinned_plan_is_reported_not_restored(self):
         self.config["tunnels"] = {}
         report = self.restore()

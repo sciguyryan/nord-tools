@@ -47,13 +47,17 @@ def _validate_path(value: object, field: str) -> str:
     return value
 
 
-def _validate_tunnel_plan(name: str, plan: object) -> dict:
-    """Validate one pinned provider tunnel per profile; no credentials here.
+def _validate_underlay(name: str, underlay: object) -> dict:
+    if not isinstance(underlay, dict) or set(underlay) != {"namespace_address", "host_address"}:
+        raise RegistryError(f"tunnel plan for {name} underlay requires namespace_address and host_address")
+    for field in ("namespace_address", "host_address"):
+        if not isinstance(underlay[field], str) or not underlay[field]:
+            raise RegistryError(f"tunnel plan for {name} underlay requires a textual {field}")
+    return dict(underlay)
 
-    The plan is the operator's authoritative pin of provider data: it must
-    already contain numeric, unambiguous endpoint and addressing data, because
-    the boot path performs neither server selection nor DNS resolution.
-    """
+
+def _validate_tunnel_plan(name: str, plan: object, *, provider: bool = False) -> dict:
+    """Validate either a complete pinned tunnel or a provider underlay template."""
     allowed = {
         "peer_public_key",
         "endpoint_address",
@@ -63,9 +67,13 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
         "peer_allowed_ips",
         "underlay",
         "dns_servers",
+        "client_public_key",
+        "persistent_keepalive_seconds",
     }
     if not isinstance(name, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", name):
         raise RegistryError("invalid profile name in startup configuration")
+    if provider and isinstance(plan, dict) and set(plan) == {"underlay"}:
+        return {"underlay": _validate_underlay(name, plan["underlay"])}
     required = {"peer_public_key", "endpoint_address", "endpoint_port", "peer_allowed_ips", "underlay"}
     if (
         not isinstance(plan, dict)
@@ -79,6 +87,8 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
         )
     if not isinstance(plan["peer_public_key"], str):
         raise RegistryError(f"tunnel plan for {name} requires a peer public key string")
+    if "client_public_key" in plan and not isinstance(plan["client_public_key"], str):
+        raise RegistryError(f"tunnel plan for {name} requires a client public key string")
     if not isinstance(plan["endpoint_address"], str) or not plan["endpoint_address"]:
         raise RegistryError(f"tunnel plan for {name} requires a textual endpoint_address")
     if "tunnel_address" in plan:
@@ -95,16 +105,16 @@ def _validate_tunnel_plan(name: str, plan: object) -> dict:
             raise RegistryError(f"tunnel plan for {name} requires one or two textual tunnel_addresses")
     if type(plan["endpoint_port"]) is not int or not 1 <= plan["endpoint_port"] <= 65535:
         raise RegistryError(f"tunnel plan for {name} requires a valid endpoint port")
+    if (
+        type(plan.get("persistent_keepalive_seconds", 0)) is not int
+        or not 0 <= plan.get("persistent_keepalive_seconds", 0) <= 65535
+    ):
+        raise RegistryError(f"tunnel plan for {name} requires a valid persistent keepalive interval")
     if not isinstance(plan["peer_allowed_ips"], list) or any(
         not isinstance(item, str) or not item for item in plan["peer_allowed_ips"]
     ):
         raise RegistryError(f"tunnel plan for {name} requires a list of allowed IP networks")
-    underlay = plan["underlay"]
-    if not isinstance(underlay, dict) or set(underlay) != {"namespace_address", "host_address"}:
-        raise RegistryError(f"tunnel plan for {name} underlay requires namespace_address and host_address")
-    for field in ("namespace_address", "host_address"):
-        if not isinstance(underlay[field], str) or not underlay[field]:
-            raise RegistryError(f"tunnel plan for {name} underlay requires a textual {field}")
+    _validate_underlay(name, plan["underlay"])
     # DNS is opt-in for legacy configurations. New plans must supply a
     # validated numeric resolver list, never a host-dependent DNS name.
     if "dns_servers" in plan:
@@ -142,6 +152,7 @@ def validate_startup_config(document: object) -> dict:
         "tunnels",
         "credentials",
         "handovers",
+        "provider",
     }
     required = {"version", "policy", "journal", "bindings", "run_record", "tunnels"}
     if not isinstance(document, dict) or not required <= set(document) or set(document) - allowed:
@@ -157,10 +168,36 @@ def validate_startup_config(document: object) -> dict:
     for field in ("intent", "graph"):
         if document.get(field) is not None:
             paths[field] = _validate_path(document[field], field)
+    provider = document.get("provider")
+    if provider is not None:
+        if (
+            not isinstance(provider, dict)
+            or set(provider)
+            - {
+                "catalogue",
+                "benchmark_report",
+                "max_report_age_seconds",
+            }
+            or "catalogue" not in provider
+        ):
+            raise RegistryError("startup provider requires catalogue and only known provider fields")
+        provider = {
+            "catalogue": _validate_path(provider["catalogue"], "provider catalogue"),
+            "max_report_age_seconds": provider.get("max_report_age_seconds", 86400),
+        }
+        if document["provider"].get("benchmark_report") is not None:
+            provider["benchmark_report"] = _validate_path(
+                document["provider"]["benchmark_report"], "provider benchmark report"
+            )
+        if (
+            type(provider["max_report_age_seconds"]) is not int
+            or not 0 <= provider["max_report_age_seconds"] <= 31 * 24 * 3600
+        ):
+            raise RegistryError("provider benchmark maximum age must be between zero and 31 days")
     tunnels = document["tunnels"]
     if not isinstance(tunnels, dict):
         raise RegistryError("startup configuration tunnels must be an object")
-    tunnels = {name: _validate_tunnel_plan(name, plan) for name, plan in tunnels.items()}
+    tunnels = {name: _validate_tunnel_plan(name, plan, provider=provider is not None) for name, plan in tunnels.items()}
     credentials = document.get("credentials") or {}
     if not isinstance(credentials, dict):
         raise RegistryError("startup configuration credentials must be an object")
@@ -186,6 +223,8 @@ def validate_startup_config(document: object) -> dict:
     }
     if handovers:
         result["handovers"] = handovers
+    if provider is not None:
+        result["provider"] = provider
     return result
 
 
@@ -375,9 +414,17 @@ def render_startup_unit(
         f"ConditionPathExists={config}",
         f"ConditionPathExists={validated['policy']}",
     ]
-    credentials = "\n".join(
-        f"LoadCredential=ntwg-{name}:{value}" for name, value in sorted(validated["credentials"].items())
-    )
+    credential_sources = {f"ntwg-{name}": value for name, value in sorted(validated["credentials"].items())}
+    if validated.get("provider"):
+        from nord_tools_internal.nordvpn_provider import load_provider_catalogue, provider_credential_name
+
+        catalogue_path = validated["provider"]["catalogue"]
+        conditions.append(f"ConditionPathExists={catalogue_path}")
+        if validated["provider"].get("benchmark_report"):
+            conditions.append(f"ConditionPathExists={validated['provider']['benchmark_report']}")
+        for entry in load_provider_catalogue(catalogue_path)["servers"]:
+            credential_sources[provider_credential_name(entry["server"])] = entry["credential"]
+    credentials = "\n".join(f"LoadCredential={name}:{value}" for name, value in sorted(credential_sources.items()))
     credential_lines = [credentials] if credentials else []
     return "\n".join(
         (

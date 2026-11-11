@@ -66,6 +66,12 @@ from nord_tools_internal.nordvpn_provision_execution import (
 from nord_tools_internal.nordvpn_cleanup_executor import CleanupKernel
 from nord_tools_internal.nordvpn_production_contract import validate_executor_creation_contract
 from nord_tools_internal.nordvpn_profiles import validate_policy
+from nord_tools_internal.nordvpn_provider import (
+    catalogue_sha256,
+    load_provider_catalogue,
+    provider_credential_name,
+    select_provider_servers,
+)
 from nord_tools_internal.nordvpn_registry import RegistryError
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 from nord_tools_internal.nordvpn_sharing_contract import OwnershipGroup, resolve_ownership_groups
@@ -371,6 +377,7 @@ def _validated_plan(plan: dict, namespace: str, interface: str) -> dict:
         plan["endpoint_port"],
         tuple(plan["tunnel_addresses"]),
         tuple(plan["peer_allowed_ips"]),
+        plan.get("persistent_keepalive_seconds", 0),
     )
     return {**plan, "specification": specification}
 
@@ -412,9 +419,62 @@ def _prevalidate_plans(config: dict, desired: dict) -> dict:
 
 
 def _restore_boot_policy(config: dict) -> dict:
-    desired = validate_policy(_read_document(config["policy"]))
-    _prevalidate_plans(config, desired)
-    return desired
+    return validate_policy(_read_document(config["policy"]))
+
+
+def _runtime_credential(source: str, name: str) -> str:
+    directory = os.environ.get("CREDENTIALS_DIRECTORY")
+    if not directory:
+        return source
+    root = Path(directory)
+    if not root.is_absolute() or root.is_symlink() or not root.is_dir():
+        raise RegistryError("systemd credential directory is unavailable or unsafe")
+    return str(root / name)
+
+
+def _resolve_provider(config: dict, policy: dict) -> tuple[dict, dict[str, dict]]:
+    """Resolve imported provider material before stores or networking are touched."""
+    runtime = dict(config)
+    runtime["credentials"] = {
+        name: _runtime_credential(path, f"ntwg-{name}") for name, path in config["credentials"].items()
+    }
+    provider = config.get("provider")
+    if provider is None:
+        _prevalidate_plans(runtime, policy)
+        return runtime, {}
+    catalogue = load_provider_catalogue(provider["catalogue"])
+    report = _read_document(provider["benchmark_report"]) if provider.get("benchmark_report") else None
+    selected = select_provider_servers(
+        policy,
+        catalogue,
+        report,
+        max_report_age_seconds=provider["max_report_age_seconds"],
+    )
+    tunnels = {}
+    credentials = {}
+    selections = {}
+    digest = catalogue_sha256(catalogue)
+    for name, entry in sorted(selected.items()):
+        template = config["tunnels"].get(name)
+        if not isinstance(template, dict) or "underlay" not in template:
+            raise RegistryError(f"profile {name} has no provider underlay template")
+        tunnels[name] = {
+            "peer_public_key": entry["peer_public_key"],
+            "client_public_key": entry["client_public_key"],
+            "endpoint_address": entry["endpoint_address"],
+            "endpoint_port": entry["endpoint_port"],
+            "persistent_keepalive_seconds": entry["persistent_keepalive_seconds"],
+            "tunnel_addresses": entry["tunnel_addresses"],
+            "peer_allowed_ips": entry["peer_allowed_ips"],
+            "dns_servers": entry["dns_servers"],
+            "underlay": template["underlay"],
+        }
+        credentials[name] = _runtime_credential(entry["credential"], provider_credential_name(entry["server"]))
+        selections[name] = {"server": entry["server"], "catalogue_sha256": digest}
+    runtime["tunnels"] = tunnels
+    runtime["credentials"] = credentials
+    _prevalidate_plans(runtime, policy)
+    return runtime, selections
 
 
 def _apply_generation_selections(config: dict, policy: dict) -> tuple[dict, dict[str, str]]:
@@ -537,6 +597,15 @@ def _restore_profile(
     verification. Any exception rolls back the namespace this run created and
     re-raises, leaving uncertain intent evidence behind for review.
     """
+    public_key = None
+    if plan.get("client_public_key") is not None:
+        try:
+            with open(credential_path, "rb") as credential:
+                public_key = helpers.public_key_from_fd(credential.fileno())
+        except OSError as exc:
+            raise RegistryError(f"credential for {profile} cannot be read") from exc
+        if public_key != plan["client_public_key"]:
+            raise RegistryError(f"credential for {profile} does not match its imported public identity")
     journal_path = config["journal"]
     bindings_path = config["bindings"]
     intent_path = config["intent"]
@@ -584,6 +653,7 @@ def _restore_profile(
         journal = _advance(journal_path, token, "creating")
 
     def operation() -> dict:
+        nonlocal public_key
         cleanup: list[Callable[[], None]] = []
         owned = None
         try:
@@ -610,8 +680,9 @@ def _restore_profile(
             host_ifindex = _host_index(helpers.observe(), underlay_host)
             cleanup.append(lambda: helpers.remove_host_interface(underlay_host, host_ifindex))
             gateway = str(ipaddress.ip_interface(plan["underlay"]["host_address"]).ip)
-            with open(credential_path, "rb") as credential:
-                public_key = helpers.public_key_from_fd(credential.fileno())
+            if public_key is None:
+                with open(credential_path, "rb") as credential:
+                    public_key = helpers.public_key_from_fd(credential.fileno())
             isolation = NamespaceIsolationPolicy(
                 tunnel_interface=interface,
                 underlay_interface=underlay_ns,
@@ -782,7 +853,7 @@ def restore_boot_state(
     validated = validate_startup_config(config)
     if not validated["intent"]:
         raise RegistryError("restoration requires durable operation intents in the startup configuration")
-    if validated["tunnels"] and not validated["credentials"]:
+    if validated["tunnels"] and not validated["credentials"] and not validated.get("provider"):
         raise RegistryError("restoration requires one pinned credential input per tunnel plan")
     if kernel is None:
         # Refuse an unaccepted kernel or command-output contract before stores
@@ -796,6 +867,7 @@ def restore_boot_state(
     with _execution_lock(validated["journal"]):
         _ensure_stores(validated)
         logical_policy = _restore_boot_policy(validated)
+        validated, provider_selections = _resolve_provider(validated, logical_policy)
         original_policy, generation_providers = _apply_generation_selections(validated, logical_policy)
         desired, provider_profiles = expand_allocation_profiles(original_policy)
         provider_profiles.update(generation_providers)
@@ -932,6 +1004,7 @@ def restore_boot_state(
                 "actions": recovery["actions"],
                 "review_required": recovery["review_required"],
             },
+            "provider_selections": provider_selections,
             "limitations": (
                 "Restores only pinned profiles whose owned resources are absent in this boot session. "
                 "Verified-but-undesired resources belong to the confirmed cleanup increment, "

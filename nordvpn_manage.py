@@ -32,6 +32,7 @@ from nord_tools_internal.nordvpn_restore_executor import (
 )
 from nord_tools_internal.nordvpn_state_reconcile import derive_actual_state, reconcile_desired
 from nord_tools_internal.nordvpn_profiles import ProfileError, validate_policy
+from nord_tools_internal.nordvpn_provider import import_provider_configuration, read_provider_configuration
 from nord_tools_internal.nordvpn_reconcile import ReconciliationError, load_inventory, plan_reconciliation
 from nord_tools_internal.nordvpn_registry import RegistryError, audit_registry, read_json
 from nord_tools_internal.nordvpn_startup import (
@@ -148,6 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         "host-boot-barrier",
         "host-startup-plan",
         "host-startup-install",
+        "provider-import",
     ):
         command = commands.add_parser(name)
         command.add_argument(
@@ -253,6 +255,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         if name in ("startup-plan", "startup-install", "restore-startup", "provision", "retire-consumers"):
             command.add_argument("--config", required=True, help="Explicit startup configuration JSON")
+        if name == "provider-import":
+            command.add_argument("--configuration", required=True, help="Private NordVPN WireGuard configuration")
+            command.add_argument("--server", required=True, help="Canonical NordVPN server identity")
+            command.add_argument("--catalogue", required=True, help="Absolute provider catalogue path")
+            command.add_argument("--credential", required=True, help="Absolute private-key destination")
+            command.add_argument("--rotate", action="store_true", help="Authorise replacement of this server key")
+            command.add_argument("--execute", action="store_true", help="Write the key and catalogue; default previews")
         if name == "provision":
             command.add_argument(
                 "--execute",
@@ -810,6 +819,20 @@ def main(argv: list[str] | None = None) -> int:
                 raise ManagementError("clear-ownership is persistent-only; transient intent has never owned anything")
             result = reset_ownership(
                 read_json(args.config), graph_path=args.graph, resolvers=args.resolvers, execute=args.execute
+            )
+            result["scope"] = "persistent"
+            print(json.dumps(result, indent=2, sort_keys=True))
+            return 0
+        if args.action == "provider-import":
+            if args.transient:
+                raise ManagementError("provider import is persistent-only")
+            result = import_provider_configuration(
+                read_provider_configuration(args.configuration),
+                server=args.server,
+                catalogue_path=args.catalogue,
+                credential_path=args.credential,
+                rotate=args.rotate,
+                execute=args.execute,
             )
             result["scope"] = "persistent"
             print(json.dumps(result, indent=2, sort_keys=True))
