@@ -1,5 +1,7 @@
 # Default VPN optimisation and application routing
 
+This document records both the original offline design increments and the production boundaries implemented later. Sections labelled offline or experimental describe those components only; they are not a statement that the separate production executors remain unimplemented. The current release scope is summarised in the [README](../README.md), the accepted authority model is defined in [Privileged mutation authority and threat boundary](PRIVILEGED-AUTHORITY-BOUNDARY.md), and remaining release work is tracked only in [`TODO.md`](../TODO.md).
+
 The Nord Tools benchmarker currently ranks OpenVPN endpoints using ICMP or TCP probes. Its existing `--auto-connect` path operates on the ordinary NordVPN Linux client. That is useful for a single connection, but it does not establish independent per-application tunnels. We should not pretend that adding an application list to the current connection command would solve that problem.
 
 The intended extension is a system-wide default VPN profile, with applications optionally assigned to independent profiles. An unassigned application inherits the default. A named override remains on its assigned tunnel when the default is optimised. Applications deliberately sharing the default profile are *not* independent overrides, and may experience a default-server change.
@@ -37,7 +39,7 @@ The example is also available at [`../examples/vpn-policy.json`](../examples/vpn
 python nordvpn_policy.py --policy examples/vpn-policy.json --validate
 ```
 
-The validator recognises `fastest`, `country` and `pinned` selection modes, requires an existing default profile, checks application executable paths and rejects unknown configuration fields. `sharing: shared` is the default; `sharing: isolated` describes future independent tunnel intent, but no namespace or tunnel is created by validation. A country code does not establish that NordVPN actually offers a compatible server there. There is no automatic country-pool connection implementation yet.
+The validator recognises `fastest`, `country` and `pinned` selection modes, requires an existing default profile, checks application executable paths and rejects unknown configuration fields. `sharing: shared` is the default; `sharing: isolated` describes an independent allocation, but policy validation itself creates no namespace or tunnel. Production restoration can resolve country selection from an imported provider catalogue; automatic live reselection remains unsupported. A country code alone does not establish that NordVPN offers a compatible imported server there.
 
 Given an existing JSON benchmark report with `ranking`, inspect the proposed default selection:
 
@@ -47,17 +49,17 @@ python nordvpn_policy.py --policy vpn-policy.json --report benchmark.json --curr
 
 The report's `ranking` must be from the benchmarker's versioned report format, not a plain JSON array export. `switch_candidate` is a *suggestion*, not permission to execute a switch. A current server absent from the eligible measurements produces `current_not_measured`, not a speculative comparison. No automatic switching or scheduling is implemented yet.
 
-## Networking design still to validate
+## Production networking boundary
 
-The host default route would be protected by a fail-closed VPN firewall. Independent application profiles would use separate namespaces and tunnels, with their own DNS and IPv4/IPv6 policy. Tunnel underlay routes must allow only the encrypted transport to reach the physical network; they must not create a general escape route. Desktop integration needs to account for Wayland, D-Bus activation and single-instance applications which might otherwise reuse a process outside the assigned namespace.
+The production namespace executor installs fail-closed per-allocation nftables, IPv4/IPv6 routes and a pinned resolver. Host-default protection uses a separate deny-first lifecycle and is accepted only for the D4 deployment profile. Tunnel underlay routes allow only the pinned encrypted endpoint and must not create a general escape route. Registered desktop launch forwards a validated local Wayland, X11, Xauthority and user D-Bus environment; compositor portals, notifications, GPU rendering and desktop-specific activation remain outside the accepted evidence.
 
-A disposable two-pair WireGuard experiment has demonstrated independent tunnel connectivity on Arch Linux; fail-closed routing and host integration still require validation. We also need to establish whether the official NordVPN client can coexist with manual tunnels; its routing, DNS and firewall ownership may conflict with a second manager. The future privileged component should manage networking, while the benchmark and policy engine remain unprivileged. Configuration should not grant arbitrary root command execution.
+Disposable and production guest matrices have demonstrated independent WireGuard connectivity, fail-closed namespace routing, registered application confinement and the narrow host-default lifecycle on Arch Linux. Coexistence with the official NordVPN client is not supported: operational preflight refuses recognised competing VPN and firewall managers rather than attempting to share their routing, DNS or firewall state. Privileged execution remains confined to validated lifecycle operations; policy and benchmark processing stay unprivileged and configuration cannot supply arbitrary root commands.
 
-The eventual `optimise-default` operation should benchmark eligible servers, compare them with the current endpoint, respect minimum improvement and connection-age thresholds, and switch only the default profile. Failure must retain a healthy existing connection or fail closed. No override should be reconnected, reselected or moved to another profile as a side effect. Automatic re-evaluation should be opt-in, with rotation disabled by default.
+The policy planner can benchmark eligible servers and recommend a default-profile candidate subject to improvement thresholds, but it does not execute a switch. Automatic live optimisation and in-place provider reselection are deliberately unsupported. A selected change must use explicit immutable generation replacement, which preserves existing application assignments and does not silently reselect independent overrides.
 
 The main unresolved measurement question is what *fastest* should mean. ICMP/TCP latency is a useful initial signal, but it cannot establish tunnel throughput. A later optional stage should measure actual tunnel performance without making a benchmark-induced route change look like a normal application connection.
 
-## Next implementation boundary
+## Implemented lifecycle boundary
 
 The next networking step is production-oriented WireGuard provisioning, with ownership safeguards and fail-closed routing validated before touching the host's default route. The policy validator deliberately has no root operations or executable launch support. A later privileged manager will need an explicit authorisation model, safe underlay routing, IPv4/IPv6 and DNS enforcement, and a way to recover networking if the service fails. The official NordVPN client may conflict with that manager's firewall and routing ownership, so coexistence remains an open question.
 
@@ -107,9 +109,9 @@ The experiment still does not establish an actual VPN tunnel or demonstrate safe
 
 ## Unified tool entry point
 
-`nord_tools.py` dispatches to the existing benchmark, offline policy planner, topology inspector and experimental namespace probe. It does not add networking privileges or enable live routing. Keep each original CLI working independently as this interface evolves.
+`nord_tools.py` dispatches to the benchmark, offline policy planner, topology inspector, production management surface and disposable probes. Dispatch adds no authority: each management command retains its own validation, privilege and explicit-execution boundary, and each original CLI remains independently available.
 
-## Desired-state persistence and startup (planned)
+## Desired-state persistence and startup
 
 The offline `nord_tools.py manage` interface stores persistent configuration by default and selects transient session intent with `--transient`. Its atomic policy storage is not an active networking state registry. The separately installed `nord-tools-restore.service` unit reconciles and restores namespace-domain profiles whose owned resources are absent for this boot session, installing each profile's fail-closed firewall before any traffic configuration. Host-default protection is a separate deny-first lifecycle accepted only for the documented static IPv4 `systemd-networkd` and `systemd-resolved` profile. Transient intent must not be resurrected after reboot, and the boot command refuses it outright. Cleanup remains separate from removal of saved policy intent.
 
@@ -121,7 +123,7 @@ The offline `nord_tools.py manage` interface stores persistent configuration by 
 
 `python nord_tools.py manage audit --registry examples/managed-registry.json --inventory examples/managed-inventory.json` compares an explicitly supplied version 1 resource ledger with a simulated profile inventory. The ledger names claimed namespaces, interfaces, routes, firewall objects, DNS objects and services, with unique resource identities and profile associations. Invalid ownership, duplicate identities and malformed records are rejected.
 
-This is a read-only schema and diagnostic exercise, not a live registry or kernel discovery. Even when a simulated profile is marked ready, the audit reports individual resources as unverified. Neither a ledger claim nor a simulated inventory grants authority to remove anything. A future privileged implementation must verify actual resource ownership, support crash recovery and enforce fail-closed replacement before applying changes. The existing persistent and transient desired-policy files remain separate from this illustrative ledger.
+This is a read-only schema and diagnostic exercise, not a live registry or kernel discovery. Even when a simulated profile is marked ready, the audit reports individual resources as unverified. Neither a ledger claim nor a simulated inventory grants authority to remove anything. Separate production executors establish creation-time bindings, re-observe ownership, retain durable operation evidence and fail closed on uncertainty. The persistent and transient desired-policy files remain separate from this illustrative ledger.
 
 ## Read-only Linux networking discovery
 
@@ -131,11 +133,11 @@ Discovery does not inspect DNS configuration or service state, prove firewall ef
 
 ### Read-only evidence correlation
 
-The `manage evidence` command correlates explicitly recorded resource names with live namespace and interface observations. Interface names are scoped to `host` or a named namespace, and unqualified names remain ambiguous. Missing resources and unsupported evidence kinds are reported rather than guessed. The result always declares ownership unverified and deletion unsafe, even when names match. Future resource creation must establish independent, durable ownership markers and validate them against actual kernel state before destructive reconciliation is permitted.
+The `manage evidence` command correlates explicitly recorded resource names with live namespace and interface observations. Interface names are scoped to `host` or a named namespace, and unqualified names remain ambiguous. Missing resources and unsupported evidence kinds are reported rather than guessed. The result always declares ownership unverified and deletion unsafe, even when names match. Production creation uses a separate owner-binding store and destructive reconciliation requires fresh validation against actual kernel state.
 
 ### Allocation identities and safe ownership
 
-The version 2 allocation ledger adds a unique random `allocation_id` to each resource claim. It rejects duplicate identities, duplicate resource names within a kind and malformed claims. The offline `manage identities` command validates this structure but grants no permission to alter networking. A future provisioner must establish a verifiable binding between each allocation and the actual resource, including safeguards against resource-name reuse, stale records and interrupted creation. The legacy version 1 ledger remains supported by the separate diagnostic audit and evidence commands; it is not silently upgraded into an authoritative ledger.
+The version 2 allocation ledger adds a unique random `allocation_id` to each resource claim. It rejects duplicate identities, duplicate resource names within a kind and malformed claims. The offline `manage identities` command validates this structure but grants no permission to alter networking. Production restoration establishes a separate verifiable binding between each allocation and its created resources, with checks for resource-name reuse, stale records and interrupted creation. The legacy version 1 ledger remains supported by the diagnostic audit and evidence commands; it is not silently upgraded into an authoritative ledger.
 
 ### Allocation evidence and stale-state diagnostics
 
@@ -143,11 +145,11 @@ The `manage identity-evidence` command validates the version 2 allocation ledger
 
 ### Offline dependency ordering
 
-The `manage dependency-plan` command accepts a version 1 graph whose `dependencies` object maps each profile to its prerequisite profiles. It combines that explicit graph with the saved desired policy and an independently supplied simulated inventory. It schedules desired profiles in prerequisite-first order and retirement in reverse, propagates externally owned prerequisite conflicts, and rejects cycles or missing dependencies. This is not a discovered resource graph and does not imply that a profile-level dependency proves ownership of its interfaces, routes, firewall rules or services. No operation can be executed from this output. A future live executor must separately verify per-resource ownership, leak protection, transactional cut-over and rollback.
+The `manage dependency-plan` command accepts a version 1 graph whose `dependencies` object maps each profile to its prerequisite profiles. It combines that explicit graph with the saved desired policy and an independently supplied simulated inventory. It schedules desired profiles in prerequisite-first order and retirement in reverse, propagates externally owned prerequisite conflicts, and rejects cycles or missing dependencies. This is not a discovered resource graph and does not imply that a profile-level dependency proves ownership of its interfaces, routes, firewall rules or services. No operation can be executed from this output; production executors separately verify per-resource ownership and their operation-specific fail-closed boundaries.
 
 ### Offline transaction and recovery contract
 
-`manage transaction-plan` expands the dependency-ordered simulation into descriptive stages for creation, repair, replacement and retirement. Replacement prepares and verifies a protected new connection before switching assignments, and retires the old connection only after a successful cut-over. Recovery requires a durable journal and fresh independent ownership verification; on uncertainty the future executor must preserve the existing connection or remain fail-closed. These are design obligations, not implemented operations. The current command neither writes a journal nor changes host networking, and its output always declares `safe_to_execute: false`.
+`manage transaction-plan` expands the dependency-ordered simulation into descriptive stages for creation, repair, replacement and retirement. Its output remains non-executable and always declares `safe_to_execute: false`. Separate production commands implement immutable generation replacement and evidence-certified recovery using durable journals and fresh ownership checks; the simulation is not authority for those operations.
 
 ## Configuration graph and cleanup preview
 
@@ -157,7 +159,7 @@ The `manage dependency-plan` command accepts a version 1 graph whose `dependenci
 
 ### Read-only recovery triage (recovery triage)
 
-`nord_tools_internal.nordvpn_recovery.assess_recovery()` combines a validated lifecycle journal, recorded interface fingerprints and a complete read-only discovery snapshot. It classifies interrupted creation or retirement, missing or changed identities, retired-name reuse and insufficient evidence. All classifications require operator review. No classification establishes creation-time ownership, grants permission to modify or delete resources, or performs automatic recovery. A kernel interface index can be reused, so matching fingerprints are diagnostic only. Privileged creation-time ownership binding, recovery execution and integration tests remain outstanding.
+`nord_tools_internal.nordvpn_recovery.assess_recovery()` combines a validated lifecycle journal, recorded interface fingerprints and a complete read-only discovery snapshot. It classifies interrupted creation or retirement, missing or changed identities, retired-name reuse and insufficient evidence. All classifications require operator review. No classification establishes creation-time ownership, grants permission to modify or delete resources, or performs automatic recovery. Production recovery is a separate evidence-certified executor backed by creation-time owner bindings; matching diagnostic fingerprints alone never authorise it.
 
 ## Operation intent boundary
 
@@ -167,7 +169,7 @@ The `manage dependency-plan` command accepts a version 1 graph whose `dependenci
 
 `nord_tools_internal/nordvpn_namespace_ownership.py` provides an explicit privileged experiment for disposable `nt-`-prefixed Linux network namespaces. Its context manager refuses pre-existing names, creates a namespace using `ip netns add`, retains a namespace file descriptor, checks the live namespace device/inode against that descriptor, refuses retirement while namespace processes remain and releases the descriptor when finished. If verification or cleanup is uncertain, it leaves the resource for operator investigation rather than deleting a resource based solely on its name. The caller must choose a collision-resistant name and invoke this only in a disposable, privileged test environment.
 
-This is **ephemeral process-bound evidence**, not a persistent ownership certificate. Kernel identifiers may be reused, an attacker with namespace-management privileges can race the final name-based `ip netns del`, and a process crash loses the held descriptor. Therefore this experiment is not suitable for production resource removal, automatic recovery, or authorising changes to existing networking. The normal-operation privileged smoke test passed on Arch Linux, but a stronger race-resistant ownership mechanism remains required before production mutation or cleanup. No production networking code calls this experiment.
+This is **ephemeral process-bound evidence**, not a persistent ownership certificate. Kernel identifiers may be reused, an attacker with namespace-management privileges can race the final name-based `ip netns del`, and a process crash loses the held descriptor. Therefore this experiment is not suitable for production resource removal, automatic recovery or authorising changes to existing networking. Production code does not call this experiment; it uses durable owner bindings, fresh verification and the cooperating-process authority model described separately.
 
 ### Disposable namespace ownership acceptance probe
 
@@ -177,7 +179,7 @@ If the process is interrupted, or if verification or retirement fails, inspect `
 
 ## provisioning provisioning input boundary
 
-The internal `nord_tools_internal.nordvpn_wireguard_provision.TunnelSpecification` type validates a narrowly scoped, disposable WireGuard tunnel proposal before any privileged executor is introduced. Namespace and interface names are bounded, peer keys must have canonical WireGuard public-key encoding, endpoints must be numeric IP addresses, ports must be valid, and tunnel addresses and allowed networks must parse as IP prefixes. Its `public_plan()` result deliberately excludes private credentials and explicitly reports that no networking changes have been applied. This is an offline validation boundary, not a functioning tunnel provisioner, a secure credential-handling implementation or proof of resource ownership. Experimental disposable configuration and journal-gated integration probes have since been added and exercised, but production provisioning still requires independently authorised creation-time identity binding, crash-persistent ownership, safe recovery and controlled acceptance before live management can be enabled. No host routes, DNS settings or firewall rules are changed by this component.
+The internal `nord_tools_internal.nordvpn_wireguard_provision.TunnelSpecification` type validates a narrowly scoped, disposable WireGuard tunnel proposal. Namespace and interface names are bounded, peer keys must have canonical WireGuard public-key encoding, endpoints must be numeric IP addresses, ports must be valid, and tunnel addresses and allowed networks must parse as IP prefixes. Its `public_plan()` result deliberately excludes private credentials and explicitly reports that no networking changes have been applied. This component remains an offline validation boundary, not a provisioner, credential store or proof of ownership. Separate production restoration supplies credentials through file descriptors, records creation-time identity and performs the authorised kernel operations.
 
 ## Experimental journal-gated creation adapter
 
@@ -185,7 +187,7 @@ The internal `nordvpn_provision_execution` adapter validates the supplied lifecy
 
 ## network confinement disposable acceptance and production boundary
 
-The four experimental network confinement increments have passed privileged acceptance on Arch Linux. The evidence covers namespace resolver visibility without host resolver changes, IPv4/IPv6 synthetic DNS route selection without simulated underlay fallback, narrowly scoped counter-verified UDP endpoint exceptions, and a two-pair real WireGuard experiment with unchanged observed host routes, nftables rules and resolver contents. Both WireGuard pairs exchanged tunnel packets, independent shutdown checks passed and the final named namespace listing was empty. The host-integrity comparison is a before-and-after observation, not proof against transient or concurrent changes. The synthetic routing and endpoint tests do not establish real DNS delivery over WireGuard. Production enforcement still requires independently authorised crash-persistent ownership, race-safe recovery, real-tunnel DNS packet confinement, and failure injection for tunnel loss, restart and rollback. The acceptance record and remaining requirements are maintained in `TODO.md`.
+The four experimental network confinement increments passed privileged acceptance on Arch Linux. Their evidence covers namespace resolver visibility without host resolver changes, IPv4/IPv6 synthetic DNS route selection without simulated underlay fallback, narrowly scoped counter-verified UDP endpoint exceptions and a two-pair real WireGuard experiment with unchanged observed host routes, nftables rules and resolver contents. Both WireGuard pairs exchanged tunnel packets, independent shutdown checks passed and the final named namespace listing was empty. These historical component probes do not establish production behaviour by themselves. Later production matrices separately accepted durable ownership, recovery, real-tunnel DNS confinement and failure injection for tunnel loss, restart and rollback within the documented guest and authority scope.
 
 ## application routing offline application-routing acceptance and production boundary
 
@@ -193,7 +195,7 @@ The five application routing offline increments cover registered-application rou
 
 ## live reconciliation offline reconciliation acceptance and production boundary
 
-The five live reconciliation increments implement separate, non-authorising contracts: an evidence gate for proposed operations, ordered checkpoint and interruption assessments, staged replacement obligations, drift classification, and a cross-contract consistency audit. They operate on supplied logical records, not independently authenticated kernel ownership. Even mutually consistent reports cannot authorise creation, cut-over, rollback, repair, retirement or deletion. The production executor must bind durable intents to independent crash-persistent creation-time ownership evidence, coordinate operations transactionally, re-observe kernel state before each sensitive transition and recover safely after interruption. Live idempotent apply/update/replace/remove, verified replacement without disturbing unaffected tunnels, drift repair, rollback and privileged failure-injection acceptance remain outstanding. See `TODO.md`; completion of the offline programme is not completion of live reconciliation operational requirements.
+The five offline reconciliation increments implement separate, non-authorising contracts: an evidence gate for proposed operations, ordered checkpoint and interruption assessments, staged replacement obligations, drift classification and a cross-contract consistency audit. They operate on supplied logical records, not independently authenticated kernel ownership, so even mutually consistent reports cannot authorise creation, cut-over, rollback, repair, retirement or deletion. Separate production executors bind durable intents to creation-time ownership evidence, re-observe kernel state before sensitive transitions and provide create-only apply, immutable generation replacement, verified retirement and bounded recovery. General in-place repair and automatic provider reselection are unsupported; disputed resources quarantine their entire profile. Exact-candidate acceptance remains tracked in `TODO.md`.
 
 ## creation-time ownership verification: ownership verification preflight
 

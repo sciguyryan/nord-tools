@@ -1,8 +1,8 @@
-"""Durable, locked offline operation intents for future privileged execution.
+"""Durable, locked operation intents for privileged lifecycle execution.
 
 The journal and intent files are separate documents. This store deliberately
 cannot atomically commit changes to both, and must not be used to authorise
-kernel mutations. An intent is persisted before any future executor acts.
+kernel mutations. Production executors persist an intent before acting.
 """
 
 from __future__ import annotations

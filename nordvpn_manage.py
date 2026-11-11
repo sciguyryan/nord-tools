@@ -1,7 +1,8 @@
-"""Offline desired-state management for future Nord Tools networking.
+"""Inspect routing intent and run explicit Nord Tools lifecycle operations.
 
-This module stores validated intent only. It does not create interfaces,
-install services, change routes or assert that a VPN is connected.
+Planning and status commands are read-only. Commands that install files, launch
+applications or change networking require an explicit execution flag, except
+for service-internal restoration and boot-barrier entry points.
 """
 
 from __future__ import annotations
@@ -47,6 +48,98 @@ from nord_tools_internal.nordvpn_transaction_plan import plan_transactions
 
 class ManagementError(ValueError):
     """An intent operation cannot be performed safely."""
+
+
+COMMAND_HELP = {
+    "plan": "Preview a saved-policy change without writing it",
+    "configure": "Validate and save desired routing intent",
+    "status": "Show saved desired routing intent",
+    "clear": "Remove saved desired routing intent",
+    "reconcile": "Compare intent with a simulated inventory",
+    "audit": "Audit an offline resource ledger against a simulated inventory",
+    "discover": "Inspect supported live Linux resources without mutation",
+    "evidence": "Correlate an offline ledger with live observations",
+    "identities": "Validate allocation identities in an offline ledger",
+    "identity-evidence": "Compare allocation identities with live observations",
+    "dependency-plan": "Plan dependency-ordered changes from simulated state",
+    "transaction-plan": "Expand simulated changes into non-executable stages",
+    "graph": "Render the saved routing topology",
+    "cleanup-plan": "Preview cleanup from a simulated inventory",
+    "lifecycle": "Inspect a lifecycle journal and optional observations",
+    "ownership-preflight": "Check live ownership evidence without authorising mutation",
+    "operational-preflight": "Check the supported production environment without mutation",
+    "reconcile-live": "Classify desired state from fresh live observations",
+    "apply-live": "Preview or create verified-absent immutable allocations",
+    "replacement-readiness": "Check whether a generation replacement may begin",
+    "replace-profile": "Preview or execute immutable generation replacement",
+    "replacement-status": "Inspect a generation replacement from fresh evidence",
+    "retire-generation": "Preview or retire an unreferenced old generation",
+    "recover-generation": "Inspect or execute evidence-certified generation recovery",
+    "startup-plan": "Render the namespace restoration unit without installing it",
+    "startup-install": "Preview or install the namespace restoration unit",
+    "restore-startup": "Service entry point for configured startup restoration",
+    "provision": "Preview or execute production namespace provisioning",
+    "retire-consumers": "Preview or retire allocations for released consumers",
+    "consumer-leases": "Inspect durable application leases",
+    "acquire-consumer": "Preview or reserve a lease for an existing process",
+    "launch-consumer": "Preview or launch a registered application",
+    "release-exited-consumer": "Inspect or release a verified exited-process lease",
+    "cleanup": "Preview or execute ownership-verified resource cleanup",
+    "clear-ownership": "Preview or execute full teardown and evidence reset",
+    "recovery": "Inspect or execute evidence-certified lifecycle recovery",
+    "host-plan": "Preview the host-default protection plan",
+    "host-status": "Inspect host-default protection from fresh evidence",
+    "host-activate": "Preview or activate host-default protection",
+    "host-deactivate": "Preview or retire host-default protection",
+    "host-recovery": "Inspect or execute evidence-certified host recovery",
+    "host-boot-barrier": "Service entry point that establishes the early deny barrier",
+    "host-startup-plan": "Render host-default systemd units without installing them",
+    "host-startup-install": "Preview or install host-default systemd units",
+    "provider-import": "Preview or import an official WireGuard configuration",
+}
+
+TRANSIENT_COMMANDS = {
+    "plan",
+    "configure",
+    "status",
+    "clear",
+    "reconcile",
+    "audit",
+    "dependency-plan",
+    "transaction-plan",
+    "graph",
+}
+
+PERSISTENT_ONLY_COMMANDS = {
+    "reconcile-live",
+    "apply-live",
+    "replacement-readiness",
+    "replace-profile",
+    "replacement-status",
+    "retire-generation",
+    "recover-generation",
+    "startup-plan",
+    "startup-install",
+    "restore-startup",
+    "provision",
+    "retire-consumers",
+    "consumer-leases",
+    "acquire-consumer",
+    "launch-consumer",
+    "release-exited-consumer",
+    "cleanup",
+    "clear-ownership",
+    "recovery",
+    "host-plan",
+    "host-status",
+    "host-activate",
+    "host-deactivate",
+    "host-recovery",
+    "host-boot-barrier",
+    "host-startup-plan",
+    "host-startup-install",
+    "provider-import",
+}
 
 
 def state_path(persist: bool) -> Path:
@@ -152,10 +245,20 @@ def main(argv: list[str] | None = None) -> int:
         "host-startup-install",
         "provider-import",
     ):
-        command = commands.add_parser(name)
-        command.add_argument(
-            "--transient", action="store_true", help="Use session-only configuration instead of the persistent default"
-        )
+        command = commands.add_parser(name, help=COMMAND_HELP[name], description=COMMAND_HELP[name])
+        command.set_defaults(transient=False)
+        if name in TRANSIENT_COMMANDS:
+            command.add_argument(
+                "--transient",
+                action="store_true",
+                help="Use session-only configuration instead of the persistent default",
+            )
+        elif name in PERSISTENT_ONLY_COMMANDS:
+            command.add_argument(
+                "--transient",
+                action="store_true",
+                help="Unsupported compatibility option; this operation is persistent-only",
+            )
         if name in ("identities", "identity-evidence"):
             command.add_argument("--registry", required=True, help="Explicit version 2 allocation ledger JSON")
         if name == "lifecycle":

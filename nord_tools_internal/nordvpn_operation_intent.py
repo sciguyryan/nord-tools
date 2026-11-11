@@ -1,4 +1,4 @@
-"""Validated, non-authoritative operation intents for future privileged provisioning.
+"""Validated, non-authoritative operation intents for privileged provisioning.
 
 An intent records what an operator planned, not what happened in the kernel.
 It cannot confer ownership or authorise resource mutation.

@@ -158,7 +158,7 @@ The production isolation readback rejects unrecognised nftables objects in its d
 
 Run `sudo python tools/probe_dual_stack_packet_policy.py --run-privileged` to exercise the production isolation policy's narrowly pinned UDP endpoint exception and unrelated underlay drops using kernel counters, followed by IPv4 and IPv6 route selection and tunnel-loss fallback checks in separate disposable namespaces. Run without `--run-privileged` to preview the checks without creating resources. The runner stops on the first failure and leaves each underlying probe responsible for its own cleanup and diagnostic output.
 
-These checks deliberately do not establish real WireGuard packet delivery, application DNS confinement, or production fail-closed behaviour. The routing probe uses a dummy tunnel, and full real-tunnel and resolver acceptance remains outstanding.
+These component checks deliberately do not establish real WireGuard packet delivery, application DNS confinement or production fail-closed behaviour. The routing probe uses a dummy tunnel. Those broader behaviours passed later production WireGuard and registered-application guest matrices, whose evidence is recorded separately in the [release acceptance matrix](RELEASE-ACCEPTANCE-MATRIX.md).
 
 ## Dual-stack namespace default routes
 

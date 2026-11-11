@@ -18,7 +18,7 @@ python nord_tools.py manage plan --policy examples/vpn-policy.json
 python nord_tools.py namespace-probe
 ```
 
-The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The entry point includes explicitly authorised provisioning, generation replacement, recovery and registered-application launch commands. Live allocations are immutable: general in-place updates and automatic provider reselection are outside the supported design. Host-domain default protection has a narrowly scoped executable lifecycle, but its complete privileged acceptance remains outstanding.
+The `policy` and `topology` commands are offline only. The namespace probe is experimental: its default invocation is a dry run, and `--execute` performs privileged network changes. The `manage` surface combines read-only diagnostics with explicitly authorised provisioning, generation replacement, recovery, application launch and host-default lifecycle commands; mutating operator commands require `--execute`, while restoration and boot-barrier entry points are intended for their generated systemd units. Live allocations are immutable: general in-place updates and automatic provider reselection are outside the supported design. Host-default protection passed D1-D4 acceptance only for the documented static IPv4 `systemd-networkd` and `systemd-resolved` profile.
 
 ## What works today
 
@@ -28,7 +28,7 @@ The existing `--auto-connect` option can request a connection through the instal
 
 ### Offline resource lifecycle journal
 
-recovery triage introduces a strict offline lifecycle journal for future Nord Tools-owned resources. It validates allocation-bound event histories, rejects illegal state transitions and detects mismatched simulated identities. A matching identifier is **not** independent kernel ownership evidence. No lifecycle command creates, modifies or removes networking resources.
+The lifecycle inspection command validates allocation-bound event histories, rejects illegal state transitions and detects mismatched simulated identities. A matching identifier is **not** independent kernel ownership evidence. This inspection command does not create, modify or remove networking resources; separate production executors require fresh evidence and explicit authority.
 
 ```bash
 python nord_tools.py manage lifecycle --journal path/to/lifecycle.json
@@ -54,9 +54,9 @@ The ownership, restoration, cleanup and recovery executors for pinned provider p
 
 `manage graph` depicts **configured intent**, not live connectivity. Likewise, `manage cleanup-plan` and `manage transaction-plan` are advisory; they do not execute network changes. These boundaries apply even if a saved policy is persistent.
 
-## VPN routing work in progress
+## VPN routing and optimisation scope
 
-The intended manager will route ordinary traffic through a default VPN country or server, while explicitly assigned applications can use other VPN profiles. Default-server optimisation will eventually select a better eligible endpoint without reconnecting or reselecting independent application overrides. Applications sharing the default profile will still be affected by default changes.
+The implemented manager can restore a default namespace allocation and explicitly assigned shared or isolated application allocations from pinned provider inputs. The policy tool can recommend a better eligible default endpoint from a benchmark report, but it does not apply that recommendation. Automatic switching and in-place provider reselection are unsupported; an operator must use immutable generation replacement when a live allocation changes.
 
 The policy and topology commands remain advisory, but separate explicitly authorised management commands can provision pinned WireGuard allocations and launch registered applications. Configuring a policy alone does not establish tunnels, change routes or DNS, or enforce a host-domain kill switch.
 
@@ -82,7 +82,7 @@ python nordvpn_policy.py --policy examples/vpn-policy.json --report benchmark.js
 
 ### Saved routing intent and restart behaviour
 
-The experimental `manage` command validates and stores **desired routing intent only**. It does not create tunnels, change host networking or install a VPN on boot by itself. Its default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Own networking resources appear only through the separately owned startup configuration and its systemd restoration unit (see [Startup restoration with systemd (startup restoration)](#startup-restoration-with-systemd-startup-restoration)); configuring a policy alone still activates nothing.
+The `manage plan`, `configure`, `status` and `clear` commands operate on **desired routing intent only**. They do not create tunnels, change host networking or install a VPN on boot. Their default scope is persistent and stores the policy under `XDG_CONFIG_HOME/nord-tools/` (or `~/.config/nord-tools/`); pass `--transient` to use session-only storage under `XDG_RUNTIME_DIR` instead. Production lifecycle operations are separate subcommands with pinned configuration and evidence stores; configuring policy intent alone still activates nothing.
 
 ```bash
 python nord_tools.py manage plan --policy examples/vpn-policy.json
@@ -94,7 +94,7 @@ python nord_tools.py manage status --transient
 python nord_tools.py manage clear --transient
 ```
 
-The experimental `manage reconcile` command compares saved intent with an explicitly supplied **simulated** inventory and prints a deterministic, read-only plan. It distinguishes create, replace, repair, retire, unchanged and blocked external-ownership conflicts. The inventory is not discovered from the host and its ownership claims are not sufficient authority to modify or remove actual networking resources. No live changes occur.
+The `manage reconcile` command compares saved intent with an explicitly supplied **simulated** inventory and prints a deterministic, read-only plan. It distinguishes create, replace, repair, retire, unchanged and blocked external-ownership conflicts. The inventory is not discovered from the host and its ownership claims are not sufficient authority to modify or remove actual networking resources. No live changes occur.
 
 ```bash
 python nord_tools.py manage reconcile --inventory examples/managed-inventory.json
@@ -141,11 +141,9 @@ sudo python nord_tools.py manage operational-preflight --mode namespace
 sudo python nord_tools.py manage operational-preflight --mode host-default --host-plan /etc/nord-tools/host-protection.json
 ```
 
-It verifies the accepted dependency, platform and privilege contract without
-creating state or changing networking. Real lifecycle executors repeat the same
-mode-specific checks before mutation. See [Operational preflight](docs/OPERATIONAL-PREFLIGHT.md).
+It verifies the accepted dependency, platform and privilege contract without creating state or changing networking. Real lifecycle executors repeat the same mode-specific checks before mutation. See [Operational preflight](docs/OPERATIONAL-PREFLIGHT.md).
 
-The check reports the platform and Python version, and whether `ping`, `nordvpn`, `ip`, `nft`, `wg` and `systemctl` are available. Only the platform and Python version are universal requirements. Other executables are feature-specific: `ping` is needed for ICMP benchmarks, `nordvpn` for CLI connection support, `ip`/`nft` for the privileged namespace and underlay work, and `systemctl` for installing and verifying the systemd restoration unit. The `wg` check still describes future tunnel paths. `--strict` fails if any listed tool is missing. This is a local executable-availability check, not a guarantee of kernel support, privileges, VPN credentials or working network connectivity.
+The general doctor reports the platform and Python version, and whether `ping`, `nordvpn`, `ip`, `nft`, `wg` and `systemctl` are available. Only the platform and Python version are universal requirements. Other executables are feature-specific: `ping` is needed for ICMP benchmarks, `nordvpn` for CLI connection support, `ip` and `nft` for namespace and host protection, `wg` for WireGuard lifecycle operations, and `systemctl` for installing and verifying restoration units. `--strict` fails if any listed tool is missing. This is an executable-availability check, not the production operational preflight or a guarantee of kernel support, privileges, VPN credentials or connectivity.
 
 ## Quick start
 
@@ -399,7 +397,7 @@ Compare the reports offline with `python tools/compare_sampling.py --fixed fixed
 
 ## Routing policy and management diagnostics
 
-The proposed default-VPN and per-application routing architecture is documented in [docs/VPN-ROUTING-DESIGN.md](docs/VPN-ROUTING-DESIGN.md). An offline default-optimisation preview is available through `nordvpn_policy.py`; it reads an existing versioned benchmark report and **does not** connect, disconnect or modify networking. Pinned independent application tunnels and explicit registered launch operations exist, with scoped integrated VPN-bound launch-to-packet acceptance. Automatic switching remains outstanding.
+The default-VPN and per-application routing architecture is documented in [docs/VPN-ROUTING-DESIGN.md](docs/VPN-ROUTING-DESIGN.md). An offline default-optimisation preview is available through `nordvpn_policy.py`; it reads an existing versioned benchmark report and **does not** connect, disconnect or modify networking. Pinned independent application tunnels and explicit registered launch operations exist, with scoped integrated VPN-bound launch-to-packet acceptance. Automatic switching is deliberately unsupported.
 
 ### Offline ownership audit
 
@@ -646,7 +644,7 @@ recovery triage establishes offline lifecycle and operation-intent records, read
 
 ## WireGuard provisioning development
 
-provisioning has delivered experimental disposable WireGuard configuration, peer verification and journal-gated execution, alongside a validated offline specification and descriptor-based credential input. The production restoration executor can provision pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall/routing controls. Provider credential acquisition and server selection remain incomplete. Host-default protection has a separately accepted D1-D4 lifecycle for the narrow deployment profile described below; it is not accepted on other workstation arrangements. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
+Provisioning includes experimental disposable WireGuard probes and a separate production restoration executor for pinned WireGuard allocations with durable creation-time ownership, recovery and namespace firewall, route and resolver controls. Official configuration import, explicit key rotation and deterministic pinned, country and fresh-benchmark selection are implemented; the credential-bearing provider guest workflow remains unrecorded. Host-default protection has a separately accepted D1-D4 lifecycle for the narrow deployment profile described below and is refused on other workstation arrangements. See `docs/VPN-ROUTING-DESIGN.md` and `TODO.md` for the remaining acceptance boundaries.
 
 ## Host-default protection
 
@@ -843,13 +841,13 @@ The staged replacement planner adds `nord_tools_internal/nordvpn_replacement_sta
 
 `nord_tools_internal.nordvpn_drift_assessment.assess_drift` classifies supplied desired and observed logical snapshots into missing, unexpected, matching, allocation drift and configuration drift. Caller-supplied ownership statuses are untrusted. The resulting diagnostic cannot authorise privileged changes, deletion, rollback or repair. In-place drift correction is unsupported. The separate [disputed drift recovery policy](docs/DISPUTED-DRIFT-RECOVERY.md) preserves whole-profile quarantine and permits only existing recovery operations justified by fresh absence or exact creation-time identity. Generation replacement and bounded recovery are implemented; independently privileged hostile mutators are outside the release authority model.
 
-The cross-contract audit adds `nord_tools_internal/nordvpn_reconciliation_audit.py`, a read-only cross-contract audit of reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; privileged ownership and crash-safe operational integration remain outstanding.
+The cross-contract audit in `nord_tools_internal/nordvpn_reconciliation_audit.py` compares reconciliation-gate and drift reports with optional recovery and replacement reports. It detects mismatched profile scopes, duplicate decisions and reports claiming mutation authority. A consistent audit is not permission to execute, resume, roll back or delete resources; production executors establish their own fresh ownership and operation-specific authority.
 
 The five-increment live reconciliation offline programme remains a non-authorising planning layer. Separate production executors now provide verified boot creation, generation replacement, confirmed cleanup and constrained interrupted-operation recovery. The combined production VPN-bound application and packet path has scoped guest acceptance. General in-place updates are outside the supported design, and disputed drift remains quarantined rather than repaired speculatively. See `TODO.md` for the remaining operational and acceptance requirements.
 
 ### Privileged authority preflight
 
-`nord_tools_internal.nordvpn_authority_preflight.inspect_authority_directory` provides a read-only inspection of a dedicated privileged state directory and its path components. It rejects symlinks, writable ancestors, unexpected ownership, and unsafe state entries. The report is advisory and explicitly non-authorising: even a trusted directory cannot establish crash-persistent kernel ownership or permit mutation without independent live verification and operation-specific coordination. The cooperating-process privileged lifecycle acceptance matrix has passed; independently privileged hostile mutators are outside the supported release authority model. The final project-wide consistency audit remains outstanding.
+`nord_tools_internal.nordvpn_authority_preflight.inspect_authority_directory` provides a read-only inspection of a dedicated privileged state directory and its path components. It rejects symlinks, writable ancestors, unexpected ownership and unsafe state entries. The report is advisory and explicitly non-authorising: even a trusted directory cannot establish crash-persistent kernel ownership or permit mutation without independent live verification and operation-specific coordination. The cooperating-process privileged lifecycle acceptance matrix and F1 production-path race audit have passed within the documented authority model; independently privileged hostile mutators remain outside it.
 
 ### Privileged lifecycle authority boundary
 
@@ -857,7 +855,7 @@ The read-only authority-directory inspector now traverses path components using 
 
 ### privileged lifecycle authority lifecycle execution lock
 
-Restoration, cleanup and recovery share a stable journal-specific execution lock. The lock is opened relative to the journal directory and checked for safe ownership, permissions and identity after acquisition. This prevents cooperating executors from interleaving their lifecycle operations; it does not authorise kernel mutations, make separate state stores atomic, or protect against a hostile actor with directory replacement privileges. The remaining authority and adversarial tests are tracked in TODO.md.
+Restoration, cleanup and recovery share a stable journal-specific execution lock. The lock is opened relative to the journal directory and checked for safe ownership, permissions and identity after acquisition. This prevents cooperating executors from interleaving their lifecycle operations; it does not authorise kernel mutations, make separate state stores atomic or protect against a hostile privileged actor who bypasses the cooperating-process authority model. The accepted races and residual limits are recorded in [Cooperating-process race audit](docs/COOPERATING-PROCESS-RACE-AUDIT.md).
 
 Generation selection, registered launch and consumer-aware retirement acquire the consumer lock after the lifecycle lock. That lock now applies the same stable-parent and stable-inode checks. Startup evidence roles must use distinct canonical paths, and declared references cannot share a lock with runtime leases. The complete production-path review is recorded in [Cooperating-process race audit](docs/COOPERATING-PROCESS-RACE-AUDIT.md).
 
@@ -883,7 +881,7 @@ The ownership verifier now queries the Linux namespace filesystem (`NS_GET_NSTYP
 
 ### Kernel mutation authority limitation
 
-Privileged lifecycle operations require an administratively controlled host authority domain: the shared execution lock serialises cooperating Nord Tools processes, and the lock directory must belong to the effective execution identity without group or other write access. The kernel does not provide an atomic ownership compare-and-delete operation for the namespace pathname or interface index used here. An independent privileged actor with mount or network administration capabilities can replace those resources between verification and deletion. This risk is not eliminated by the checks in kernel mutation authority. See `docs/PRIVILEGED-AUTHORITY-BOUNDARY.md` for the supported deployment boundary and outstanding adversarial acceptance.
+Privileged lifecycle operations require an administratively controlled host authority domain: the shared execution lock serialises cooperating Nord Tools processes, and the lock directory must belong to the effective execution identity without group or other write access. The kernel does not provide an atomic ownership compare-and-delete operation for the namespace pathname or interface index used here. An independent privileged actor with mount or network administration capabilities can replace those resources between verification and deletion. This risk is not eliminated by the kernel mutation checks and is outside the supported authority model, not an outstanding claim of adversarial safety. See `docs/PRIVILEGED-AUTHORITY-BOUNDARY.md` for the deployment boundary.
 
 ### Startup restoration and privileged lifecycle acceptance
 
@@ -891,13 +889,13 @@ On 3 November 2026, the standalone startup restoration and cleanup matrix and th
 
 The final probes account for fixture effects without weakening the host checks. IPv4 comparison ignores only exact kernel-connected fixture routes on interfaces whose live indices match their creation-time bindings, including their expected removal during cleanup. Nftables comparison ignores packet and byte readings only. Namespace absence checks are scoped to the current fixture, so unrelated host namespaces are preserved. Failed probes retain their raw host snapshots and ownership stores; successful startup restoration and cleanup runs retire the surviving fixture before deleting those stores.
 
-Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after every possible partial kernel mutation. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model. Production-installed dual-stack confinement, failure recovery, the registered VPN-bound gate, concurrent registered packet behaviour and D1-D4 host-domain protection have passed their scoped probes. General in-place updates remain open in `TODO.md`.
+Recovery now evaluates the current non-retired profile generation, rather than mixing a recreated generation with retired history. The deterministic checkpoint proves recovery when interruption occurs after durable namespace creation intent and before the first kernel creation callback. It does not establish recovery after every possible partial kernel mutation. Kernel mutation races involving independent privileged actors remain outside the documented cooperating-process authority model. Production-installed dual-stack confinement, failure recovery, the registered VPN-bound gate, concurrent registered packet behaviour and D1-D4 host-domain protection have passed their scoped probes. General in-place updates are deliberately unsupported.
 
 ### Live reconciliation and generation replacement
 
 `manage apply-live --config PATH` remains create-only and now reports the immutable [live update policy](docs/LIVE-UPDATE-POLICY.md) alongside its fresh reconciliation. General in-place mutation and automatic provider reselection are unsupported. Generation replacement is explicit: add a profile-to-path entry to the startup configuration's optional `handovers` object, initialise a version 2 runtime lease store, preview with `manage replace-profile`, and add `--execute` to provision, verify and activate B. `manage replacement-status` combines durable intent with fresh ownership and lease observations. `manage recover-generation --config PATH --profile PROFILE --runtime-consumers PATH` performs read-only generation recovery and drift classification; `--execute` permits verified prepared-record promotion, while `--execute --reprovision-absent` additionally authorises the production executor to restore an independently verified-absent, unselected replacement. Active-generation drift always fails closed and requires explicit review. `manage retire-generation --generation ID` previews exact old-generation retirement; `--execute` invokes verified cleanup only after its leases and reservations are gone.
 
-Live replacement preparation can be inspected without network changes using `python nord_tools.py manage replacement-readiness --config /absolute/path/startup.json --profile PROFILE --runtime-consumers /absolute/path/leases.json`. Active A consumers are compatible with preparing and activating B, but remain explicit retirement blockers. After activation, new cooperating launches select B while already-running processes remain in A. A failed selected-generation verification refuses launch and never falls back to `direct` or the host namespace. Privileged end-to-end acceptance remains required before treating this path as deployment-certified.
+Live replacement preparation can be inspected without network changes using `python nord_tools.py manage replacement-readiness --config /absolute/path/startup.json --profile PROFILE --runtime-consumers /absolute/path/leases.json`. Active A consumers are compatible with preparing and activating B, but remain explicit retirement blockers. After activation, new cooperating launches select B while already-running processes remain in A. A failed selected-generation verification refuses launch and never falls back to `direct` or the host namespace. The generation replacement path has scoped guest acceptance; F4 retains the exact-candidate rerun requirement.
 
 ## Generation replacement acceptance
 

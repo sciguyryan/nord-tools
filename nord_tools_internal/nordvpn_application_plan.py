@@ -1,7 +1,7 @@
 """Produce deterministic, non-executable per-application routing decisions.
 
 Plans contain no namespace authority, process handles or permission to mutate the
-host. A future privileged launcher must independently verify its own authority.
+host. The separate privileged launcher independently verifies its own authority.
 """
 
 from __future__ import annotations

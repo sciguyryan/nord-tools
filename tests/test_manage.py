@@ -45,6 +45,30 @@ class ManageTests(unittest.TestCase):
             code = nord_tools.main(["manage", *args])
         return code, json.loads(output.getvalue()) if output.getvalue() else None
 
+    def test_help_distinguishes_read_only_and_mutating_commands(self):
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            nordvpn_manage.main(["--help"])
+        self.assertEqual(raised.exception.code, 0)
+        rendered = output.getvalue()
+        self.assertIn("Planning and status commands are read-only", rendered)
+        self.assertIn("apply-live", rendered)
+        self.assertIn("Preview or create verified-absent immutable", rendered)
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            nordvpn_manage.main(["host-boot-barrier", "--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertIn("Service entry point that establishes the early deny barrier", output.getvalue())
+        self.assertIn("Unsupported compatibility option", output.getvalue())
+        self.assertIn("persistent-only", output.getvalue())
+
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output), self.assertRaises(SystemExit) as raised:
+            nordvpn_manage.main(["discover", "--help"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertNotIn("--transient", output.getvalue())
+
     def test_plan_does_not_write(self):
         code, result = self.call("plan", "--policy", str(self.policy))
         self.assertEqual(code, 0)

@@ -1,5 +1,7 @@
 """Dispatch behaviour for the unified Nord Tools entry point."""
 
+import contextlib
+import io
 import unittest
 from unittest.mock import patch
 
@@ -8,7 +10,13 @@ import nord_tools
 
 class EntryPointTests(unittest.TestCase):
     def test_help_without_subcommand(self):
-        self.assertEqual(nord_tools.main([]), 0)
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            self.assertEqual(nord_tools.main([]), 0)
+        rendered = output.getvalue()
+        self.assertIn("doctor", rendered)
+        self.assertIn("manage", rendered)
+        self.assertIn("explicitly authorised VPN lifecycle operations", rendered)
 
     def test_unknown_command_is_rejected(self):
         with self.assertRaises(SystemExit) as error:

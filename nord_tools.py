@@ -2,7 +2,8 @@
 """Unified command-line entry point for Nord Tools.
 
 Commands delegate to their existing implementations to preserve established
-options, output and exit codes. Experimental tools remain explicitly labelled.
+options, output and exit codes. Mutating commands require explicit execution
+flags; disposable probes remain explicitly labelled.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ COMMANDS = {
     "benchmark": ("nordvpn_benchmark", "Benchmark and rank NordVPN servers"),
     "policy": ("nordvpn_policy", "Validate policy or plan default optimisation (offline)"),
     "topology": ("nordvpn_topology", "Inspect proposed routing domains (design only)"),
-    "manage": ("nordvpn_manage", "Manage saved VPN routing intent, ownership evidence and startup restoration"),
+    "manage": ("nordvpn_manage", "Inspect intent or run explicitly authorised VPN lifecycle operations"),
     "divergence": ("nordvpn_kongroo_packed", argparse.SUPPRESS),
     "wireguard-probe": ("tools.probe_two_wireguard", "Disposable two-pair WireGuard experiment (privileged opt-in)"),
     "namespace-probe": ("tools.probe_namespace_isolation", "Disposable namespace experiment (privileged opt-in)"),
@@ -26,7 +27,17 @@ COMMANDS = {
 
 def main(argv: list[str] | None = None) -> int:
     """Dispatch a subcommand without changing the underlying tool's CLI."""
-    parser = argparse.ArgumentParser(description=__doc__, allow_abbrev=False)
+    command_help = "\n".join(
+        f"  {name:<17} {description}"
+        for name, (_, description) in COMMANDS.items()
+        if description is not argparse.SUPPRESS
+    )
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        epilog=f"commands:\n{command_help}",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        allow_abbrev=False,
+    )
     parser.add_argument("command", nargs="?", help="Tool to run")
     values = list(sys.argv[1:] if argv is None else argv)
     if not values or values[0] in ("-h", "--help"):

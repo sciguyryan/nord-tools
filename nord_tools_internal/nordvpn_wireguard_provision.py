@@ -1,8 +1,8 @@
 """Validated, non-executable WireGuard provisioning specifications.
 
 This boundary deliberately does not accept private keys or execute commands.
-Credentials must be supplied to a future privileged executor through a
-separate, non-serialised channel; plans are safe to inspect and log.
+Production and disposable executors supply credentials through separate,
+non-serialised channels; these public plans are safe to inspect and log.
 """
 
 from __future__ import annotations
