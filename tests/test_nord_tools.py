@@ -9,6 +9,17 @@ import nord_tools
 
 
 class EntryPointTests(unittest.TestCase):
+    def test_version(self):
+        output = io.StringIO()
+        with (
+            patch.object(nord_tools.sys, "argv", ["nord_tools.py"]),
+            contextlib.redirect_stdout(output),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            nord_tools.main(["--version"])
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(output.getvalue(), "nord_tools.py 0.9.0\n")
+
     def test_help_without_subcommand(self):
         output = io.StringIO()
         with contextlib.redirect_stdout(output):

@@ -1,6 +1,6 @@
 # Live update policy
 
-Nord Tools does not support general in-place updates of a live VPN allocation. This is a deliberate E3 scope decision, not an unfinished executor.
+Nord Tools does not support general in-place updates of a live VPN allocation. This is a deliberate release boundary, not an unfinished executor.
 
 A production allocation combines a WireGuard interface and client identity, endpoint route, two default routes, namespace firewall, resolver file, lifecycle records, creation-time ownership bindings and application leases. Updating those objects one at a time would expose a mixed generation that no single durable record described. Fresh ownership evidence can show that the current objects belong to Nord Tools; it cannot make a partial rewrite atomic or prove that a changed object still matches the other recorded objects.
 
@@ -18,6 +18,6 @@ For replacement-eligible shared and isolated allocations, the report supplies th
 
 Edits to startup tunnel plans, imported catalogues or benchmark reports do not rewrite a converged live allocation. Automatic provider reselection is unsupported. To adopt new public tunnel data or a new provider identity, prepare an explicit independent generation, verify it through the existing replacement path, cut new launches over through the durable handover and retire the old generation only after its leases are gone. Where the replacement path cannot represent the proposed allocation, retain the current generation and use an explicit verified retirement followed by creation during an operator-approved interruption.
 
-This policy does not repair disputed drift. A missing configuration record, uncertain owner binding, unresolved operation intent, foreign object or inconsistent observation remains quarantined for E4 operator recovery. Generation replacement is authority only for independently owned A and B allocations; it is not permission to edit or delete a disputed object.
+This policy does not repair disputed drift. A missing configuration record, uncertain owner binding, unresolved operation intent, foreign object or inconsistent observation remains quarantined for operator recovery. Generation replacement is authority only for independently owned A and B allocations; it is not permission to edit or delete a disputed object.
 
-Because E3 selects no in-place mutation design, it requires a QA scope decision and static refusal coverage rather than a new privileged mutation probe. Existing generation replacement and cleanup retain their own guest evidence and acceptance boundaries.
+Because the release supports no in-place mutation design, this boundary is verified through the scope decision and static refusal coverage rather than a separate privileged mutation probe. Generation replacement and cleanup retain their own guest evidence and acceptance boundaries.

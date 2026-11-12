@@ -22,7 +22,7 @@ The disposable WireGuard creation path checks the namespace-local interface inde
 
 The disposable configuration path accepts one or two canonical tunnel addresses with distinct address families, plus an optional persistent keepalive interval from 0 to 65535 seconds. At least one tunnel address must match the endpoint family. Zero leaves the peer setting unset; a positive interval is passed explicitly to `wg set` alongside the validated endpoint and allowed IP networks. Malformed addresses, duplicate families, booleans, strings and out-of-range intervals are refused before kernel mutation. The public plan records the addresses and interval but never carries the private key.
 
-The private key is still supplied through an inherited descriptor, not an argument or a persistent configuration file. The subsequent restoration readback verifies live peer configuration; this configuration step alone does not provide persistent production credentials or establish fail-closed routing. Those require later integration and privileged acceptance.
+The private key is supplied through an inherited descriptor, not an argument or a persistent configuration file. Restoration readback verifies live peer configuration, while the surrounding production executor supplies persistent systemd credentials, fail-closed routing and privileged verification. This configuration component alone does not establish those broader guarantees.
 
 ## WireGuard live peer verification
 
@@ -126,25 +126,25 @@ The `manage release-exited-consumer --config STARTUP --runtime-consumers LEASES 
 
 The `manage acquire-consumer --config STARTUP --runtime-consumers LEASES --consumer NAME --pid PID` command previews a requested consumer lease without inspecting kernel resources. With `--execute`, it delegates to the existing process-bound acquisition executor, which independently verifies the process identity and complete, active, ownership-verified provisioned allocation before persisting the lease. This does not launch the process or move it into a network namespace. Acquisition requires the startup configuration to pin the journal, ownership bindings and operation intents.
 
-## Production provisioning integration acceptance
+## Production provisioning integration verification
 
 The disposable production provisioning integration probe runs the existing authority, named-profile, isolated-consumer and post-binding interruption probes in a fixed, fail-fast order. Run `python tools/probe_provisioning_integration.py` to inspect the stages without changing the host. An operator may explicitly run `sudo python tools/probe_provisioning_integration.py --run-privileged` on a suitable Linux host with `ip` and `wg` installed. Each child probe retains its own diagnostic evidence on failure. The runner deliberately does not attempt cleanup after a failed stage, since that could discard the evidence needed for ownership-aware recovery.
 
-The matrix exercises production resource creation, recorded ownership, selected retirement, isolation between consumer allocations, outstanding lease refusal, interrupted provisioning and confirmed recovery. Successful execution establishes these behaviours only under the documented cooperating-process authority model. This provisioning fixture does not by itself establish protection against an independent privileged kernel mutator, production application launching, or DNS and firewall confinement. Later launch, mutation-boundary interruption and cooperating-process adversarial recovery acceptance have passed in their dedicated probes.
+The matrix exercises production resource creation, recorded ownership, selected retirement, isolation between consumer allocations, outstanding lease refusal, interrupted provisioning and confirmed recovery. Successful execution establishes these behaviours only under the documented cooperating-process authority model. This provisioning fixture does not by itself establish protection against an independent privileged kernel mutator, production application launching, or DNS and firewall confinement. Launch, mutation-boundary interruption and cooperating-process adversarial recovery have separate verification.
 
-## Later provisioning interruption acceptance
+## Provisioning interruption verification
 
 The opt-in `tools/probe_later_recovery.py` runner exercises three additional production checkpoints using disposable, independently created ecosystems: after the host underlay has a durable creation-time interface binding, after WireGuard configuration returns, and after tunnel routing installation returns. Each checkpoint pauses the child after the real kernel operation, terminates it with SIGKILL, checks retained intent and creation-time ownership evidence, and attempts recovery through the existing operator and boot recovery paths. The runner stops on the first failure and retains diagnostic evidence rather than deleting resources whose ownership is uncertain.
 
-Run `sudo python tools/probe_later_recovery.py --run-privileged` on a disposable-capable Linux host with `ip` and `wg` installed. Without `--run-privileged`, the runner only describes the planned checks. A successful result demonstrates the tested cooperating-process interruption boundaries, not protection against independent hostile root-level mutation. The later checkpoints passed privileged acceptance checks within the documented cooperating-process authority model.
+Run `sudo python tools/probe_later_recovery.py --run-privileged` on a disposable-capable Linux host with `ip` and `wg` installed. Without `--run-privileged`, the runner only describes the planned checks. A successful result demonstrates the tested cooperating-process interruption boundaries, not protection against independent hostile root-level mutation. These checkpoints passed privileged verification within the documented cooperating-process authority model.
 
-## Complete provisioning acceptance
+## Consolidated provisioning verification
 
 The `tools/probe_provisioning_final_acceptance.py` runner combines the production integration matrix with the later interruption-recovery matrix. Its default invocation only previews the stages. Privileged execution requires `--run-privileged` and root authority. Each delegated probe owns its disposable resources and retained diagnostic evidence; the runner stops on the first failure and does not attempt cross-probe cleanup. The acceptance matrix exercises cooperating-process ownership guarantees and does not establish protection against hostile privileged kernel mutation, DNS confinement or fail-closed application routing.
 
-Automated tests verify runtime behaviour and structured security contracts rather than matching the wording of Markdown documents or the checked state of roadmap entries. Markdown formatting remains a documentation linting concern, not a runtime correctness invariant.
+Automated tests verify runtime behaviour and structured security contracts rather than matching the wording of Markdown documents. Markdown formatting remains a documentation linting concern, not a runtime correctness invariant.
 
-The consolidated provisioning acceptance checks passed. This acceptance does not extend the documented authority model to independent privileged kernel mutation or establish production DNS confinement and fail-closed application routing. Documentation prose and roadmap checklist wording are not runtime acceptance criteria.
+The consolidated provisioning checks passed. This evidence does not extend the documented authority model to independent privileged kernel mutation or establish production DNS confinement and fail-closed application routing.
 
 ## Production firewall readback hardening
 
@@ -158,7 +158,7 @@ The production isolation readback rejects unrecognised nftables objects in its d
 
 Run `sudo python tools/probe_dual_stack_packet_policy.py --run-privileged` to exercise the production isolation policy's narrowly pinned UDP endpoint exception and unrelated underlay drops using kernel counters, followed by IPv4 and IPv6 route selection and tunnel-loss fallback checks in separate disposable namespaces. Run without `--run-privileged` to preview the checks without creating resources. The runner stops on the first failure and leaves each underlying probe responsible for its own cleanup and diagnostic output.
 
-These component checks deliberately do not establish real WireGuard packet delivery, application DNS confinement or production fail-closed behaviour. The routing probe uses a dummy tunnel. Those broader behaviours passed later production WireGuard and registered-application guest matrices, whose evidence is recorded separately in the [release acceptance matrix](RELEASE-ACCEPTANCE-MATRIX.md).
+These component checks deliberately do not establish real WireGuard packet delivery, application DNS confinement or production fail-closed behaviour. The routing probe uses a dummy tunnel. Those broader behaviours passed the production WireGuard and registered-application guest matrices summarised in [Release status and verification](RELEASE-READINESS.md).
 
 ## Dual-stack namespace default routes
 
@@ -178,9 +178,9 @@ The real-WireGuard host-integrity probe compares nftables JSON structurally, ign
 
 Production startup restoration performs the [supported network platform](SUPPORTED-NETWORK-PLATFORM.md) preflight before it creates durable stores or constructs the real kernel helper surface. The accepted profile is Linux `7.2.x-arch1` with iproute2 `7.3.0`, nftables `1.1.7` and wireguard-tools `1.0.20260223`. The version match is followed by live read-only checks of iproute2 link and dual-stack route JSON, nftables ruleset JSON, safe WireGuard interface output and the root-owned `/etc/netns` directory.
 
-An unrecognised version, command failure, timeout, malformed output or unsafe resolver root aborts restoration without network mutation. The preflight does not infer compatibility from a higher version number. Extending the profile requires the exact candidate to pass `probe_platform_compatibility.py`, both privileged matrices and the local quality gates before the constants and support table are updated.
+An unrecognised version, command failure, timeout, malformed output or unsafe resolver root aborts restoration without network mutation. The preflight does not infer compatibility from a higher version number. Extending the profile requires the release tree to pass `probe_platform_compatibility.py`, both privileged matrices and the local quality gates before the constants and support table are updated.
 
-The [operational preflight](OPERATIONAL-PREFLIGHT.md) combines that platform evidence with the required root identity and Python runtime. Cleanup and recovery use the same namespace-mode gate before executing. Host-default lifecycle mutation adds the D4 plan and live inventory checks. A successful report remains read-only evidence and never replaces the ownership checks performed at each mutation boundary.
+The [operational preflight](OPERATIONAL-PREFLIGHT.md) combines that platform evidence with the required root identity and Python runtime. Cleanup and recovery use the same namespace-mode gate before executing. Host-default lifecycle mutation adds the supported plan and live inventory checks. A successful report remains read-only evidence and never replaces the ownership checks performed at each mutation boundary.
 
 ### DNS confinement acceptance
 
@@ -196,11 +196,11 @@ Resolver readback also rejects multiply linked files and verifies the opened des
 
 The acceptance matrix does not prove automatic fail-closed protection of the host's default profile, compositor-specific desktop services, external encrypted DNS controls or behaviour across every kernel and tooling combination. The privileged evidence must be reported with these limits. Do not describe the production system as universally leak-proof or production-ready on the basis of this matrix alone.
 
-## Network-isolation component test results and outstanding integration
+## Network-isolation component boundaries
 
 The production profile confinement probe passed in the disposable guest with one production-installed owned tunnel, both live address families, the production firewall and routes, the pinned resolver, application DNS and underlay bypass refusal, establishment rollback and recovery, tunnel loss and restart, conservative readback refusal, verified retirement and host-integrity comparison. The wider adversarial runner retains separate fixtures for independent DNS-shaped traffic, later provisioning interruption recovery and lifecycle-lock substitution refusal.
 
-The production registered launch path has packet-level acceptance inside one owned profile. The separate host-default executor implements ordered firewall, endpoint, WireGuard, routing and `systemd-resolved` mutations with a durable identity record. D1 passed its disposable packet, DNS and verified-retirement lifecycle. D2 passed unavailable-peer activation, real tunnel loss and restart, uncertain readback refusal, SIGKILL during deactivation and evidence-led barrier-last recovery. D3 passed real-reboot ordering and protected convergence. D4 admits only the documented static IPv4 `systemd-networkd` and `systemd-resolved` profile. Resistance to independent privileged kernel mutators remains outside the accepted authority model. These tests must not be described as a universal leak-prevention guarantee.
+The production registered launch path has packet-level acceptance inside one owned profile. The separate host-default executor implements ordered firewall, endpoint, WireGuard, routing and `systemd-resolved` mutations with a durable identity record. Disposable verification covers the ordinary packet, DNS and verified-retirement lifecycle; unavailable-peer activation; real tunnel loss and restart; uncertain readback refusal; SIGKILL during deactivation; evidence-led barrier-last recovery; and real-reboot ordering. Host-default protection admits only the documented static IPv4 `systemd-networkd` and `systemd-resolved` profile. Resistance to independent privileged kernel mutators remains outside the accepted authority model. These tests must not be described as a universal leak-prevention guarantee.
 
 ## Registered application launch gate
 

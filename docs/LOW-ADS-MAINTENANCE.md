@@ -37,7 +37,7 @@ The 17 included ISO country codes are:
 | `tt` | Trinidad and Tobago | Outside published monetised markets; NordVPN-specific community observation |
 | `uz` | Uzbekistan | Outside published monetised markets; NordVPN-specific community observation |
 
-All 17 prefixes appeared in the user-supplied NordVPN OpenVPN directory listing examined on 22 October 2026. This establishes **configuration presence at that point in time**, not current server reachability, physical location or observed advert suppression. Independent reports provide stronger corroboration for some entries than others.
+All 17 prefixes appeared in the NordVPN OpenVPN directory listing examined on 22 October 2026. This establishes **configuration presence at that point in time**, not current server reachability, physical location or observed advert suppression. Independent reports provide stronger corroboration for some entries than others.
 
 **Not included despite community reports:** Armenia (`am`), Laos (`la`), Nepal (`np`) and Sri Lanka (`lk`) are listed in Google's published monetised markets. Keep them out of this particular shortlist unless fresh, repeatable testing justifies an explicitly documented exception. This avoids conflating occasional low ad delivery with non-monetised-market eligibility.
 

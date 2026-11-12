@@ -9,8 +9,10 @@ flags; disposable probes remain explicitly labelled.
 from __future__ import annotations
 
 import argparse
-import sys
 import importlib
+import sys
+
+from nord_tools_version import __version__
 
 
 COMMANDS = {
@@ -38,6 +40,7 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     parser.add_argument("command", nargs="?", help="Tool to run")
     values = list(sys.argv[1:] if argv is None else argv)
     if not values or values[0] in ("-h", "--help"):
