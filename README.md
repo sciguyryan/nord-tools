@@ -39,7 +39,7 @@ The internal lifecycle modules provide permission-restricted atomic journal pers
 
 ## Tunnel management implementation status
 
-The ownership, restoration, cleanup and recovery executors for pinned provider plans have automated and scoped privileged acceptance, but **the manager is not yet ready for unrestricted general production use**. The table distinguishes implemented capabilities from the remaining integrated or platform-specific evidence:
+The ownership, restoration, cleanup and recovery executors for pinned provider plans have automated and scoped privileged acceptance, but **the manager is not yet ready for unrestricted general production use**. The [supported platform and desktop matrix](docs/SUPPORTED-NETWORK-PLATFORM.md) defines the only accepted Arch guest profiles. The table distinguishes implemented capabilities from the remaining integrated evidence:
 
 | Area | Current state | Required before live use |
 | --- | --- | --- |
